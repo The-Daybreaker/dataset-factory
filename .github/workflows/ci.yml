@@ -12,6 +12,9 @@ on:
 permissions:
   contents: read        # 最小权限：这个 workflow 只需读代码，不给写权限（安全默认）
 
+env:
+  PYTHONUTF8: 1         # 强制 Python UTF-8 模式：Windows runner 默认 cp1252，中文输出（契约名 / docstring）会 UnicodeEncodeError
+
 jobs:
   test:
     name: "test (${{ matrix.os }})"
