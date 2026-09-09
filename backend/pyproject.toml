@@ -1,0 +1,65 @@
+[project]
+name = "dataset-factory"
+version = "0.1.0"
+description = "Dataset Factory backend: AI labeling engine for LoRA training datasets"
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.12.11,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.15",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.coverage.run]
+source = ["dataset_factory"]
+
+[tool.coverage.report]
+show_missing = true
+
+[tool.importlinter]
+root_packages = ["dataset_factory"]
+
+[[tool.importlinter.contracts]]
+name = "分层：入口层 > 编排 > 能力 > 数据域（单向；核心禁止 import 入口层）"
+type = "layers"
+layers = [
+    "dataset_factory.cli | dataset_factory.api",
+    "dataset_factory.labeling",
+    "dataset_factory.llm",
+    "dataset_factory.prompts | dataset_factory.skills | dataset_factory.sessions",
+]
+
+[[tool.importlinter.contracts]]
+name = "llm 保持纯净：不依赖任何功能模块"
+type = "forbidden"
+source_modules = ["dataset_factory.llm"]
+forbidden_modules = [
+    "dataset_factory.labeling",
+    "dataset_factory.prompts",
+    "dataset_factory.skills",
+    "dataset_factory.sessions",
+]
+
+[[tool.importlinter.contracts]]
+name = "数据域同层互相独立"
+type = "independence"
+modules = [
+    "dataset_factory.prompts",
+    "dataset_factory.skills",
+    "dataset_factory.sessions",
+]
+
+[[tool.importlinter.contracts]]
+name = "入口层同层互相独立"
+type = "independence"
+modules = ["dataset_factory.cli", "dataset_factory.api"]

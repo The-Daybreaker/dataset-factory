@@ -1,0 +1,44 @@
+# GitHub Actions CI —— 持续集成流水线：
+# 每次 push / PR，自动在 Windows + Linux 两个系统上跑「测试 + 覆盖率 + 架构契约」，全绿才算过。
+# 注意：本文件本地跑不了，推到 GitHub 后才在它的 runner 上真正执行。
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read        # 最小权限：这个 workflow 只需读代码，不给写权限（安全默认）
+
+jobs:
+  test:
+    name: "test (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false                            # 一个系统跑挂不取消另一个，两边结果都看得到
+      matrix:
+        os: [ubuntu-latest, windows-latest]       # 跨平台矩阵（Win + Linux 两系统各跑一遍）
+    defaults:
+      run:
+        working-directory: backend                # uv 项目在 backend/ 子目录，run 步骤都在这里执行
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6                 # 把仓库代码检出到 runner
+
+      - name: Install uv (+ Python 3.12)
+        uses: astral-sh/setup-uv@v7               # 官方 action：装 uv，并按需装 Python
+        with:
+          python-version: "3.12"
+          enable-cache: true                      # 缓存 uv 下载，加速后续运行
+          cache-dependency-glob: "backend/uv.lock"
+
+      - name: Sync dependencies
+        run: uv sync --frozen                     # 按已入库的 uv.lock 装依赖（--frozen：锁文件不许改，改了说明没同步）
+
+      - name: Test + coverage
+        run: uv run pytest --cov=dataset_factory  # 跑测试 + 覆盖率
+
+      - name: Import contracts (architecture)
+        run: uv run lint-imports                  # 守分层依赖规则（核心库不反向依赖入口层、能力层不依赖功能模块等）
