@@ -14,6 +14,7 @@ dev = [
     "import-linter>=2.15",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
+    "ruff>=0.16.6",
 ]
 
 [tool.pytest.ini_options]
@@ -25,6 +26,7 @@ source = ["dataset_factory"]
 
 [tool.coverage.report]
 show_missing = true
+fail_under = 80
 
 [tool.importlinter]
 root_packages = ["dataset_factory"]
