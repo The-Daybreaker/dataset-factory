@@ -18,12 +18,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-ENV_API_KEY = "DSF_API_KEY"  # 密钥辅通道（环境变量，优先覆盖 credentials 文件）
+ENV_API_KEY = "DSF_API_KEY"  # pragma: allowlist secret —— 环境变量名常量、非密钥值（辅通道，优先覆盖 credentials 文件）
 ENV_HOME = "DATASET_FACTORY_HOME"  # 数据根覆盖（默认 ~/.dataset_factory）
 
 _HOME_DIRNAME = ".dataset_factory"
 _CONFIG_FILENAME = "config.json"
-_CREDENTIALS_FILENAME = "credentials"
+_CREDENTIALS_FILENAME = (
+    "credentials"  # pragma: allowlist secret —— 文件名常量、非密钥值
+)
 _MASK = "**********"
 
 
