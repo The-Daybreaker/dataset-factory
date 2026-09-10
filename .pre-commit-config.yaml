@@ -1,6 +1,6 @@
 # pre-commit 钩子配置 —— 提交时自动检查仓库卫生；CI 里用 --all-files 全仓跑一遍。
 # 与 .editorconfig 配合：编辑器先统一书写，提交 / CI 再机械化兜底。
-# 钩子清单：文件名大小写冲突 / CRLF 行尾 / 行尾空白 / 文件末尾缺换行 / ruff（lint + 格式化）。
+# 钩子清单：文件名大小写冲突 / CRLF 行尾 / 行尾空白 / 文件末尾缺换行 / ruff（lint + 格式化）/ detect-secrets（密钥扫描）。
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -18,3 +18,10 @@ repos:
       - id: ruff-check
         args: [--fix]
       - id: ruff-format
+
+  # detect-secrets：扫描新增密钥（baseline = .secrets.baseline，其 filters 已排除 uv.lock；测试假密钥格式不匹配未被判定）
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
