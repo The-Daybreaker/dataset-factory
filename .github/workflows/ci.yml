@@ -29,7 +29,7 @@ jobs:
         working-directory: backend                # uv 项目在 backend/ 子目录，run 步骤都在这里执行
     steps:
       - name: Checkout
-        uses: actions/checkout@v6                 # 把仓库代码检出到 runner
+        uses: actions/checkout@v7                 # 把仓库代码检出到 runner
 
       - name: Install uv (+ Python 3.12)
         uses: astral-sh/setup-uv@v7               # 官方 action：装 uv，并按需装 Python
