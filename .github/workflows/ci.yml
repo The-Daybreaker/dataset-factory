@@ -58,3 +58,6 @@ jobs:
 
       - name: Import contracts (architecture)
         run: uv run lint-imports                  # 守分层依赖规则（核心库不反向依赖入口层、能力层不依赖功能模块等）
+
+      - name: Docs build (mkdocs --strict)
+        run: uv run mkdocs build --strict         # 文档骨架构建（mkdocstrings 从 docstring 抽 API；--strict 把警告当错误）
