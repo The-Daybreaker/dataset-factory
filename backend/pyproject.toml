@@ -2,8 +2,13 @@
 name = "dataset-factory"
 version = "0.1.0"
 description = "Dataset Factory backend: AI labeling engine for LoRA training datasets"
-requires-python = ">=3.12"
+requires-python = "==3.12.*"
+license = "MIT"
 dependencies = []
+
+[project.urls]
+Repository = "https://github.com/The-Daybreaker/dataset-factory"
+Issues = "https://github.com/The-Daybreaker/dataset-factory/issues"
 
 [build-system]
 requires = ["uv_build>=0.12.11,<0.13.0"]
@@ -11,8 +16,12 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "detect-secrets>=1.5.0",
     "import-linter>=2.15",
+    "mkdocs-material>=9.7.7",
+    "mkdocstrings[python]>=1.0.6",
     "pre-commit>=4.6.2",
+    "pyright>=1.1.413",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.16.6",
@@ -20,7 +29,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+addopts = "-ra --strict-markers --strict-config"
 
 [tool.coverage.run]
 source = ["dataset_factory"]
@@ -66,3 +75,36 @@ modules = [
 name = "入口层同层互相独立"
 type = "independence"
 modules = ["dataset_factory.cli", "dataset_factory.api"]
+
+# --- ruff：lint + 格式化（代码规范）---
+# lint 只选非格式化类规则（E4/E7/E9 而非全 E），格式化交给 ruff format，避免两者打架。
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM", "C4", "PT", "N", "RUF", "D"]
+ignore = [
+    "D400", "D415",   # 首行句末标点：中文用「。」，英文句号规则误报
+    "D401", "D403",   # 祈使语气 / 首词大写：英文语法检测，对中文不适用
+    "D417",           # 不强制每个参数都写进 Args（简单函数一行 docstring 即可）
+    "D105",           # 魔术方法（如 __repr__）免 docstring
+    "RUF001", "RUF002", "RUF003",  # 全角中文标点被判「易混 Unicode」，中文项目误报
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["D104"]   # 骨架包暂无 docstring，各模块有内容时再补
+
+[tool.ruff.lint.isort]
+known-first-party = ["dataset_factory"]
+
+# --- pyright：strict 静态类型检查（新项目尽早从严）---
+[tool.pyright]
+typeCheckingMode = "strict"
+include = ["src", "tests"]
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"

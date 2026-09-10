@@ -47,8 +47,14 @@ jobs:
       - name: Test + coverage
         run: uv run pytest --cov=dataset_factory  # 跑测试 + 覆盖率
 
-      - name: Lint (ruff)
-        run: uv run ruff check .                  # 代码风格 + 低级错误检查（ruff 默认规则集）
+      - name: Lint (ruff check)
+        run: uv run ruff check .                  # 代码风格 + 低级错误检查（规则集见 pyproject [tool.ruff]）
+
+      - name: Format check (ruff format)
+        run: uv run ruff format --check .         # 格式一致性（只校验不改；本地用 ruff format 应用）
+
+      - name: Type check (pyright strict)
+        run: uv run pyright                       # 静态类型检查 strict（见 pyproject [tool.pyright]）
 
       - name: Import contracts (architecture)
         run: uv run lint-imports                  # 守分层依赖规则（核心库不反向依赖入口层、能力层不依赖功能模块等）

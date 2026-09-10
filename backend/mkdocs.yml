@@ -1,0 +1,30 @@
+# MkDocs 配置 —— 最小文档骨架（Material 主题 + mkdocstrings 从 docstring 自动抽 API 参考）。
+# 放在 backend/：mkdocstrings 要 import dataset_factory，与包和 .venv 同处最省事。
+# 本地构建：cd backend && uv run mkdocs build（产物 site/，已 gitignore）；预览：uv run mkdocs serve。
+site_name: Dataset Factory
+site_description: 面向 LoRA 训练数据集生产的打标流水线工具
+repo_url: https://github.com/The-Daybreaker/dataset-factory
+
+theme:
+  name: material
+  language: zh
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_root_heading: true
+
+nav:
+  - 首页: index.md
+  - API 参考: api.md

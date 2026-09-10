@@ -1,4 +1,4 @@
-# === workspace 仓的 .gitignore：可再生产物（能由 uv / pytest 重新生成）不入库 ===
+# === 本仓的 .gitignore：可再生产物（能由 uv / pytest 重新生成）不入库 ===
 
 # Python 字节码 / 缓存
 __pycache__/
@@ -19,3 +19,19 @@ build/
 *.egg-info/
 
 # 注意：uv.lock 要入库（锁定确切版本、保证可复现安装），不要忽略它
+
+# 密钥 / 凭据（纵深防御：密钥实际存 ~/.dataset_factory 在仓外，这里挡住误建误提交）
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+credentials
+secrets/
+*_secret*
+id_rsa
+id_ed25519
+
+# 文档构建产物（MkDocs）
+site/

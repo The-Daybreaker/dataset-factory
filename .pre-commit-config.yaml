@@ -1,6 +1,6 @@
 # pre-commit 钩子配置 —— 提交时自动检查仓库卫生；CI 里用 --all-files 全仓跑一遍。
 # 与 .editorconfig 配合：编辑器先统一书写，提交 / CI 再机械化兜底。
-# 钩子清单：文件名大小写冲突 / CRLF 行尾 / 行尾空白 / 文件末尾缺换行。
+# 钩子清单：文件名大小写冲突 / CRLF 行尾 / 行尾空白 / 文件末尾缺换行 / ruff（lint + 格式化）。
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -10,3 +10,11 @@ repos:
         args: [--fix=lf]
       - id: end-of-file-fixer
       - id: trailing-whitespace
+
+  # ruff：lint + 格式化（rev 与 backend 的 uv ruff 0.16.6 对齐、避免漂移；规则见 backend/pyproject.toml）
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.6
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
