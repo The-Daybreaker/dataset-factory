@@ -83,13 +83,14 @@ line-length = 88
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM", "C4", "PT", "N", "RUF", "D"]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM", "C4", "PT", "N", "RUF", "D", "TRY", "BLE"]
 ignore = [
     "D400", "D415",   # 首行句末标点：中文用「。」，英文句号规则误报
     "D401", "D403",   # 祈使语气 / 首词大写：英文语法检测，对中文不适用
     "D417",           # 不强制每个参数都写进 Args（简单函数一行 docstring 即可）
     "D105",           # 魔术方法（如 __repr__）免 docstring
     "RUF001", "RUF002", "RUF003",  # 全角中文标点被判「易混 Unicode」，中文项目误报
+    "TRY003",         # 允许把可操作的长中文错误消息写在 raise 处（PRD 验收 12「哪里错怎么修」）
 ]
 
 [tool.ruff.lint.pydocstyle]
