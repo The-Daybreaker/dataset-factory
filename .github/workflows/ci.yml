@@ -1,5 +1,5 @@
 # GitHub Actions CI —— 持续集成流水线：
-# 每次 push / PR，自动在 Windows + Linux 两个系统上跑「测试 + 覆盖率 + 架构契约」，全绿才算过。
+# 每次 push / PR，自动在 Windows + Linux 两个系统上跑「测试 + 覆盖率 + 风格检查 + 仓库卫生 + 架构契约」，全绿才算过。
 # 注意：本文件本地跑不了，推到 GitHub 后才在它的 runner 上真正执行。
 
 name: CI
@@ -40,6 +40,9 @@ jobs:
 
       - name: Sync dependencies
         run: uv sync --frozen                     # 按已入库的 uv.lock 装依赖（--frozen：锁文件不许改，改了说明没同步）
+
+      - name: Pre-commit (repo hygiene)
+        run: uv run pre-commit run --all-files   # 钩子清单见仓库根 .pre-commit-config.yaml
 
       - name: Test + coverage
         run: uv run pytest --cov=dataset_factory  # 跑测试 + 覆盖率
