@@ -12,7 +12,9 @@ app 上，E2E 测试只需要一个端口；打标请求经真实浏览器 → �
 
 from __future__ import annotations
 
+import atexit
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -21,11 +23,24 @@ from pathlib import Path
 BACKEND_SRC = Path(__file__).resolve().parents[1] / "backend" / "src"
 sys.path.insert(0, str(BACKEND_SRC))
 
-# 数据根隔离：E2E 绝不碰真实的 ~/.dataset_factory。
-data_home = tempfile.mkdtemp(prefix="dsf-e2e-")
-os.environ["DATASET_FACTORY_HOME"] = data_home
 
-from dataset_factory.api import app as system_app
+# 数据根隔离：E2E 绝不碰真实的 ~/.dataset_factory。临时目录的清理是「两头兜」：
+# 正常退出走 atexit；Playwright 在 Windows 上硬杀 webServer 进程、atexit 不执行，
+# 所以下次启动先清扫残留——污染最多积累一份、不会无限增长。
+def _sweep_stale_data_homes() -> None:
+    """清掉历史 E2E 留在系统临时目录里的 dsf-e2e-* 残留（删不动就跳过、不阻塞启动）。"""
+    for entry in Path(tempfile.gettempdir()).glob("dsf-e2e-*"):
+        shutil.rmtree(entry, ignore_errors=True)
+
+
+_sweep_stale_data_homes()
+data_home = Path(tempfile.mkdtemp(prefix="dsf-e2e-"))
+os.environ["DATASET_FACTORY_HOME"] = str(data_home)
+atexit.register(shutil.rmtree, data_home, True)
+
+from dataset_factory.api import create_app
+
+system_app = create_app()
 from dataset_factory.llm import EndpointConfig, SecretValue, write_config
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
