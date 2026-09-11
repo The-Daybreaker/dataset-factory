@@ -208,7 +208,7 @@ def _atomic_write_text(path: Path, text: str) -> None:
         text: 要写入的文本内容。
 
     Raises:
-        ConfigError: 目录无法创建，或临时文件写入 / 改名等底层 OSError。
+        ConfigError: 目录无法创建，或临时文件写入 / 改名等底层 OSError，或内容含 UTF-8 无法编码的字符。
     """
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -227,5 +227,12 @@ def _atomic_write_text(path: Path, text: str) -> None:
             os.fsync(handle.fileno())
         os.replace(tmp_path, path)
     except OSError as exc:
-        tmp_path.unlink(missing_ok=True)
         raise ConfigError(f"无法写入 {path}：{exc.strerror or exc}") from exc
+    except UnicodeEncodeError as exc:
+        raise ConfigError(
+            f"无法写入 {path}：内容含 UTF-8 无法编码的字符（{exc.reason}）"
+        ) from exc
+    finally:
+        # 兜底清理：改名成功后临时文件已不存在（missing_ok 即 no-op）；任何失败
+        # 路径（含非 OSError 的编码错误）都清掉它，绝不留下垃圾临时文件。
+        tmp_path.unlink(missing_ok=True)

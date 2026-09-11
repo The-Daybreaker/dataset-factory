@@ -279,3 +279,16 @@ def test_write_config_uncreatable_data_root_raises(
 
     with pytest.raises(ConfigError, match="准备写入"):
         write_config(_endpoint())
+
+
+def test_write_config_unencodable_content_raises_and_cleans_up(
+    temp_data_root: Path,
+) -> None:
+    """内容含 UTF-8 无法编码的字符（孤立代理项）→ ConfigError，且清掉临时文件、不落坏文件。"""
+    unencodable = "bad-" + chr(0xD800) + "-model"
+
+    with pytest.raises(ConfigError, match="无法编码"):
+        write_config(_endpoint(model=unencodable))
+
+    assert not (temp_data_root / "config.json").exists()
+    assert [p for p in temp_data_root.iterdir() if p.suffix == ".tmp"] == []
