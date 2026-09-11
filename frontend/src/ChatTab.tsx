@@ -30,6 +30,8 @@ export function ChatTab(): ReactElement {
   const [instruction, setInstruction] = useState("");
   const [image, setImage] = useState<PendingImage | null>(null);
   const [sending, setSending] = useState(false);
+  // 等待中的秒数计时：让「卡住多久、卡在等待模型」可见，而不是按钮一黑到底。
+  const [waitSeconds, setWaitSeconds] = useState(0);
   const [error, setError] = useState("");
 
   // 进页面先拉提示词与 skill 列表（会话设置里要选它们）。
@@ -88,6 +90,20 @@ export function ChatTab(): ReactElement {
         : [...current, name],
     );
   };
+
+  // 发送期间每秒累加等待时间；结束（成功 / 失败）时归零。清理由 sending 的变化触发。
+  useEffect(() => {
+    if (!sending) {
+      return;
+    }
+    setWaitSeconds(0);
+    const timer = setInterval(() => {
+      setWaitSeconds((current) => current + 1);
+    }, 1000);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [sending]);
 
   const pickImage = (event: ChangeEvent<HTMLInputElement>): void => {
     const file = event.target.files?.[0];
@@ -227,7 +243,11 @@ export function ChatTab(): ReactElement {
                 disabled={sending || (instruction.trim() === "" && image === null)}
                 onClick={() => void send()}
               >
-                {sending ? "打标中…" : "发送"}
+                {sending
+                  ? waitSeconds < 3
+                    ? "已发送，等待模型…"
+                    : `等待模型响应…（已 ${waitSeconds}s）`
+                  : "发送"}
               </button>
             </div>
           </div>
