@@ -41,6 +41,11 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers --strict-config"
+markers = [
+    # L3 真端点测试：依赖真实模型服务与密钥，慢且外部依赖不可控——
+    # 不进日常 CI（CI 环境没有密钥，会自动跳过）；本地跑：uv run pytest -m live
+    "live: 需要真实模型端点与密钥的 L3 测试（本地手动触发，不进 CI）",
+]
 # tmp 目录即用即删（none）：不留跨轮次垃圾，避免下一次运行启动时的批量清理
 # 在受限环境下（rmtree 有单次删除上限）被拦；单个测试的 tmp 目录远小于上限。
 tmp_path_retention_policy = "none"
