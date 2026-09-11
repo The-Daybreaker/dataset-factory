@@ -248,3 +248,60 @@ img.preview {
   font-size: 13px;
   padding: 12px 0;
 }
+
+/* 列表项里的「整行可点」按钮（提示词列表）：沿用 li 的排版，只借按钮的可访问性语义 */
+.item-list .row-button {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.item-list .skill-toggle {
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+
+/* 表单里的横向排布（导入路径 + 按钮等） */
+.inline-form {
+  display: flex;
+  gap: 8px;
+}
+
+.inline-form input {
+  flex: 1;
+}
+
+/* 聊天输入区排版 */
+.chat-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.chat-buttons {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+/* 表单底部按钮组 */
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* 高一些的文本域（提示词正文） */
+textarea.tall {
+  min-height: 200px;
+}

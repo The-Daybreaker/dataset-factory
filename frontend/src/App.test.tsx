@@ -1,14 +1,28 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 
+// App 默认渲染聊天页，而它进页面就要拉列表并恢复会话。这里把 API 层整体换掉，
+// 让这条测试只关心「标题与页签渲染得对不对」，不碰网络（更细的交互测试见 T18）。
+vi.mock("./api", () => ({
+  api: {
+    listPrompts: vi.fn().mockResolvedValue([]),
+    listSkills: vi.fn().mockResolvedValue([]),
+    latestSession: vi.fn().mockRejectedValue(new Error("还没有任何会话")),
+  },
+  errorMessage: (error: unknown) => String(error),
+}));
+
 describe("App", () => {
-  it("渲染应用标题", () => {
+  it("渲染应用标题与四个页签", () => {
     render(<App />);
 
     expect(
       screen.getByRole("heading", { name: "Dataset Factory 打标测试台" }),
     ).toBeInTheDocument();
+    for (const label of ["聊天打标", "提示词库", "Skill", "配置"]) {
+      expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
+    }
   });
 });

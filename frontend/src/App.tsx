@@ -1,20 +1,46 @@
 import type { ReactElement } from "react";
+import { useState } from "react";
 
-/**
- * 应用根组件。
- *
- * T12 阶段先落一个最小骨架，目的是让工程跑起来（能构建、能测、CI 能验）；
- * T13 会把原来的四个界面（聊天打标 / 提示词库 / Skill / 配置）迁移进来替换它。
- */
+import { ChatTab } from "./ChatTab";
+import { ConfigTab } from "./ConfigTab";
+import { PromptsTab } from "./PromptsTab";
+import { SkillsTab } from "./SkillsTab";
+
+/** 四个页签：与 CLI 对等，覆盖一期全部能力。 */
+type TabKey = "chat" | "prompts" | "skills" | "config";
+
+const TABS: ReadonlyArray<readonly [TabKey, string]> = [
+  ["chat", "聊天打标"],
+  ["prompts", "提示词库"],
+  ["skills", "Skill"],
+  ["config", "配置"],
+];
+
+/** 应用根组件：页签切换 + 各页签主体。 */
 export function App(): ReactElement {
+  const [tab, setTab] = useState<TabKey>("chat");
+
   return (
     <div className="app">
       <header>
         <h1>Dataset Factory 打标测试台</h1>
+        <nav className="tabs">
+          {TABS.map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              className={tab === key ? "active" : ""}
+              onClick={() => setTab(key)}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
       </header>
-      <div className="card">
-        <p>前端工程化迁移中：工具链已就绪，界面迁移见下一步。</p>
-      </div>
+      {tab === "chat" && <ChatTab />}
+      {tab === "prompts" && <PromptsTab />}
+      {tab === "skills" && <SkillsTab />}
+      {tab === "config" && <ConfigTab />}
     </div>
   );
 }
