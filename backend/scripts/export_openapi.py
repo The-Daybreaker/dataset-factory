@@ -27,9 +27,9 @@ def export(output: Path) -> None:
     写文件时强制 LF 行尾（不用平台默认换行）：快照要与 CI（Linux）逐字节比对，
     Windows 上若用默认换行会造成虚假的「漂移」。
     """
-    from dataset_factory.api import app
+    from dataset_factory.api import create_app
 
-    spec = app.openapi()
+    spec = create_app().openapi()
     output.write_text(
         json.dumps(spec, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",

@@ -11,11 +11,12 @@
 from __future__ import annotations
 
 import logging
+import re
 from time import perf_counter
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
 from .._obs import ms_since, new_request_id, reset_request_id, set_request_id
 
@@ -23,6 +24,10 @@ logger = logging.getLogger(__name__)
 
 # 请求 id 的响应头名（沿用业界通行写法，便于与其它工具对接）。
 REQUEST_ID_HEADER = "X-Request-ID"
+
+# 外来请求 id 只在「安全的单段短 token」时才采纳：id 会进日志并回显到响应头，照单全收
+# 任意客户端内容等于敞开日志伪造与响应头注入（换行、控制字符尤其危险）。
+_ADOPTED_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 
 class RequestLogMiddleware(BaseHTTPMiddleware):
@@ -36,40 +41,52 @@ class RequestLogMiddleware(BaseHTTPMiddleware):
         时间口径是「整个请求在处理管线里待了多久」，包含路由、业务组装、模型调用与落盘；
         更细的分层耗时由 labeling / llm 各自记录（只有它们知道自己那一段花了多久）。
 
+        下游抛出的未捕获异常（bug 一类）在这里收口：完整堆栈进日志（ERROR 级），响应是
+        带请求 id 的 500 JSON（给用户干净摘要、不甩栈）。这是入口层边界唯一一次宽捕获
+        （错误分级见 design「日志与错误呈现」）——最需要对照日志的程序性 500 恰恰不能
+        少了 request id。
+
         Args:
             request: 本次 HTTP 请求。
             call_next: 交给下游处理管线的回调。
 
         Returns:
-            下游返回的响应（附带 request id 响应头）。
-
-        Raises:
-            Exception: 下游抛出的未捕获异常；记完耗时后原样向上抛，不吞错。
+            下游返回的响应（附带 request id 响应头）；未捕获异常时是带请求 id 的 500 JSON。
         """
         incoming = request.headers.get(REQUEST_ID_HEADER)
-        request_id = incoming if incoming else new_request_id()
+        if incoming is not None and _ADOPTED_REQUEST_ID.fullmatch(incoming):
+            request_id = incoming
+        else:
+            request_id = new_request_id()
         token = set_request_id(request_id)
         start = perf_counter()
         try:
             response = await call_next(request)
         except Exception:
-            # 未捕获异常（bug 一类）在这层是最外层，记一条预警后原样上抛、交给全局处理器。
-            logger.warning(
+            # 入口层边界的唯一宽捕获（错误分级见类 docstring）；记完整堆栈后收口成 500，
+            # 不 re-raise——交给 Starlette 兜底反而丢掉响应头里的 request id。
+            logger.exception(
                 "HTTP %s %s 处理时抛出未捕获异常（%.0fms）",
                 request.method,
                 request.url.path,
                 ms_since(start),
             )
-            raise
-        else:
-            response.headers[REQUEST_ID_HEADER] = request_id
-            logger.info(
-                "HTTP %s %s -> %d（%.0fms）",
-                request.method,
-                request.url.path,
-                response.status_code,
-                ms_since(start),
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "detail": "服务器内部错误（程序 bug 一类），不是你的输入问题；"
+                    "请带着本响应的 X-Request-ID 反馈，便于在后端日志中定位。"
+                },
+                headers={REQUEST_ID_HEADER: request_id},
             )
-            return response
         finally:
             reset_request_id(token)
+        response.headers[REQUEST_ID_HEADER] = request_id
+        logger.info(
+            "HTTP %s %s -> %d（%.0fms）",
+            request.method,
+            request.url.path,
+            response.status_code,
+            ms_since(start),
+        )
+        return response

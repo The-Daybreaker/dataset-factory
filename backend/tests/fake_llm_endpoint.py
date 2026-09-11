@@ -13,7 +13,6 @@
 
 from __future__ import annotations
 
-import socket
 import threading
 import time
 from typing import Any
@@ -35,17 +34,14 @@ class FakeLLMEndpoint:
         self._lock = threading.Lock()
         self.app.post("/v1/chat/completions")(self._handle_chat)
 
-        # 端口策略：先向内核要一个空闲端口再交给 uvicorn（测试场景竞态可忽略，
-        # 换来的是拿端口这件事简单直接）。
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-            probe.bind(("127.0.0.1", 0))
-            self.port: int = probe.getsockname()[1]
-
+        # 端口策略：让 uvicorn 直接绑 0（内核分配），启动后从服务对象读真实端口——
+        # 「先探测再交绑」在两步之间有把端口让给别人的竞态。
+        self.port: int | None = None
         self._server = uvicorn.Server(
             uvicorn.Config(
                 self.app,
                 host="127.0.0.1",
-                port=self.port,
+                port=0,
                 log_config=None,
                 access_log=False,
             )
@@ -55,7 +51,9 @@ class FakeLLMEndpoint:
     @property
     def base_url(self) -> str:
         """写进 config.json 的 base_url（openai SDK 直接可用）。"""
-        return f"http://127.0.0.1:{self.port}/v1"
+        port = self.port
+        assert port is not None, "start() 之前拿不到端口（由内核分配）"
+        return f"http://127.0.0.1:{port}/v1"
 
     def set_responses(self, responses: list[dict[str, Any] | int]) -> None:
         """设置逐轮脚本：dict = 正常响应体；int = 该轮返回的 HTTP 错误码。"""
@@ -71,10 +69,14 @@ class FakeLLMEndpoint:
             self._persistent_error = status_code
 
     def wait_ready(self, timeout: float = 10.0) -> None:
-        """等待服务就绪（uvicorn 的 started 标志 + 轮询）。"""
+        """等待服务就绪（uvicorn 的 started 标志 + 轮询），就绪后读出真实端口。"""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self._server.started:
+                if self.port is None:
+                    # 端口由内核分配，服务启动完成后才能从服务对象上读到。
+                    servers = self._server.servers
+                    self.port = servers[0].sockets[0].getsockname()[1]
                 return
             time.sleep(0.05)
         raise RuntimeError("假端点未能在超时内就绪")

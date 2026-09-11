@@ -1,6 +1,7 @@
 """api 入口层：FastAPI 应用工厂——路由组装、域异常 → HTTP 状态码映射、托管 frontend。
 
-错误映射（域异常的消息已可操作，直接进 detail；子类 handler 先于基类注册即先匹配）：
+错误映射（域异常的消息已可操作，直接进 detail；Starlette 按 `type(exc).__mro__` 就近匹配
+处理器——子类命中自身或最近基类的 handler，与注册顺序无关）：
 400 输入/配置错、404 找不到、409 重名冲突、413 超限、502 上游模型端点错、500 数据
 损坏 / 文件 IO（系统侧）。
 """
@@ -81,7 +82,7 @@ def _default_frontend_dir() -> Path:
     return Path(__file__).resolve().parents[3].parent / "frontend" / "dist"
 
 
-# 域异常 → HTTP 状态码：先注册子类（精确匹配优先），再注册基类兜底。
+# 域异常 → HTTP 状态码：Starlette 按异常类的 MRO 就近匹配（子类优先于基类），注册顺序无关。
 _ERROR_MAP: list[tuple[int, tuple[type[Exception], ...]]] = [
     (
         400,
@@ -136,4 +137,21 @@ def _register_error_handlers(app: FastAPI) -> None:
             app.add_exception_handler(exc_type, make_handler(status_code))
 
 
-app = create_app()
+# 注意：本模块刻意**不提供**模块级 `app` 单例——组装会探测磁盘（frontend/dist 存在才挂载
+# 静态文件），藏进 import 副作用里会让装配结果悄悄依赖运行环境。每个入口（serve / 测试 /
+# e2e / 契约导出）在各自启动点显式 `create_app()`，import 本模块零副作用。
+
+
+# 模块级 `app` 惰性构建（PEP 562）：组装会探测磁盘（frontend/dist 存在才挂载静态文件），
+# 推迟到真正取用 app 时（`dsf serve` / uvicorn import string / 测试），import 本模块零副作用。
+_app: FastAPI | None = None
+
+
+def __getattr__(name: str) -> FastAPI:
+    """模块属性惰性求值：`app` 首次访问时组装并缓存（同一进程内始终同一实例）。"""
+    if name != "app":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    global _app
+    if _app is None:
+        _app = create_app()
+    return _app

@@ -10,7 +10,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from dataset_factory.api import app
+from dataset_factory.api import create_app
+
+app = create_app()
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 

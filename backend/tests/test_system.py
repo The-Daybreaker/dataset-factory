@@ -47,11 +47,11 @@ def fake_endpoint() -> Iterator[FakeLLMEndpoint]:
 def system_port(temp_data_root: Path) -> Iterator[int]:
     """被测系统本身：线程内起真的 uvicorn 服务（完整 HTTP 栈），返回它的端口。
 
-    服务是模块级单例 app 的真实装配——中间件、错误处理器、静态托管全部在线。
+    服务是 create_app() 的真实装配——中间件、错误处理器、静态托管全部在线。
     与生产 `dsf serve` 的唯一差别是「同一进程内的另一个线程」而不是独立进程；
     对本地单进程工具而言，这个差别不影响被验证的行为。
     """
-    from dataset_factory.api import app
+    from dataset_factory.api import create_app
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))
@@ -59,7 +59,11 @@ def system_port(temp_data_root: Path) -> Iterator[int]:
 
     server = uvicorn.Server(
         uvicorn.Config(
-            app, host="127.0.0.1", port=port, log_config=None, access_log=False
+            create_app(),
+            host="127.0.0.1",
+            port=port,
+            log_config=None,
+            access_log=False,
         )
     )
     thread = threading.Thread(target=server.run, daemon=True)

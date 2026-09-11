@@ -334,8 +334,10 @@ def test_config_update_without_key_when_none_is_400(client: TestClient) -> None:
     assert "api_key" in response.json()["detail"]
 
 
-def test_frontend_served_when_dir_has_index(tmp_path: Path) -> None:
-    """frontend 目录有 index.html：GET / 返回页面，且 API 路由不受挂载影响。"""
+def test_frontend_served_when_dir_has_index(
+    tmp_path: Path, temp_data_root: Path
+) -> None:
+    """frontend 目录有 index.html：GET / 返回页面，API 路由不受挂载影响（自建 client 也要 temp_data_root 隔离数据根）。"""
     (tmp_path / "index.html").write_text("<h1>Dataset Factory</h1>", encoding="utf-8")
     local_client = TestClient(create_app(frontend_dir=tmp_path))
 

@@ -7,14 +7,17 @@
 from __future__ import annotations
 
 import json
+import logging
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
 from typer.testing import CliRunner
 
 import dataset_factory.cli.label as label_module
 from dataset_factory.cli import app
-from dataset_factory.llm import ImagePart, TextPart
+from dataset_factory.llm import ImagePart, LLMTimeoutError, Message, TextPart
 from dataset_factory.prompts import Prompt, save_prompt
 from dataset_factory.sessions import list_sessions
 from dataset_factory.skills import import_skill
@@ -44,6 +47,19 @@ def _save_prompt(name: str, body: str) -> None:
     save_prompt(Prompt(name=name, description="测试提示词", body=body))
 
 
+class _FlakyCompleter:
+    """第一轮抛超时、之后正常回复的假客户端（测 chat 的逐轮容错）。"""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def complete(self, messages: Sequence[Message]) -> str:
+        self.calls += 1
+        if self.calls == 1:
+            raise LLMTimeoutError("模型调用超时；可重试或调大 timeout。")
+        return "第二轮回复"
+
+
 def test_label_outputs_caption_and_session_hint(
     temp_data_root: Path, fake_engine: FakeCompleter
 ) -> None:
@@ -70,26 +86,26 @@ def test_label_json_mode(temp_data_root: Path, fake_engine: FakeCompleter) -> No
     assert payload == {"session_id": session_id, "caption": "打标结果"}
 
 
-def test_label_resume_iterates_with_history(temp_data_root: Path) -> None:
+def test_label_resume_iterates_with_history(
+    temp_data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """带 --session 续接：第二轮携带第一轮历史（迭代改写）。"""
     _save_prompt("h3", "你是打标助手。")
     completer = FakeCompleter(replies=["第一轮", "第二轮"])
     from dataset_factory.labeling import LabelingEngine
 
-    original = label_module.build_engine
-    label_module.build_engine = lambda: LabelingEngine(completer, "test-model")
-    try:
-        first = runner.invoke(app, ["label", "-p", "h3", "-m", "描述图"])
-        assert first.exit_code == 0
-        assert first.stdout == "第一轮\n"
-        (session_id,) = list_sessions()
-        second = runner.invoke(
-            app, ["label", "--session", session_id, "-m", "改成一句话", "--json"]
-        )
-    finally:
-        label_module.build_engine = original
+    def fake_build() -> LabelingEngine:
+        return LabelingEngine(completer, "test-model")
 
+    monkeypatch.setattr(label_module, "build_engine", fake_build)
+    first = runner.invoke(app, ["label", "-p", "h3", "-m", "描述图"])
     assert first.exit_code == 0
+    assert first.stdout == "第一轮\n"
+    (session_id,) = list_sessions()
+    second = runner.invoke(
+        app, ["label", "--session", session_id, "-m", "改成一句话", "--json"]
+    )
+
     assert second.exit_code == 0
     assert json.loads(second.stdout)["caption"] == "第二轮"
     assert len(completer.calls) == 2
@@ -308,3 +324,88 @@ def test_usage_error_exit_code(temp_data_root: Path) -> None:
     result = runner.invoke(app, ["不存在的命令"])
 
     assert result.exit_code == 2
+
+
+def test_label_unknown_skill_exits_user_error(
+    temp_data_root: Path, fake_engine: FakeCompleter
+) -> None:
+    """勾选不存在的 skill：退出码 1、stderr 给可操作错误（不静默吞掉）。"""
+    _save_prompt("h3", "你是打标助手。")
+
+    result = runner.invoke(app, ["label", "-p", "h3", "-s", "不存在", "-m", "描述"])
+
+    assert result.exit_code == 1
+    assert "不在 skill 库" in result.stderr
+
+
+def test_chat_turn_failure_keeps_session_alive(
+    temp_data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """chat 某一轮失败（模型超时）：报错带重试提示后继续会话，下一轮照常进行。"""
+    from dataset_factory.labeling import LabelingEngine
+
+    _save_prompt("h3", "你是打标助手。")
+    completer = _FlakyCompleter()
+
+    def fake_build() -> LabelingEngine:
+        return LabelingEngine(completer, "test-model")
+
+    monkeypatch.setattr(label_module, "build_engine", fake_build)
+
+    result = runner.invoke(app, ["chat", "-p", "h3"], input="第一轮\n第二轮\n")
+
+    assert result.exit_code == 0
+    assert "错误：模型调用超时" in result.stderr
+    assert "重发本轮" in result.stderr
+    assert "第二轮回复" in result.output
+    assert completer.calls == 2
+
+
+def test_serve_wires_uvicorn_without_access_log(
+    temp_data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """serve：uvicorn 以「不覆盖应用日志、访问日志交中间件」方式装配（T10 的关键修复不被回退）。"""
+    captured: dict[str, object] = {}
+
+    def fake_run(app_obj: object, **kwargs: object) -> None:
+        captured["app"] = app_obj
+        captured.update(kwargs)
+
+    monkeypatch.setattr("uvicorn.run", fake_run)
+
+    result = runner.invoke(app, ["serve", "--host", "127.0.0.1", "--port", "8123"])
+
+    assert result.exit_code == 0
+    assert isinstance(captured["app"], FastAPI)
+    assert captured["host"] == "127.0.0.1"
+    assert captured["port"] == 8123
+    assert captured["log_config"] is None
+    assert captured["access_log"] is False
+
+
+def test_serve_log_level_reconfigures_logging(
+    temp_data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """serve --log-level：显式值生效；无法识别的值回落 INFO（不崩、可启动）。"""
+    root = logging.getLogger()
+    saved_handlers = root.handlers[:]
+    saved_level = root.level
+
+    def fake_run(app_obj: object, **kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr("uvicorn.run", fake_run)
+
+    try:
+        result = runner.invoke(app, ["serve", "--log-level", "warning"])
+        assert result.exit_code == 0
+        assert root.level == logging.WARNING
+
+        result_bad = runner.invoke(app, ["serve", "--log-level", "不是级别"])
+        assert result_bad.exit_code == 0
+        assert root.level == logging.INFO
+    finally:
+        # serve 内部 basicConfig(force=True) 会把 handler 绑到 CliRunner 的临时 stderr，
+        # 测试后还原 root 配置，避免遗留指向已关流的 handler 污染后续测试的日志输出。
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)

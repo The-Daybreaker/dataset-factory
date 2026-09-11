@@ -88,7 +88,7 @@ def serve(
     """启动本地 Web 服务（HTTP API + 前端界面），Ctrl+C 停止。"""
     import uvicorn
 
-    from ..api import app as api_app
+    from ..api import create_app
 
     if log_level is not None:
         _configure_logging(log_level)
@@ -97,7 +97,7 @@ def serve(
     )
     # log_config=None：不让 uvicorn 覆盖应用刚配好的日志（否则级别与格式会被打回它的默认）。
     # access_log=False：访问日志由 RequestLogMiddleware 接管——uvicorn 自带那条不含耗时。
-    uvicorn.run(api_app, host=host, port=port, log_config=None, access_log=False)
+    uvicorn.run(create_app(), host=host, port=port, log_config=None, access_log=False)
 
 
 # 应用层在最早期配置日志（stdout 留给结果正文，退出码约定见模块 docstring）。

@@ -148,12 +148,30 @@ def test_access_log_records_method_path_status_duration(
     )
 
 
-def test_unhandled_exception_is_logged(
+def test_unhandled_exception_returns_500_with_request_id(
     mini_app: FastAPI, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """未捕获异常留下一条带耗时的预警，而不是悄无声息地 500。"""
-    caplog.set_level(logging.WARNING, logger="dataset_factory.api.middleware")
+    """未捕获异常收口成带请求 id 的 500：堆栈进日志（ERROR），给用户干净摘要、不甩栈。"""
+    caplog.set_level(logging.ERROR, logger="dataset_factory.api.middleware")
     with TestClient(mini_app, raise_server_exceptions=False) as client:
         response = client.get("/boom")
+
     assert response.status_code == 500
-    assert any("未捕获异常" in record.message for record in caplog.records)
+    assert len(response.headers[REQUEST_ID_HEADER]) == 12
+    detail = response.json()["detail"]
+    assert "服务器内部错误" in detail
+    assert "模拟未捕获异常" not in detail
+    assert any(
+        record.levelno == logging.ERROR and "未捕获异常" in record.message
+        for record in caplog.records
+    )
+
+
+def test_invalid_incoming_request_id_is_replaced(mini_app: FastAPI) -> None:
+    """请求自带的 request id 不合法（控制字符 / 超长）时换新生成的，不照单回显。"""
+    hostile = "bad id\nwith-newline"
+    with TestClient(mini_app) as client:
+        response = client.get("/ping", headers={REQUEST_ID_HEADER: hostile})
+    assert response.status_code == 200
+    assert response.headers[REQUEST_ID_HEADER] != hostile
+    assert len(response.headers[REQUEST_ID_HEADER]) == 12

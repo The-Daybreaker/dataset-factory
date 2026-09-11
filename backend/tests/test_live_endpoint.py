@@ -31,8 +31,10 @@ import httpx
 import pytest
 import uvicorn
 
-from dataset_factory.api import app as system_app
+from dataset_factory.api import create_app
 from dataset_factory.llm import EndpointConfig, SecretValue, write_config
+
+system_app = create_app()
 
 # ---------- 环境与跳过逻辑 ----------
 

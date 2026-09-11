@@ -14,9 +14,9 @@ from typing import Annotated
 import typer
 
 from ..labeling import LabelingEngine
-from ..llm import build_completer, read_config
+from ..llm import LLMError, build_completer, read_config
 from ..sessions import latest_session_id
-from .errors import handle_domain_errors
+from .errors import DOMAIN_ERRORS, handle_domain_errors
 
 # chat 输入行里附图的轻量语法：`@图片路径 指令`（@ 开头第一个词是图，其余是指令）。
 _AT_IMAGE_SYNTAX = re.compile(r"^@(\S+)\s*(.*)$")
@@ -125,12 +125,24 @@ def chat(
         image_path, instruction = _parse_chat_line(line)
         if not instruction and image_path is None and not line.strip():
             continue
-        result = engine.label(
-            session_id=session_id,
-            prompt_name=prompt_name,
-            instruction=instruction,
-            image=image_path,
-        )
+        try:
+            result = engine.label(
+                session_id=session_id,
+                prompt_name=prompt_name,
+                instruction=instruction,
+                image=image_path,
+            )
+        except DOMAIN_ERRORS as exc:
+            # 逐轮容错：一轮失败（超时、@错了图片路径等）报错后继续，多轮上下文还在盘上，
+            # 直接重发本轮即可——整场退出等于把前面的对话全作废。
+            typer.secho(f"错误：{exc}", fg=typer.colors.RED, err=True)
+            if isinstance(exc, LLMError) and exc.retryable:
+                typer.secho(
+                    "该错误通常是暂时性的（网络 / 超时），可直接重发本轮。",
+                    fg=typer.colors.YELLOW,
+                    err=True,
+                )
+            continue
         session_id = result.session_id
         prompt_name = None  # 首轮落定后由会话设置携带，不再重复传
         typer.echo(result.caption)

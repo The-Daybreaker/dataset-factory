@@ -55,7 +55,25 @@ def prompt_save(
 ) -> None:
     """保存提示词（不存在即新建、已存在即覆盖——旧版自动进 _history 滚动备份）。"""
     if body_file is not None:
-        body = body_file.read_text(encoding="utf-8")
+        try:
+            body = body_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            # 用户错（路径不存在 / 不可读）给可操作消息，不甩原始栈。
+            typer.secho(
+                f"错误：无法读取正文文件 {body_file}：{exc.strerror or exc}；"
+                "请确认路径存在且可读。",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(1) from exc
+        except UnicodeDecodeError as exc:
+            typer.secho(
+                f"错误：正文文件 {body_file} 不是合法 UTF-8 编码（{exc.reason}）；"
+                "请改用 UTF-8 文本文件。",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(1) from exc
     else:
         typer.echo("输入提示词正文（结束：Ctrl+D / Ctrl+Z+回车）：", err=True)
         body = sys.stdin.read()

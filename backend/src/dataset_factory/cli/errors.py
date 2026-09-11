@@ -20,7 +20,7 @@ from ..skills import SkillError
 
 # CLI 的失败语义：域异常 → 1；意外异常不拦（带 traceback 退出，fail loud）。用法错误由
 # Typer/click 默认给 2。完整退出码表见 main 模块 docstring。
-_DOMAIN_ERRORS = (
+DOMAIN_ERRORS = (
     LabelingError,
     PromptError,
     SkillError,
@@ -42,7 +42,7 @@ def handle_domain_errors[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         try:
             return fn(*args, **kwargs)
-        except _DOMAIN_ERRORS as exc:
+        except DOMAIN_ERRORS as exc:
             print(f"错误：{exc}", file=sys.stderr)
             raise typer.Exit(1) from exc
 
