@@ -1,8 +1,9 @@
 # GitHub Actions CI —— 持续集成流水线：
-# 每次 push / PR，自动跑三套 job，全绿才算过：
+# 每次 push / PR，自动跑四套 job，全绿才算过：
 #   - test（后端）：测试 + 覆盖率 + 架构契约 + ruff lint/format + pyright 类型 + pre-commit + OpenAPI 漂移检查 + docs 构建
 #   - frontend（前端）：Biome lint/format + tsc 类型检查 + Vitest + Vite 构建
 #   - api-contract：oasdiff 对比前后两次提交的 OpenAPI 快照，破坏性变更（ERR 级）直接挡下
+#   - e2e：Playwright 真浏览器走「页面 → HTTP → 后端 → 假模型端点」全链路
 # 注意：本文件本地跑不了，推到 GitHub 后才在它的 runner 上真正执行。
 
 name: CI
@@ -143,3 +144,46 @@ jobs:
           revision: HEAD:backend/openapi.json
           fail-on: ERR
           review: false                           # spec 不上传第三方，只在本 runner 内比对
+
+  e2e:
+    name: "e2e (browser)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install uv (+ Python 3.12)
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
+
+      - name: Sync backend deps
+        run: uv sync --frozen                     # E2E 的被测服务（serving.py）跑在后端的 uv 环境里
+        working-directory: backend
+
+      - name: Install Node (+ npm 缓存)
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            e2e/package-lock.json
+
+      - name: Build frontend
+        run: npm ci && npm run build              # 后端托管的是构建产物，E2E 前必须先 build
+        working-directory: frontend
+
+      - name: Install e2e deps
+        run: npm ci
+        working-directory: e2e
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+        working-directory: e2e
+
+      - name: Run E2E
+        run: npx playwright test
+        working-directory: e2e

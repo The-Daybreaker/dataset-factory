@@ -20,6 +20,11 @@ node_modules/
 .coverage.*
 htmlcov/
 
+# Playwright（E2E）运行产物
+test-results/
+playwright-report/
+blob-report/
+
 # 打包 / 构建产物
 dist/
 build/
