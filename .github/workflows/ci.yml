@@ -52,10 +52,17 @@ jobs:
         run: uv run pytest --cov=dataset_factory  # 跑测试 + 覆盖率（整体报告参考，不设硬门槛）
 
       - name: Core coverage gate (≥80%)
-        run: >-                                   # 核心五模块（labeling/llm/prompts/skills/sessions）行覆盖率 ≥80% 才算过；入口层与整体不设硬门槛（goal B3）
+        run: >-                                   # 核心五模块（labeling/llm/prompts/skills/sessions）行覆盖率 ≥80% 才算过；入口层单独设门槛（见下一步骤），整体不设硬门槛（goal B3）
           uv run coverage report
           --include="*/dataset_factory/labeling/*,*/dataset_factory/llm/*,*/dataset_factory/prompts/*,*/dataset_factory/skills/*,*/dataset_factory/sessions/*"
           --fail-under=80
+
+      # 入口层（cli / api）行覆盖率各 ≥70% 才算过（goal B3）：比核心低一档——入口层含
+      # serve 等需要起真实服务、难以自动化的代码；门槛定位是衰减护栏而非 KPI。
+      - name: Entry-layer coverage gate (cli ≥70%, api ≥70%)
+        run: |
+          uv run coverage report --include="*/dataset_factory/cli/*" --fail-under=70
+          uv run coverage report --include="*/dataset_factory/api/*" --fail-under=70
 
       - name: Lint (ruff check)
         run: uv run ruff check .                  # 代码风格 + 低级错误检查（规则集见 pyproject [tool.ruff]）

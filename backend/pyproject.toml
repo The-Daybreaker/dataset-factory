@@ -56,7 +56,7 @@ source = ["dataset_factory"]
 
 [tool.coverage.report]
 show_missing = true
-# 硬门槛不在整包（入口层不设门槛），核心五模块 ≥80% 由 CI 的 coverage report --include 单独卡（goal B3）。
+# 硬门槛不在整包：核心五模块 ≥80%、入口层 cli/api 各 ≥70%（2026-09-12 设立）由 CI 的 coverage report --include 单独卡（goal B3）。
 
 [tool.importlinter]
 root_packages = ["dataset_factory"]
