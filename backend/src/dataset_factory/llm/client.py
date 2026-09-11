@@ -24,7 +24,17 @@ from openai.types.chat import (
 )
 
 from .config import EndpointConfig
-from .errors import LLMError
+from .errors import (
+    LLMAuthError,
+    LLMBadRequestError,
+    LLMConnectionError,
+    LLMError,
+    LLMNotFoundError,
+    LLMRateLimitError,
+    LLMServerError,
+    LLMTimeoutError,
+    LLMUnexpectedError,
+)
 from .images import encode_image_data_url
 from .messages import ImagePart, Message, TextPart
 
@@ -74,12 +84,15 @@ class OpenAIChatClient:
             模型产出文本。
 
         Raises:
-            LLMError: 响应无 choices 或首条 choice 无文本内容。
+            LLMError: SDK 调用失败（翻译成对应分类异常），或响应无 choices / 无文本内容。
         """
         payload = [_to_openai_message(message) for message in messages]
-        response = self._client.chat.completions.create(
-            model=self._model, messages=payload
-        )
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model, messages=payload
+            )
+        except openai.APIError as exc:
+            raise _translate_sdk_error(exc) from exc
         return _extract_text(response)
 
 
@@ -153,3 +166,47 @@ def _extract_text(response: ChatCompletion) -> str:
     if content is None:
         raise LLMError("模型未返回文本内容（content 为空）；请重试或检查模型。")
     return content
+
+
+def _translate_sdk_error(exc: openai.APIError) -> LLMError:
+    """把 openai SDK 的分类异常翻译成项目自己的类型化异常。
+
+    按「先具体后一般」判类型：APITimeoutError 是 APIConnectionError 的子类、各 HTTP
+    状态异常是 APIStatusError 的子类，故先判子类再判父类。用户可见消息只说「哪里错、
+    怎么修」，不回显 SDK 原始消息（避免泄密钥 / 甩栈）。
+    """
+    if isinstance(exc, openai.APITimeoutError):
+        return LLMTimeoutError(
+            "调用模型超时；网络较慢或模型响应久，可稍后重试（大图 / 慢模型可调大 timeout）。"
+        )
+    if isinstance(exc, openai.APIConnectionError):
+        return LLMConnectionError(
+            "无法连接到模型端点；请检查网络与 base_url 是否可达。"
+        )
+    if isinstance(exc, openai.AuthenticationError):
+        return LLMAuthError(
+            "鉴权失败：API 密钥无效或过期；请用 `dsf config set` 重新设置密钥。"
+        )
+    if isinstance(exc, openai.PermissionDeniedError):
+        return LLMAuthError("无权访问该端点或模型；请检查密钥权限。")
+    if isinstance(exc, openai.RateLimitError):
+        return LLMRateLimitError(
+            "触发限流（请求过多或额度用尽）；请稍后重试或检查配额。"
+        )
+    if isinstance(exc, openai.NotFoundError):
+        return LLMNotFoundError("端点或模型不存在；请检查 base_url 与模型名是否正确。")
+    if isinstance(exc, openai.BadRequestError):
+        return LLMBadRequestError(
+            "请求被端点判为非法（消息 / 图片 / 参数不合法）；请检查输入。"
+        )
+    if isinstance(exc, openai.UnprocessableEntityError):
+        return LLMBadRequestError("请求格式端点无法处理；请检查输入。")
+    if isinstance(exc, openai.InternalServerError):
+        return LLMServerError("模型服务端错误（5xx）；请稍后重试。")
+    if isinstance(exc, openai.APIStatusError):
+        if exc.status_code >= 500:
+            return LLMServerError(
+                f"模型服务端错误（HTTP {exc.status_code}）；请稍后重试。"
+            )
+        return LLMUnexpectedError(f"模型端点返回意外错误（HTTP {exc.status_code}）。")
+    return LLMUnexpectedError("调用模型时发生意外错误；请重试或检查端点配置。")

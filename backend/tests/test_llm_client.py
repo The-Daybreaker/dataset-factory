@@ -14,7 +14,15 @@ import pytest
 from dataset_factory.llm import (
     EndpointConfig,
     ImagePart,
+    LLMAuthError,
+    LLMBadRequestError,
+    LLMConnectionError,
     LLMError,
+    LLMNotFoundError,
+    LLMRateLimitError,
+    LLMServerError,
+    LLMTimeoutError,
+    LLMUnexpectedError,
     Message,
     OpenAIChatClient,
     SecretValue,
@@ -35,6 +43,17 @@ def _client_returning(response: object, model: str = "test-model") -> OpenAIChat
     sdk = MagicMock()
     sdk.chat.completions.create.return_value = response
     return OpenAIChatClient(cast(openai.OpenAI, sdk), model)
+
+
+def _client_raising(exc: BaseException, model: str = "test-model") -> OpenAIChatClient:
+    sdk = MagicMock()
+    sdk.chat.completions.create.side_effect = exc
+    return OpenAIChatClient(cast(openai.OpenAI, sdk), model)
+
+
+def _bare_sdk_error[T: BaseException](cls: type[T]) -> T:
+    """造未初始化的 SDK 异常实例：只测 isinstance 分派，绕开 __init__ 对 httpx 参数的依赖。"""
+    return cls.__new__(cls)
 
 
 def test_complete_returns_model_text() -> None:
@@ -126,3 +145,66 @@ def test_build_completer_wires_endpoint_and_defaults(
     assert captured["api_key"] == config.api_key.reveal()
     assert captured["timeout"] == 120.0
     assert captured["max_retries"] == 2
+
+
+@pytest.mark.parametrize(
+    ("sdk_exc", "expected", "retryable"),
+    [
+        (openai.APITimeoutError, LLMTimeoutError, True),
+        (openai.APIConnectionError, LLMConnectionError, True),
+        (openai.APIError, LLMUnexpectedError, False),
+        (openai.AuthenticationError, LLMAuthError, False),
+        (openai.PermissionDeniedError, LLMAuthError, False),
+        (openai.RateLimitError, LLMRateLimitError, True),
+        (openai.NotFoundError, LLMNotFoundError, False),
+        (openai.BadRequestError, LLMBadRequestError, False),
+        (openai.UnprocessableEntityError, LLMBadRequestError, False),
+        (openai.InternalServerError, LLMServerError, True),
+    ],
+)
+def test_complete_maps_sdk_error_to_typed(
+    sdk_exc: type[BaseException], expected: type[LLMError], retryable: bool
+) -> None:
+    """SDK 分类异常翻译成对应的项目类型化异常，retryable 标记正确。"""
+    client = _client_raising(_bare_sdk_error(sdk_exc))
+
+    with pytest.raises(expected) as excinfo:
+        client.complete([Message(role="user", parts=(TextPart("hi"),))])
+
+    assert excinfo.value.retryable is retryable
+
+
+def test_complete_maps_unhandled_4xx_to_unexpected() -> None:
+    """未单独归类的 4xx（如 409）→ LLMUnexpectedError、不可重试。"""
+    exc = _bare_sdk_error(openai.ConflictError)
+    exc.status_code = 409
+    client = _client_raising(exc)
+
+    with pytest.raises(LLMUnexpectedError) as excinfo:
+        client.complete([Message(role="user", parts=(TextPart("hi"),))])
+
+    assert excinfo.value.retryable is False
+
+
+def test_complete_maps_generic_5xx_to_server_error() -> None:
+    """未单独归类的 5xx → LLMServerError、可重试。"""
+    exc = _bare_sdk_error(openai.APIStatusError)
+    exc.status_code = 503
+    client = _client_raising(exc)
+
+    with pytest.raises(LLMServerError) as excinfo:
+        client.complete([Message(role="user", parts=(TextPart("hi"),))])
+
+    assert excinfo.value.retryable is True
+
+
+def test_auth_error_message_is_clean_and_actionable() -> None:
+    """鉴权错误消息是干净可操作人话（钉死内容，防将来回显 SDK 原文而泄密）。"""
+    client = _client_raising(_bare_sdk_error(openai.AuthenticationError))
+
+    with pytest.raises(LLMAuthError) as excinfo:
+        client.complete([Message(role="user", parts=(TextPart("hi"),))])
+
+    assert str(excinfo.value) == (
+        "鉴权失败：API 密钥无效或过期；请用 `dsf config set` 重新设置密钥。"
+    )

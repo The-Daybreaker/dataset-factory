@@ -4,7 +4,7 @@
 - 配置与密钥：EndpointConfig / SecretValue / ConfigError / data_root / read_config / write_config
 - 补全接口与客户端：Completer / OpenAIChatClient / build_completer
 - 消息模型：Message / Role / TextPart / ImagePart / ContentPart
-- 异常：LLMError / UnsupportedImageError / ImageTooLargeError
+- 异常：LLMError 基类 + 分类子类（鉴权 / 限流 / 超时 / 连接 / 请求非法 / 未找到 / 服务端 / 意外）+ UnsupportedImageError / ImageTooLargeError
 """
 
 from .client import Completer, OpenAIChatClient, build_completer
@@ -16,7 +16,19 @@ from .config import (
     read_config,
     write_config,
 )
-from .errors import ImageTooLargeError, LLMError, UnsupportedImageError
+from .errors import (
+    ImageTooLargeError,
+    LLMAuthError,
+    LLMBadRequestError,
+    LLMConnectionError,
+    LLMError,
+    LLMNotFoundError,
+    LLMRateLimitError,
+    LLMServerError,
+    LLMTimeoutError,
+    LLMUnexpectedError,
+    UnsupportedImageError,
+)
 from .messages import ContentPart, ImagePart, Message, Role, TextPart
 
 __all__ = [
@@ -26,7 +38,15 @@ __all__ = [
     "EndpointConfig",
     "ImagePart",
     "ImageTooLargeError",
+    "LLMAuthError",
+    "LLMBadRequestError",
+    "LLMConnectionError",
     "LLMError",
+    "LLMNotFoundError",
+    "LLMRateLimitError",
+    "LLMServerError",
+    "LLMTimeoutError",
+    "LLMUnexpectedError",
     "Message",
     "OpenAIChatClient",
     "Role",
