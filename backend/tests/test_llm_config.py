@@ -243,7 +243,7 @@ def test_write_config_strips_surrounding_whitespace(temp_data_root: Path) -> Non
 
 def test_write_config_error_does_not_leak_secret(temp_data_root: Path) -> None:
     """脱敏：写入报错时，错误信息里绝不含密钥明文。"""
-    secret = "sk-super-secret-do-not-leak"
+    secret = "sk-super-secret-do-not-leak"  # pragma: allowlist secret
 
     with pytest.raises(ConfigError) as excinfo:
         write_config(_endpoint(model="", key=secret))
