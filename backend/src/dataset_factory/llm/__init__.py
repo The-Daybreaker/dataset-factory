@@ -1,7 +1,7 @@
 """llm 能力层：全项目唯一与模型端点通信的模块。
 
 对外接口（逐步补齐）：
-- 配置与密钥：EndpointConfig / SecretValue / ConfigError / data_root / read_config
+- 配置与密钥：EndpointConfig / SecretValue / ConfigError / data_root / read_config / write_config
 - provider 中立接口 + OpenAI 兼容客户端（后续补）
 """
 
@@ -11,6 +11,7 @@ from .config import (
     SecretValue,
     data_root,
     read_config,
+    write_config,
 )
 
 __all__ = [
@@ -19,4 +20,5 @@ __all__ = [
     "SecretValue",
     "data_root",
     "read_config",
+    "write_config",
 ]

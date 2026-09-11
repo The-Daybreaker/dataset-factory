@@ -2,18 +2,20 @@
 
 设计要点：
 - config.json（非敏感：base_url / 模型名）与 credentials（密钥）分离存放；
+- 读写都收敛在本模块：read_config 读、write_config 原子写（临时文件 + fsync + os.replace），入口层不直接碰这两个文件；
 - 密钥双通道：credentials 文件为主，环境变量 DSF_API_KEY 为辅且优先覆盖；
 - 全程脱敏：密钥绝不进 repr / str / 日志 / 错误信息；
 - 边界 Fail-Fast：缺失 / 损坏给可操作错误（哪里错、怎么修），不甩原始栈、不泄密钥；
 - llm 不依赖任何功能模块（import-linter forbidden 契约守）。
 
-credentials 文件格式：纯文本，内容为 API key 本身（单一密钥，最简；写入接口后续补齐）。
+credentials 文件格式：纯文本，内容为 API key 本身（单一密钥，最简）。
 """
 
 from __future__ import annotations
 
 import json
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -152,3 +154,78 @@ def _resolve_api_key(credentials_path: Path) -> SecretValue:
         "未找到 API 密钥：请设置 credentials 文件（`dsf config set`）"
         f"或环境变量 {ENV_API_KEY}。"
     )
+
+
+def write_config(config: EndpointConfig) -> None:
+    """把端点配置与密钥原子写入数据根（config.json + credentials）。
+
+    与 read_config 对称——入口层（`dsf config set` / Web 配置页）组装好 EndpointConfig
+    交给本函数落盘，全项目只有 llm 接触这两个文件。写前对三个字段做 Fail-Fast 校验，
+    避免落下一个读侧又会拒绝的坏配置；两个文件各自原子写（临时文件 + fsync +
+    os.replace），崩溃不留半个损坏文件。credentials 在 Unix 上以 0600 落盘（mkstemp
+    默认权限，仅本人可读写），Windows 无 0600 语义、靠用户主目录默认 ACL 隔离。
+
+    Args:
+        config: 端点三要素（base_url / model / api_key）。
+
+    Raises:
+        ConfigError: 字段去掉首尾空白后为空，或底层目录 / 文件写入失败。
+    """
+    base_url = config.base_url.strip()
+    model = config.model.strip()
+    api_key = config.api_key.reveal().strip()
+    if not base_url:
+        raise ConfigError(
+            "base_url 不能为空；请填写端点地址（如 https://api.example.com/v1）。"
+        )
+    if not model:
+        raise ConfigError("model 不能为空；请填写模型名。")
+    if not api_key:
+        raise ConfigError("api_key 不能为空；请填写密钥。")
+    root = data_root()
+    config_json = (
+        json.dumps({"base_url": base_url, "model": model}, ensure_ascii=False, indent=2)
+        + "\n"
+    )
+    _atomic_write_text(root / _CONFIG_FILENAME, config_json)
+    _atomic_write_text(root / _CREDENTIALS_FILENAME, api_key)
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """原子写文本文件：同目录临时文件 + fsync + os.replace。
+
+    先把内容写进同目录的临时文件、刷盘，再用 os.replace 改名成目标文件——外界要么
+    看到旧文件、要么看到新文件，绝不会看到写了一半的损坏文件。几点关键：
+
+    - 临时文件必须和目标同目录：os.replace 的原子性只在同一文件系统内成立；
+    - 用 os.replace 而非 os.rename：Windows 上目标已存在时 rename 会失败，
+      replace 两平台都能原子覆盖；
+    - tempfile.mkstemp 在 Unix 上默认以 0600 建文件（仅本人可读写），密钥天然受
+      保护；Windows 靠用户主目录默认 ACL 隔离。
+
+    Args:
+        path: 目标文件路径。
+        text: 要写入的文本内容。
+
+    Raises:
+        ConfigError: 目录无法创建，或临时文件写入 / 改名等底层 OSError。
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(
+            dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+        )
+    except OSError as exc:
+        raise ConfigError(
+            f"无法在 {path.parent} 准备写入：{exc.strerror or exc}"
+        ) from exc
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+    except OSError as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise ConfigError(f"无法写入 {path}：{exc.strerror or exc}") from exc

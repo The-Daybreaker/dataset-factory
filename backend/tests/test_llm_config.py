@@ -1,4 +1,4 @@
-"""单元测试：llm 的配置与密钥读取（数据根 / config.json / 双通道 / 脱敏）。
+"""单元测试：llm 的配置与密钥读取与写入（数据根 / config.json / 双通道 / 脱敏 / 原子写）。
 
 全部离线、不真调 API；用 temp_data_root fixture 把数据根隔离到临时目录，绝不碰真实 ~/.dataset_factory。
 """
@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -16,6 +18,7 @@ from dataset_factory.llm import (
     SecretValue,
     data_root,
     read_config,
+    write_config,
 )
 
 
@@ -31,6 +34,14 @@ def _write_config(
 
 def _write_credentials(root: Path, key: str = "sk-file-key") -> None:
     (root / "credentials").write_text(key, encoding="utf-8")
+
+
+def _endpoint(
+    base_url: str = "https://api.example.com/v1",
+    model: str = "test-model",
+    key: str = "sk-write-me",
+) -> EndpointConfig:
+    return EndpointConfig(base_url=base_url, model=model, api_key=SecretValue(key))
 
 
 def test_data_root_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -140,3 +151,131 @@ def test_endpoint_config_repr_masks_key() -> None:
     text = repr(cfg)
     assert "sk-leak-me" not in text
     assert "https://x/v1" in text
+
+
+def test_write_config_round_trips_through_read(temp_data_root: Path) -> None:
+    """写入后能被读侧原样读回：读写对称、闭环。"""
+    write_config(_endpoint(key="sk-round-trip"))
+
+    cfg = read_config()
+
+    assert cfg.base_url == "https://api.example.com/v1"
+    assert cfg.model == "test-model"
+    assert cfg.api_key.reveal() == "sk-round-trip"
+
+
+def test_write_config_creates_missing_data_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """数据根（含多层父目录）不存在时自动创建再写。"""
+    root = tmp_path / "nested" / "dsf_home"
+    monkeypatch.setenv("DATASET_FACTORY_HOME", str(root))
+    monkeypatch.delenv("DSF_API_KEY", raising=False)
+
+    write_config(_endpoint())
+
+    assert (root / "config.json").exists()
+    assert (root / "credentials").exists()
+
+
+def test_write_config_overwrites_existing(temp_data_root: Path) -> None:
+    """覆盖写：第二次写的值完全替换第一次。"""
+    write_config(_endpoint(model="old-model", key="sk-old"))
+
+    write_config(_endpoint(model="new-model", key="sk-new"))
+
+    cfg = read_config()
+    assert cfg.model == "new-model"
+    assert cfg.api_key.reveal() == "sk-new"
+
+
+def test_write_config_leaves_only_target_files(temp_data_root: Path) -> None:
+    """原子写收尾干净：数据根里只有两个目标文件，没有残留的 .tmp 临时文件。"""
+    write_config(_endpoint())
+
+    names = {p.name for p in temp_data_root.iterdir()}
+
+    assert names == {"config.json", "credentials"}
+
+
+@pytest.mark.skipif(os.name != "posix", reason="0600 权限语义仅 POSIX 有")
+def test_write_config_credentials_owner_only_on_posix(temp_data_root: Path) -> None:
+    """Unix 上 credentials 落盘即 0600：同机其他用户读不到密钥。"""
+    write_config(_endpoint())
+
+    mode = stat.S_IMODE((temp_data_root / "credentials").stat().st_mode)
+
+    assert mode == 0o600
+
+
+@pytest.mark.parametrize(
+    ("base_url", "model", "key"),
+    [
+        ("", "m", "sk-x"),
+        ("   ", "m", "sk-x"),
+        ("https://x/v1", "", "sk-x"),
+        ("https://x/v1", "  ", "sk-x"),
+        ("https://x/v1", "m", ""),
+        ("https://x/v1", "m", "   "),
+    ],
+)
+def test_write_config_rejects_blank_fields(
+    temp_data_root: Path, base_url: str, model: str, key: str
+) -> None:
+    """Fail-Fast：三个字段任一为空（或纯空白）都拒绝写，不落坏配置。"""
+    with pytest.raises(ConfigError):
+        write_config(_endpoint(base_url=base_url, model=model, key=key))
+
+    assert not (temp_data_root / "config.json").exists()
+    assert not (temp_data_root / "credentials").exists()
+
+
+def test_write_config_strips_surrounding_whitespace(temp_data_root: Path) -> None:
+    """写入前 strip：落盘的是干净值，与读侧 strip 一致。"""
+    write_config(_endpoint(base_url="  https://x/v1  ", model=" m ", key="  sk-trim  "))
+
+    cfg = read_config()
+
+    assert cfg.base_url == "https://x/v1"
+    assert cfg.model == "m"
+    assert cfg.api_key.reveal() == "sk-trim"
+
+
+def test_write_config_error_does_not_leak_secret(temp_data_root: Path) -> None:
+    """脱敏：写入报错时，错误信息里绝不含密钥明文。"""
+    secret = "sk-super-secret-do-not-leak"
+
+    with pytest.raises(ConfigError) as excinfo:
+        write_config(_endpoint(model="", key=secret))
+
+    assert secret not in str(excinfo.value)
+
+
+def test_write_config_replace_failure_cleans_up(
+    temp_data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """改名失败（如磁盘满）→ ConfigError，且不留半个损坏文件与残留临时文件。"""
+
+    def _boom(src: Path, dst: Path) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(os, "replace", _boom)
+
+    with pytest.raises(ConfigError, match="无法写入"):
+        write_config(_endpoint())
+
+    assert not (temp_data_root / "config.json").exists()
+    assert [p for p in temp_data_root.iterdir() if p.suffix == ".tmp"] == []
+
+
+def test_write_config_uncreatable_data_root_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """数据根建不出来（父路径是普通文件）→ ConfigError，信息可操作。"""
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setenv("DATASET_FACTORY_HOME", str(blocker / "dsf_home"))
+    monkeypatch.delenv("DSF_API_KEY", raising=False)
+
+    with pytest.raises(ConfigError, match="准备写入"):
+        write_config(_endpoint())
