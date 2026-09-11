@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from typing import Annotated
 
 import typer
 
@@ -36,6 +37,23 @@ app.add_typer(skill.app, name="skill")
 app.add_typer(session.app, name="session")
 app.command(name="label")(label.label)
 app.command(name="chat")(label.chat)
+
+
+@app.command("serve")
+def serve(
+    host: Annotated[str, typer.Option("--host", help="监听地址")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", help="监听端口")] = 8000,
+) -> None:
+    """启动本地 Web 服务（HTTP API + 前端测试界面），Ctrl+C 停止。"""
+    import uvicorn
+
+    from ..api import app as api_app
+
+    typer.secho(
+        f"Web 服务启动：http://{host}:{port}（Ctrl+C 停止）", fg=typer.colors.YELLOW
+    )
+    uvicorn.run(api_app, host=host, port=port, log_level="warning")
+
 
 # 核心库不配日志（只挂 NullHandler 的约定在库侧首次发日志时落地）；本文件是应用层，
 # 在最早期配置日志到 stderr——stdout 留给结果正文（退出码约定见模块 docstring）。

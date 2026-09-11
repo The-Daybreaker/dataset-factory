@@ -29,6 +29,7 @@ from ..sessions import (
     create_session,
     read_events,
     save_attachment,
+    save_attachment_bytes,
 )
 from ..skills import list_skills, read_skill
 from .errors import (
@@ -128,6 +129,8 @@ class LabelingEngine:
         skill_names: Sequence[str] | None = None,
         instruction: str = "",
         image: Path | None = None,
+        image_bytes: bytes | None = None,
+        image_name: str = "image.png",
     ) -> LabelResult:
         """跑一轮打标：组装请求 → 先落信封 → 调模型 → 落回复，返回 caption 与会话 id。
 
@@ -137,12 +140,18 @@ class LabelingEngine:
         变化时才追加 settings 事件。库级停用的 skill 注入时跳过（T4 语义：停用 = 不供打标
         注入），会话设置里保留原勾选记录。
 
+        图片两种给法（二选一，同时给是编程错、直接 ValueError）：``image`` 传本地文件路径
+        （CLI 用，存副本再读回）；``image_bytes`` 直接传字节（HTTP 入口用，网络来的字节没有
+        源文件），``image_name`` 是它的原始文件名（保留进 attachments/，冲突加序号）。
+
         Args:
             session_id: 续接的会话 id；None 新建会话。
             prompt_name: 本轮使用的基础提示词名称；None 沿用当前设置。
             skill_names: 本轮启用的 skill 名称序列；None 沿用当前设置，空序列表示清空。
             instruction: 用户本轮的打标指令（可为空——纯图打标时任务说明在基础提示词里）。
-            image: 本轮图片文件路径；None 表示纯文本轮。
+            image: 本轮图片文件路径；None 表示不以此方式附图。
+            image_bytes: 本轮图片字节；None 表示不以此方式附图。
+            image_name: image_bytes 方式的原始文件名（仅名字用途，不参与内容判定）。
 
         Returns:
             LabelResult：会话 id + 模型产出的 caption。
@@ -155,8 +164,11 @@ class LabelingEngine:
             SessionNotFoundError: session_id 指向不存在的会话。
             PromptNotFoundError: 基础提示词在提示词库中不存在。
             LLMError: 模型调用失败（此时信封已落盘，「当时喂了什么」有据可查）。
+            ValueError: image 与 image_bytes 同时提供。
         """
-        if not instruction.strip() and image is None:
+        if image is not None and image_bytes is not None:
+            raise ValueError("image 与 image_bytes 只能二选一。")
+        if not instruction.strip() and image is None and image_bytes is None:
             raise EmptyTurnError("本轮没有任何可打标的内容：请输入指令或附一张图片。")
         if session_id is None and prompt_name is None:
             # 新会话必然没有已存设置，此时连 prompt_name 都不传一定无底座；在建会话前拦下，
@@ -188,10 +200,13 @@ class LabelingEngine:
             )
 
         attachment: str | None = None
-        image_bytes: bytes | None = None
+        sent_image_bytes: bytes | None = None
         if image is not None:
             attachment = save_attachment(session_id, image)
-            image_bytes = _read_attachment(session_id, attachment)
+            sent_image_bytes = _read_attachment(session_id, attachment)
+        elif image_bytes is not None:
+            attachment = save_attachment_bytes(session_id, image_name, image_bytes)
+            sent_image_bytes = image_bytes
         append_message(session_id, "user", instruction, attachment)
 
         prompt = read_prompt(wanted_prompt)
@@ -201,7 +216,7 @@ class LabelingEngine:
             skill_texts=skill_texts,
             history=history,
             instruction=instruction,
-            image_bytes=image_bytes,
+            image_bytes=sent_image_bytes,
             attachment=attachment,
         )
         append_envelope(

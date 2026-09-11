@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
@@ -340,20 +339,52 @@ def save_attachment(session_id: str, source: Path) -> str:
     _require_session(session_id)
     if not source.is_file():
         raise SessionError(f"附件源 {source} 不是文件；请指向一个存在的图片文件。")
+    try:
+        data = source.read_bytes()
+    except OSError as exc:
+        raise SessionError(f"无法读取附件源 {source}：{exc.strerror or exc}") from exc
+    return _store_attachment(session_id, source.name, data)
+
+
+def save_attachment_bytes(session_id: str, name: str, data: bytes) -> str:
+    """把图片字节直接存进会话的 attachments/，返回会话内的文件名。
+
+    与 save_attachment（源文件复制）相对：HTTP 入口收到的图片是网络传来的字节、没有
+    源文件，直接落字节；重名不覆盖与崩溃安全语义同 save_attachment。
+
+    Args:
+        session_id: 会话 id。
+        name: 原始文件名（用于保留名字；冲突加序号）。
+        data: 图片字节。
+
+    Returns:
+        附件在会话 attachments/ 下的最终文件名（含扩展名）。
+
+    Raises:
+        SessionIdError: id 非法。
+        SessionNotFoundError: 没有这个会话。
+        SessionError: 写入失败（底层 OSError）。
+    """
+    _require_session(session_id)
+    return _store_attachment(session_id, name, data)
+
+
+def _store_attachment(session_id: str, name: str, data: bytes) -> str:
+    """落盘一张附件：唯一名 + 临时文件 + os.replace（两种存入方式的共用实现）。"""
     attachments_dir = _session_dir(session_id) / _ATTACHMENTS_DIRNAME
-    name = _unique_attachment_name(attachments_dir, source.name)
-    tmp = attachments_dir / f".{name}.tmp{os.urandom(4).hex()}"
+    unique = _unique_attachment_name(attachments_dir, name)
+    tmp = attachments_dir / f".{unique}.tmp{os.urandom(4).hex()}"
     try:
         attachments_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, tmp)
-        os.replace(tmp, attachments_dir / name)
+        tmp.write_bytes(data)
+        os.replace(tmp, attachments_dir / unique)
     except OSError as exc:
         raise SessionError(
-            f"无法把附件 {source} 复制进会话 {session_id!r}：{exc.strerror or exc}"
+            f"无法把附件 {name!r} 存进会话 {session_id!r}：{exc.strerror or exc}"
         ) from exc
     finally:
         tmp.unlink(missing_ok=True)
-    return name
+    return unique
 
 
 def attachment_path(session_id: str, name: str) -> Path:

@@ -180,6 +180,26 @@ def _resolve_api_key(credentials_path: Path) -> SecretValue:
     )
 
 
+def read_stored_api_key() -> SecretValue | None:
+    """读当前已配置的密钥（env 优先、其次 credentials 文件）；未配置返回 None。
+
+    供入口层做配置「部分更新」（用户没填新密钥时沿用现有值，避免强迫重输）；与
+    _resolve_api_key 的差别：这里不因缺失而报错——缺就返回 None，由调用方决定怎么提示。
+    """
+    env_key = os.environ.get(ENV_API_KEY)
+    if env_key and env_key.strip():
+        return SecretValue(env_key.strip())
+    credentials = data_root() / _CREDENTIALS_FILENAME
+    if credentials.exists():
+        try:
+            raw = credentials.read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+        if raw:
+            return SecretValue(raw)
+    return None
+
+
 def write_config(config: EndpointConfig) -> None:
     """把端点配置与密钥原子写入数据根（config.json + credentials）。
 

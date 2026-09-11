@@ -6,7 +6,8 @@
 - 会话生命周期：create_session / list_sessions / latest_session_id（恢复 = 读最新目录回放）
 - 事件读写：append_message / append_envelope / append_settings（append-only + fsync）/
   read_events（回放）
-- 附件：save_attachment（原名 + 序号重名不覆盖）/ attachment_path
+- 附件：save_attachment（源文件复制）/ save_attachment_bytes（直接存字节）
+  / attachment_path（原名 + 序号重名不覆盖）
 - 异常：SessionError 基类 + SessionIdError / SessionNotFoundError / SessionEventError
 """
 
@@ -35,6 +36,7 @@ from .store import (
     list_sessions,
     read_events,
     save_attachment,
+    save_attachment_bytes,
 )
 
 __all__ = [
@@ -58,4 +60,5 @@ __all__ = [
     "parse_event",
     "read_events",
     "save_attachment",
+    "save_attachment_bytes",
 ]

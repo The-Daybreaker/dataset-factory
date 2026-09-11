@@ -21,3 +21,7 @@ class SkillExistsError(SkillError):
 
 class SkillFormatError(SkillError):
     """skill 包格式非法（缺 SKILL.md、frontmatter 缺失 / 未闭合 / 非法 YAML / 缺 name 或 description、非 UTF-8）。"""
+
+
+class SkillSourceError(SkillError):
+    """导入源不可用（路径不是目录、目录不可访问）——调用方填错路径，属用户输入错。"""

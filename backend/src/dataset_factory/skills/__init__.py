@@ -4,7 +4,8 @@
 - 模型：Skill（name / description / enabled）+ SkillImport（导入结果：skill + 体积）
 - 操作：import_skill / list_skills / read_skill / set_enabled / delete_skill
 - 解析：parse_skill_frontmatter（读 SKILL.md 的 name + description）
-- 异常：SkillError 基类 + SkillNameError / SkillNotFoundError / SkillExistsError / SkillFormatError
+- 异常：SkillError 基类 + SkillNameError / SkillNotFoundError / SkillExistsError /
+  SkillFormatError / SkillSourceError
 """
 
 from .errors import (
@@ -13,6 +14,7 @@ from .errors import (
     SkillFormatError,
     SkillNameError,
     SkillNotFoundError,
+    SkillSourceError,
 )
 from .model import Skill, SkillImport, parse_skill_frontmatter
 from .store import (
@@ -31,6 +33,7 @@ __all__ = [
     "SkillImport",
     "SkillNameError",
     "SkillNotFoundError",
+    "SkillSourceError",
     "delete_skill",
     "import_skill",
     "list_skills",

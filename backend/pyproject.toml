@@ -5,9 +5,11 @@ description = "Dataset Factory backend: AI labeling engine for LoRA training dat
 requires-python = "==3.12.*"
 license = "MIT"
 dependencies = [
+    "fastapi>=0.141.1",
     "openai>=3.13.0",
     "pyyaml>=6.0.3",
     "typer>=0.27.2",
+    "uvicorn[standard]>=0.52.4",
 ]
 
 [project.scripts]
@@ -44,16 +46,17 @@ source = ["dataset_factory"]
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 80
+# 硬门槛不在整包（入口层不设门槛），核心五模块 ≥80% 由 CI 的 coverage report --include 单独卡（goal B3）。
 
 [tool.importlinter]
 root_packages = ["dataset_factory"]
 
 [[tool.importlinter.contracts]]
-name = "分层：入口层 > 编排 > 能力 > 数据域（单向；核心禁止 import 入口层）"
+name = "分层：cli（启动器）> api（HTTP 入口）> 编排 > 能力 > 数据域（单向；核心禁止 import 入口层）"
 type = "layers"
 layers = [
-    "dataset_factory.cli | dataset_factory.api",
+    "dataset_factory.cli",
+    "dataset_factory.api",
     "dataset_factory.labeling",
     "dataset_factory.llm",
     "dataset_factory.prompts | dataset_factory.skills | dataset_factory.sessions",
@@ -78,11 +81,6 @@ modules = [
     "dataset_factory.skills",
     "dataset_factory.sessions",
 ]
-
-[[tool.importlinter.contracts]]
-name = "入口层同层互相独立"
-type = "independence"
-modules = ["dataset_factory.cli", "dataset_factory.api"]
 
 # --- ruff：lint + 格式化（代码规范）---
 # lint 只选非格式化类规则（E4/E7/E9 而非全 E），格式化交给 ruff format，避免两者打架。

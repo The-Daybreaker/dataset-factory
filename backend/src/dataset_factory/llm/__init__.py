@@ -16,6 +16,7 @@ from .config import (
     data_root,
     describe_config,
     read_config,
+    read_stored_api_key,
     write_config,
 )
 from .errors import (
@@ -59,5 +60,6 @@ __all__ = [
     "data_root",
     "describe_config",
     "read_config",
+    "read_stored_api_key",
     "write_config",
 ]

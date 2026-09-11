@@ -23,6 +23,7 @@ from .errors import (
     SkillFormatError,
     SkillNameError,
     SkillNotFoundError,
+    SkillSourceError,
 )
 from .model import Skill, SkillImport, parse_skill_frontmatter
 
@@ -187,13 +188,14 @@ def import_skill(source: Path) -> SkillImport:
         SkillImport：导入的 skill（enabled=True）+ 整包字节数（供体积提示）。
 
     Raises:
-        SkillError: 源不是目录，或库目录 / 复制准备失败。
+        SkillSourceError: 源不是目录（路径填错）。
         SkillFormatError: 源缺 SKILL.md，或 SKILL.md frontmatter 非法。
         SkillNameError: frontmatter 的 name 不是合法目录名。
         SkillExistsError: 库里已有同名 skill。
+        SkillError: 库目录 / 复制准备失败。
     """
     if not source.is_dir():
-        raise SkillError(
+        raise SkillSourceError(
             f"导入源 {source} 不是目录；请指向一个包含 {_SKILL_MD} 的 skill 目录。"
         )
     skill_md = source / _SKILL_MD
