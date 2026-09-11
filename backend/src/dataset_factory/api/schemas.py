@@ -9,6 +9,16 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class ErrorDetail(BaseModel):
+    """错误响应的统一形状——所有域错误都长这样（`{"detail": "一句话"}`）。
+
+    各端点在 `responses=` 里引用它，把错误路径写进 OpenAPI 契约：
+    前端生成类型时才能覆盖错误体，而不是只看到成功路径。
+    """
+
+    detail: str
+
+
 class LabelRequest(BaseModel):
     """POST /api/label 的请求体。"""
 

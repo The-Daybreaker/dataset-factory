@@ -1,7 +1,8 @@
 # GitHub Actions CI —— 持续集成流水线：
-# 每次 push / PR，自动在 Windows + Linux 两个系统上跑两套 job，全绿才算过：
-#   - test（后端）：测试 + 覆盖率 + 架构契约 + ruff lint/format + pyright 类型 + pre-commit + docs 构建
+# 每次 push / PR，自动跑三套 job，全绿才算过：
+#   - test（后端）：测试 + 覆盖率 + 架构契约 + ruff lint/format + pyright 类型 + pre-commit + OpenAPI 漂移检查 + docs 构建
 #   - frontend（前端）：Biome lint/format + tsc 类型检查 + Vitest + Vite 构建
+#   - api-contract：oasdiff 对比前后两次提交的 OpenAPI 快照，破坏性变更（ERR 级）直接挡下
 # 注意：本文件本地跑不了，推到 GitHub 后才在它的 runner 上真正执行。
 
 name: CI
@@ -67,6 +68,18 @@ jobs:
       - name: Import contracts (architecture)
         run: uv run lint-imports                  # 守分层依赖规则（核心库不反向依赖入口层、能力层不依赖功能模块等）
 
+      - name: OpenAPI snapshot drift check (generate)
+        run: uv run python scripts/export_openapi.py --output openapi.generated.json
+
+      # 契约漂移检查：生成的 spec 必须与仓库快照一致；红了 = 改了 API 没重新导出
+      # （修复办法：uv run python scripts/export_openapi.py，提交新快照）
+      - name: OpenAPI snapshot drift check (compare)
+        run: git diff --exit-code --no-index -- openapi.json openapi.generated.json
+
+      - name: Cleanup generated spec
+        if: always()
+        run: uv run python -c "import pathlib; pathlib.Path('openapi.generated.json').unlink(missing_ok=True)"
+
       - name: Docs build (mkdocs --strict)
         run: uv run mkdocs build --strict         # 文档骨架构建（mkdocstrings 从 docstring 抽 API；--strict 把警告当错误）
 
@@ -105,3 +118,28 @@ jobs:
 
       - name: Build (Vite)
         run: npm run build
+
+  api-contract:
+    name: "api-contract (breaking changes)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 2                          # 需要 HEAD~1 上的旧快照作对比基线
+
+      # 上一个提交没有快照时（仓库首个提交 / 新仓库），用空 spec 兜底：
+      # 空 spec vs 新 spec 的差异全是「新增端点」，不算破坏性变更，不会误伤。
+      - name: Prepare base spec
+        run: git show HEAD~1:backend/openapi.json > /tmp/base.json 2>/dev/null || echo '{"openapi":"3.1.0","info":{"title":"empty baseline","version":"0.0.0"},"paths":{}}' > /tmp/base.json
+
+      # API 破坏性变更检测：对比上一个提交与本次提交的契约快照（快照与代码的一致性
+      # 由 backend job 的漂移检查保证，所以这里直接比两个提交的快照是可靠的）。
+      # fail-on: ERR —— 只有真破坏性变更才挡；纯新增 / 可选字段放宽不挡。
+      - name: Breaking change check (oasdiff)
+        uses: oasdiff/oasdiff-action/breaking@v0
+        with:
+          base: /tmp/base.json
+          revision: HEAD:backend/openapi.json
+          fail-on: ERR
+          review: false                           # spec 不上传第三方，只在本 runner 内比对

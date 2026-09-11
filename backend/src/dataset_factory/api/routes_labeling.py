@@ -11,6 +11,7 @@ from ..labeling import LabelingEngine, SessionSnapshot
 from ..llm import build_completer, read_config
 from ..sessions import latest_session_id
 from .schemas import (
+    ErrorDetail,
     HistoryMessageView,
     LabelRequest,
     LabelResponse,
@@ -42,7 +43,19 @@ def _decode_image(image_base64: str) -> bytes:
         ) from exc
 
 
-@router.post("/label", response_model=LabelResponse)
+@router.post(
+    "/label",
+    response_model=LabelResponse,
+    responses={
+        400: {
+            "model": ErrorDetail,
+            "description": "输入不合法（图片 base64 / 提示词未选 / 空轮 / 端点配置缺失）",
+        },
+        404: {"model": ErrorDetail, "description": "会话或提示词不存在"},
+        502: {"model": ErrorDetail, "description": "模型端点调用失败"},
+        500: {"model": ErrorDetail, "description": "会话落盘等内部错误"},
+    },
+)
 def label(request: LabelRequest) -> LabelResponse:
     """跑一轮打标（带 session_id 即续接迭代改写）。"""
     image_bytes = _decode_image(request.image_base64) if request.image_base64 else None
@@ -57,7 +70,11 @@ def label(request: LabelRequest) -> LabelResponse:
     return LabelResponse(session_id=result.session_id, caption=result.caption)
 
 
-@router.get("/sessions/latest", response_model=SessionSnapshotResponse)
+@router.get(
+    "/sessions/latest",
+    response_model=SessionSnapshotResponse,
+    responses={404: {"model": ErrorDetail, "description": "还没有任何会话"}},
+)
 def latest_session() -> SessionSnapshotResponse:
     """最新会话快照（重启恢复入口）；一个会话都没有时 404。"""
     session_id = latest_session_id()
@@ -68,7 +85,11 @@ def latest_session() -> SessionSnapshotResponse:
     return _snapshot_response(build_engine().restore(session_id))
 
 
-@router.get("/sessions/{session_id}", response_model=SessionSnapshotResponse)
+@router.get(
+    "/sessions/{session_id}",
+    response_model=SessionSnapshotResponse,
+    responses={404: {"model": ErrorDetail, "description": "会话不存在"}},
+)
 def get_session(session_id: str) -> SessionSnapshotResponse:
     """某会话快照（设置 + 对话历史）。"""
     return _snapshot_response(build_engine().restore(session_id))

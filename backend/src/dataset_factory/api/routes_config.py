@@ -12,7 +12,7 @@ from ..llm import (
     read_stored_api_key,
     write_config,
 )
-from .schemas import ConfigResponse, ConfigUpdateRequest
+from .schemas import ConfigResponse, ConfigUpdateRequest, ErrorDetail
 
 router = APIRouter(prefix="/api/config", tags=["配置"])
 
@@ -29,7 +29,11 @@ def get_config() -> ConfigResponse:
     )
 
 
-@router.put("", status_code=204)
+@router.put(
+    "",
+    status_code=204,
+    responses={400: {"model": ErrorDetail, "description": "参数不合法 / 未提供密钥"}},
+)
 def update_config(request: ConfigUpdateRequest) -> None:
     """更新配置；api_key 缺省沿用现有密钥（Web 表单改 base_url 不必重输密钥）。"""
     api_key: SecretValue

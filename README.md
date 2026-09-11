@@ -47,4 +47,14 @@ dsf label -p h3 -i 素材.jpg -m "给这张图打个标"
 
 ## 架构
 
-核心为纯 Python 库（llm / prompts / skills / sessions / labeling 五模块，分层规则由 import-linter 在 CI 守护），CLI（Typer）与 HTTP（FastAPI）是两个薄入口层，Web 测试界面为 Preact + vendored 免构建静态页。详见 `backend/docs/`（API 参考由 docstring 自动生成）。
+核心为纯 Python 库（llm / prompts / skills / sessions / labeling 五模块，分层规则由 import-linter 在 CI 守护），CLI（Typer）与 HTTP（FastAPI）是两个薄入口层。Web 测试界面为 Vite + React + TypeScript 工程（`frontend/`，`npm run dev` 开发 / `npm run build` 产出 `dist/` 由后端托管）。详见 `backend/docs/`（API 参考由 docstring 自动生成）。
+
+## 开发：改了 API 要更新契约快照
+
+`backend/openapi.json` 是前后端 API 契约的单一事实来源（前端类型生成与 CI 破坏性变更检测都基于它）。改动任何路由后运行：
+
+```
+cd backend && uv run python scripts/export_openapi.py
+```
+
+并把新快照一并提交；CI 的漂移检查（生成的 spec ≠ 快照即红）和 oasdiff 破坏性变更检查（ERR 级变更即红）都在守这条线。
