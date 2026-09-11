@@ -1,0 +1,3 @@
+{"type": "message", "ts": "2026-09-11T10:30:00.123456", "role": "user", "text": "给这张图打个标", "attachment": "cat.jpg"}
+{"type": "envelope", "ts": "2026-09-11T10:30:00.234567", "request": {"model": "gpt-4o", "temperature": 0.2, "messages": [{"role": "system", "content": "你是打标助手"}, {"role": "user", "content": "给这张图打个标"}]}}
+{"type": "message", "ts": "2026-09-11T10:30:05.345678", "role": "assistant", "text": "一只橘猫坐在窗台上，望向窗外。"}
