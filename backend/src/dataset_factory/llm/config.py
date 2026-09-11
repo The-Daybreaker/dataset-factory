@@ -15,15 +15,14 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-ENV_API_KEY = "DSF_API_KEY"  # pragma: allowlist secret —— 环境变量名常量、非密钥值（辅通道，优先覆盖 credentials 文件）
-ENV_HOME = "DATASET_FACTORY_HOME"  # 数据根覆盖（默认 ~/.dataset_factory）
+from .._fs import atomic_write_text, data_root
 
-_HOME_DIRNAME = ".dataset_factory"
+ENV_API_KEY = "DSF_API_KEY"  # pragma: allowlist secret —— 环境变量名常量、非密钥值（辅通道，优先覆盖 credentials 文件）
+
 _CONFIG_FILENAME = "config.json"
 _CREDENTIALS_FILENAME = (
     "credentials"  # pragma: allowlist secret —— 文件名常量、非密钥值
@@ -65,14 +64,6 @@ class EndpointConfig:
     base_url: str
     model: str
     api_key: SecretValue
-
-
-def data_root() -> Path:
-    """数据根目录：环境变量 DATASET_FACTORY_HOME 覆盖，否则 ~/.dataset_factory。"""
-    override = os.environ.get(ENV_HOME)
-    if override:
-        return Path(override).expanduser()
-    return Path.home() / _HOME_DIRNAME
 
 
 def read_config() -> EndpointConfig:
@@ -192,47 +183,31 @@ def write_config(config: EndpointConfig) -> None:
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
-    """原子写文本文件：同目录临时文件 + fsync + os.replace。
+    """建目录后复用共享原子写落盘，把底层错误翻译成 ConfigError。
 
-    先把内容写进同目录的临时文件、刷盘，再用 os.replace 改名成目标文件——外界要么
-    看到旧文件、要么看到新文件，绝不会看到写了一半的损坏文件。几点关键：
-
-    - 临时文件必须和目标同目录：os.replace 的原子性只在同一文件系统内成立；
-    - 用 os.replace 而非 os.rename：Windows 上目标已存在时 rename 会失败，
-      replace 两平台都能原子覆盖；
-    - tempfile.mkstemp 在 Unix 上默认以 0600 建文件（仅本人可读写），密钥天然受
-      保护；Windows 靠用户主目录默认 ACL 隔离。
+    原子写的机制（同目录临时文件 + fsync + os.replace + 兜底清理）收敛在 `_fs` 供各
+    数据域复用；本封装只补 llm 域的两件事：先建父目录（以便区分「建目录失败」与
+    「写文件失败」），再把底层 OSError / UnicodeEncodeError 翻译成 ConfigError（消息可
+    操作、不含密钥）。
 
     Args:
         path: 目标文件路径。
         text: 要写入的文本内容。
 
     Raises:
-        ConfigError: 目录无法创建，或临时文件写入 / 改名等底层 OSError，或内容含 UTF-8 无法编码的字符。
+        ConfigError: 目录无法创建，或底层写入 / 改名失败，或内容含 UTF-8 无法编码的字符。
     """
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_name = tempfile.mkstemp(
-            dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
-        )
     except OSError as exc:
         raise ConfigError(
             f"无法在 {path.parent} 准备写入：{exc.strerror or exc}"
         ) from exc
-    tmp_path = Path(tmp_name)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_path, path)
+        atomic_write_text(path, text)
     except OSError as exc:
         raise ConfigError(f"无法写入 {path}：{exc.strerror or exc}") from exc
     except UnicodeEncodeError as exc:
         raise ConfigError(
             f"无法写入 {path}：内容含 UTF-8 无法编码的字符（{exc.reason}）"
         ) from exc
-    finally:
-        # 兜底清理：改名成功后临时文件已不存在（missing_ok 即 no-op）；任何失败
-        # 路径（含非 OSError 的编码错误）都清掉它，绝不留下垃圾临时文件。
-        tmp_path.unlink(missing_ok=True)

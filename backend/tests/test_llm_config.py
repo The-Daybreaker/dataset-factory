@@ -17,7 +17,6 @@ from dataset_factory.llm import (
     ConfigError,
     EndpointConfig,
     SecretValue,
-    data_root,
     read_config,
     write_config,
 )
@@ -43,20 +42,6 @@ def _endpoint(
     key: str = "sk-write-me",
 ) -> EndpointConfig:
     return EndpointConfig(base_url=base_url, model=model, api_key=SecretValue(key))
-
-
-def test_data_root_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    """未设 DATASET_FACTORY_HOME 时，数据根 = ~/.dataset_factory。"""
-    monkeypatch.delenv("DATASET_FACTORY_HOME", raising=False)
-    assert data_root() == Path.home() / ".dataset_factory"
-
-
-def test_data_root_env_override(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """设了 DATASET_FACTORY_HOME 就用它覆盖。"""
-    monkeypatch.setenv("DATASET_FACTORY_HOME", str(tmp_path))
-    assert data_root() == tmp_path
 
 
 def test_read_config_from_files(temp_data_root: Path) -> None:
