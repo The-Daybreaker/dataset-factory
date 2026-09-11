@@ -20,8 +20,10 @@ from dataset_factory.sessions import (
     SessionEventError,
     SessionIdError,
     SessionNotFoundError,
+    SettingsEvent,
     append_envelope,
     append_message,
+    append_settings,
     attachment_path,
     create_session,
     dump_event,
@@ -166,7 +168,7 @@ def test_events_replay_in_append_order(temp_data_root: Path) -> None:
 
 
 def test_read_golden_events(temp_data_root: Path) -> None:
-    """契约测试：读手写标准 events.jsonl，解析出 message / envelope / message 三个事件（钉死磁盘 schema）。"""
+    """契约测试：读手写标准 events.jsonl，解析出 settings / message / envelope / message 四个事件（钉死磁盘 schema）。"""
     session_id = create_session()
     _events_file(temp_data_root, session_id).write_text(
         _FIXTURE_EVENTS.read_text(encoding="utf-8"), encoding="utf-8"
@@ -174,8 +176,10 @@ def test_read_golden_events(temp_data_root: Path) -> None:
 
     events = read_events(session_id)
 
-    assert len(events) == 3
-    first, envelope, last = events
+    assert len(events) == 4
+    settings, first, envelope, last = events
+    assert isinstance(settings, SettingsEvent)
+    assert settings.settings == {"prompt": "h3-video", "skills": ["h3-prompt-writing"]}
     assert isinstance(first, MessageEvent)
     assert first.role == "user"
     assert first.attachment == "cat.jpg"
@@ -183,6 +187,34 @@ def test_read_golden_events(temp_data_root: Path) -> None:
     assert envelope.request["model"] == "gpt-4o"
     assert isinstance(last, MessageEvent)
     assert last.role == "assistant"
+
+
+def test_append_settings_round_trips(temp_data_root: Path) -> None:
+    """追加设置事件后回放：settings 结构原样取回（sessions 忠实存、不解析其内部）。"""
+    session_id = create_session()
+    settings: dict[str, JsonValue] = {
+        "prompt": "h3-video",
+        "skills": ["h3-prompt-writing"],
+    }
+
+    append_settings(session_id, settings)
+    event = read_events(session_id)[0]
+
+    assert isinstance(event, SettingsEvent)
+    assert event.settings == settings
+
+
+def test_settings_last_event_wins_on_replay(temp_data_root: Path) -> None:
+    """多次追加设置：回放按落盘顺序全量给出，取最后一条即当前值（由编排层折叠）。"""
+    session_id = create_session()
+
+    append_settings(session_id, {"prompt": "旧提示词", "skills": []})
+    append_settings(session_id, {"prompt": "新提示词", "skills": ["h3"]})
+    events = read_events(session_id)
+
+    assert len(events) == 2
+    assert isinstance(events[-1], SettingsEvent)
+    assert events[-1].settings == {"prompt": "新提示词", "skills": ["h3"]}
 
 
 def test_append_is_append_only_not_rewrite(temp_data_root: Path) -> None:
@@ -428,3 +460,9 @@ def test_parse_envelope_requires_request() -> None:
     """parse_event 的 envelope 缺 request 字段 → SessionEventError。"""
     with pytest.raises(SessionEventError, match="request"):
         parse_event({"type": "envelope", "ts": "t"})
+
+
+def test_parse_settings_requires_settings() -> None:
+    """parse_event 的 settings 缺 settings 字段 → SessionEventError。"""
+    with pytest.raises(SessionEventError, match="settings"):
+        parse_event({"type": "settings", "ts": "t"})

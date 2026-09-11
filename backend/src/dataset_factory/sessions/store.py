@@ -1,11 +1,11 @@
 """会话持久化（数据域）——读写只收敛在本模块。
 
 一会话一目录 ``sessions/<会话id>/``（会话 id = 创建时间戳，定宽、字典序即时间序）：
-``events.jsonl`` 是 append-only 事件流（消息 + 请求信封，每行一个 JSON 对象，只追加不改写）；
-``attachments/`` 存本会话图片副本（原名 + 序号、重名不覆盖，会话自包含）。恢复 = 读最新目录
-回放。崩溃 / 中断安全靠三点：append-only（已落盘的行不受后续崩溃影响）、每次追加后 fsync
-（「请求信封先落盘再发」的依据）、回放时宽容丢弃末尾写了一半的残缺行（其余损坏仍 fail loud）。
-数据根复用共享 ``_fs``；本模块禁 import 入口层 / llm / 同层数据域（分层契约守）。
+``events.jsonl`` 是 append-only 事件流（消息 + 请求信封 + 设置，每行一个 JSON 对象，只追加
+不改写）；``attachments/`` 存本会话图片副本（原名 + 序号、重名不覆盖，会话自包含）。恢复 = 读
+最新目录回放。崩溃 / 中断安全靠三点：append-only（已落盘的行不受后续崩溃影响）、每次追加后
+fsync（「请求信封先落盘再发」的依据）、回放时宽容丢弃末尾写了一半的残缺行（其余损坏仍 fail
+loud）。数据根复用共享 ``_fs``；本模块禁 import 入口层 / llm / 同层数据域（分层契约守）。
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from .model import (
     JsonValue,
     MessageEvent,
     SessionEvent,
+    SettingsEvent,
     dump_event,
     parse_event,
 )
@@ -274,6 +275,24 @@ def append_envelope(session_id: str, request: Mapping[str, JsonValue]) -> None:
     """
     ts = datetime.now().isoformat()
     _append_event(session_id, EnvelopeEvent(ts=ts, request=dict(request)))
+
+
+def append_settings(session_id: str, settings: Mapping[str, JsonValue]) -> None:
+    """往会话追加一条设置变更事件（当前值 = 回放取最后一条 settings）。
+
+    settings 由编排层渲染（如基础提示词名与启用 skill 清单），sessions 原样存、不解析其内部。
+
+    Args:
+        session_id: 会话 id。
+        settings: 本会话当前设置（可 JSON 序列化的映射）。
+
+    Raises:
+        SessionIdError: id 非法。
+        SessionNotFoundError: 没有这个会话。
+        SessionError: 写入失败、settings 不可 JSON 序列化，或含 UTF-8 无法编码的字符。
+    """
+    ts = datetime.now().isoformat()
+    _append_event(session_id, SettingsEvent(ts=ts, settings=dict(settings)))
 
 
 def _append_event(session_id: str, event: SessionEvent) -> None:

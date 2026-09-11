@@ -9,3 +9,5 @@
 ::: dataset_factory.skills
 
 ::: dataset_factory.sessions
+
+::: dataset_factory.labeling
