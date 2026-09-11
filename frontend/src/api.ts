@@ -1,80 +1,28 @@
 /**
- * 后端 API 客户端：统一的 fetch 封装 + 与后端一致的请求 / 响应类型。
+ * 后端 API 客户端：统一的 fetch 封装 + 契约生成的类型。
  *
- * 这里的类型目前是手写的（与后端 `api/schemas.py` 一一对应），只是过渡——T16 会换成
- * 从后端 OpenAPI spec 生成的类型，那时字段改名会在编译期就报出来，不再靠人眼对齐。
+ * 类型来源：`api-types.gen.ts` 由 `npm run gen:api` 从 backend/openapi.json 生成——
+ * 后端改了字段、重新导出快照，这里的类型跟着变，字段对不上在 typecheck 当场报错，
+ * 不再靠人眼对齐（这就是「API 契约」的前端侧）。
  */
 
-export interface LabelRequest {
-  session_id: string | null;
-  prompt_name: string | null;
-  skill_names: string[] | null;
-  instruction: string;
-  image_base64: string | null;
-  image_name: string;
-}
+import type { components } from "./api-types.gen";
 
-export interface LabelResponse {
-  session_id: string;
-  caption: string;
-}
-
-export interface SettingsView {
-  prompt_name: string | null;
-  skill_names: string[];
-}
-
-export interface HistoryMessageView {
-  role: string;
-  text: string;
-  attachment: string | null;
-}
-
-export interface SessionSnapshotResponse {
-  session_id: string;
-  settings: SettingsView;
-  messages: HistoryMessageView[];
-}
-
-export interface PromptInfo {
-  name: string;
-  description: string;
-}
-
-export interface PromptFull extends PromptInfo {
-  body: string;
-}
-
-export interface PromptSaveRequest {
-  description: string;
-  body: string;
-}
-
-export interface SkillInfo {
-  name: string;
-  description: string;
-  enabled: boolean;
-}
-
-export interface SkillImportResponse {
-  name: string;
-  description: string;
-  enabled: boolean;
-  total_bytes: number;
-}
-
-export interface ConfigResponse {
-  base_url: string | null;
-  model: string | null;
-  api_key_configured: boolean;
-  key_source: string | null;
-}
-
-export interface ConfigUpdateRequest {
-  base_url: string;
-  model: string;
-  api_key?: string;
-}
+/** 后端契约里的 schema 类型（别名导出：调用方不必知道生成结构）。 */
+export type LabelRequest = components["schemas"]["LabelRequest"];
+export type LabelResponse = components["schemas"]["LabelResponse"];
+export type SettingsView = components["schemas"]["SettingsView"];
+export type HistoryMessageView = components["schemas"]["HistoryMessageView"];
+export type SessionSnapshotResponse = components["schemas"]["SessionSnapshotResponse"];
+export type PromptInfo = components["schemas"]["PromptInfo"];
+export type PromptFull = components["schemas"]["PromptFull"];
+export type PromptSaveRequest = components["schemas"]["PromptSaveRequest"];
+export type SkillInfo = components["schemas"]["SkillInfo"];
+export type SkillImportResponse = components["schemas"]["SkillImportResponse"];
+export type ConfigResponse = components["schemas"]["ConfigResponse"];
+export type ConfigUpdateRequest = components["schemas"]["ConfigUpdateRequest"];
+/** 错误体的契约形状（{"detail": string}）——错误路径也在契约里，不再有盲区。 */
+export type ErrorDetail = components["schemas"]["ErrorDetail"];
 
 /** 把任意抛出的东西变成可展示的一句话（界面上不该出现 "[object Object]"）。 */
 export function errorMessage(error: unknown): string {

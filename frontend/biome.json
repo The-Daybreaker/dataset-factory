@@ -1,6 +1,6 @@
 {
   "files": {
-    "includes": ["src/**", "*.ts", "*.json", "index.html"]
+    "includes": ["src/**", "*.ts", "*.json", "index.html", "!src/api-types.gen.ts"]
   },
   "formatter": {
     "indentStyle": "space",
