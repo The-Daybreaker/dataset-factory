@@ -1,7 +1,7 @@
 import type { ChangeEvent, ReactElement } from "react";
 import { useEffect, useState } from "react";
 import type { HistoryMessageView, PromptInfo, SkillInfo } from "./api";
-import { api, errorMessage } from "./api";
+import { ApiError, api, errorMessage } from "./api";
 
 /** 待发送的图片：原始文件名 + data URL（后端接受 data URL 或纯 base64）。 */
 interface PendingImage {
@@ -72,8 +72,10 @@ export function ChatTab(): ReactElement {
         setSkillNames(snapshot.settings.skill_names);
         setMessages(snapshot.messages.map((item, index) => ({ ...item, id: index })));
       } catch (err) {
-        // 「还没有任何会话」是首次使用的正常情况，不当错误展示。
-        if (!cancelled && !errorMessage(err).includes("还没有任何会话")) {
+        // 「还没有任何会话」（404）是首次使用的正常情况，不当错误展示；按状态码判断
+        // 而非匹配错误文案——后端改措辞不应静默改变界面行为。
+        const noSessionYet = err instanceof ApiError && err.status === 404;
+        if (!cancelled && !noSessionYet) {
           setError(errorMessage(err));
         }
       }

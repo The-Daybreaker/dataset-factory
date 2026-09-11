@@ -11,12 +11,33 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChatTab } from "./ChatTab";
 
-const mocks = vi.hoisted(() => ({
-  label: vi.fn(),
-  listPrompts: vi.fn(),
-  listSkills: vi.fn(),
-  latestSession: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  // ApiError 的测试替身：ChatTab 按 status === 404 识别「还没有任何会话」的正常空态，
+  // mock 模块里要提供这个类、实例语义与真实 ApiError 一致（可按 status 判断）。
+  class FakeApiError extends Error {
+    status: number | null;
+    kind: string;
+    requestId: string | null;
+    constructor(
+      kind: string,
+      message: string,
+      status: number | null,
+      requestId: string | null,
+    ) {
+      super(message);
+      this.kind = kind;
+      this.status = status;
+      this.requestId = requestId;
+    }
+  }
+  return {
+    label: vi.fn(),
+    listPrompts: vi.fn(),
+    listSkills: vi.fn(),
+    latestSession: vi.fn(),
+    FakeApiError,
+  };
+});
 
 vi.mock("./api", () => ({
   api: {
@@ -26,13 +47,21 @@ vi.mock("./api", () => ({
     latestSession: mocks.latestSession,
   },
   errorMessage: (error: unknown) => String(error),
+  ApiError: mocks.FakeApiError,
 }));
 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.listPrompts.mockResolvedValue([{ name: "base", description: "基础打标" }]);
   mocks.listSkills.mockResolvedValue([]);
-  mocks.latestSession.mockRejectedValue(new Error("还没有任何会话"));
+  mocks.latestSession.mockRejectedValue(
+    new mocks.FakeApiError(
+      "http",
+      "还没有任何会话；发第一轮打标即自动创建。",
+      404,
+      null,
+    ),
+  );
 });
 
 describe("ChatTab", () => {
