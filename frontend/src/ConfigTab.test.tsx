@@ -6,7 +6,7 @@
  */
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ConfigTab } from "./ConfigTab";
 
@@ -40,7 +40,9 @@ describe("ConfigTab", () => {
     expect(await screen.findByLabelText("base_url")).toHaveValue(
       "https://opencode.ai/zen/go/v1",
     );
-    expect(screen.getByLabelText(/已配置（来源：credentials 文件）/)).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(/已配置（来源：credentials 文件）/),
+    ).toBeInTheDocument();
   });
 
   it("密钥留空保存：只发 base_url / model，不发 api_key", async () => {

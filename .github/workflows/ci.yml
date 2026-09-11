@@ -131,8 +131,10 @@ jobs:
 
       # 上一个提交没有快照时（仓库首个提交 / 新仓库），用空 spec 兜底：
       # 空 spec vs 新 spec 的差异全是「新增端点」，不算破坏性变更，不会误伤。
+      # 注意：写到 workspace 内的相对路径——oasdiff-action 在容器里跑，容器的
+      # /tmp 与 runner 不共享，只有 GITHUB_WORKSPACE 挂载的内容对它可见。
       - name: Prepare base spec
-        run: git show HEAD~1:backend/openapi.json > /tmp/base.json 2>/dev/null || echo '{"openapi":"3.1.0","info":{"title":"empty baseline","version":"0.0.0"},"paths":{}}' > /tmp/base.json
+        run: git show HEAD~1:backend/openapi.json > .base-spec.json 2>/dev/null || echo '{"openapi":"3.1.0","info":{"title":"empty baseline","version":"0.0.0"},"paths":{}}' > .base-spec.json
 
       # API 破坏性变更检测：对比上一个提交与本次提交的契约快照（快照与代码的一致性
       # 由 backend job 的漂移检查保证，所以这里直接比两个提交的快照是可靠的）。
@@ -140,8 +142,8 @@ jobs:
       - name: Breaking change check (oasdiff)
         uses: oasdiff/oasdiff-action/breaking@v0
         with:
-          base: /tmp/base.json
-          revision: HEAD:backend/openapi.json
+          base: .base-spec.json
+          revision: backend/openapi.json
           fail-on: ERR
           review: false                           # spec 不上传第三方，只在本 runner 内比对
 

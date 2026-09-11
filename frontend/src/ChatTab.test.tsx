@@ -7,7 +7,7 @@
  */
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChatTab } from "./ChatTab";
 
@@ -30,16 +30,17 @@ vi.mock("./api", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.listPrompts.mockResolvedValue([
-    { name: "base", description: "基础打标" },
-  ]);
+  mocks.listPrompts.mockResolvedValue([{ name: "base", description: "基础打标" }]);
   mocks.listSkills.mockResolvedValue([]);
   mocks.latestSession.mockRejectedValue(new Error("还没有任何会话"));
 });
 
 describe("ChatTab", () => {
   it("发送成功：用户消息与 caption 都出现在对话里", async () => {
-    mocks.label.mockResolvedValue({ session_id: "20260911-000000-000000", caption: "一只橘猫在晒太阳" });
+    mocks.label.mockResolvedValue({
+      session_id: "20260911-000000-000000",
+      caption: "一只橘猫在晒太阳",
+    });
     const user = userEvent.setup();
     render(<ChatTab />);
 
@@ -70,10 +71,14 @@ describe("ChatTab", () => {
   });
 
   it("发送失败：错误消息展示且输入保留（不丢用户输入）", async () => {
-    mocks.label.mockRejectedValue(new Error("模型端点调用失败（请求 id: abc123，可拿它对后端日志）"));
+    mocks.label.mockRejectedValue(
+      new Error("模型端点调用失败（请求 id: abc123，可拿它对后端日志）"),
+    );
     const user = userEvent.setup();
     render(<ChatTab />);
-    const input = screen.getByPlaceholderText("打标指令（如：给这张图打个标 / 改成两句话…）");
+    const input = screen.getByPlaceholderText(
+      "打标指令（如：给这张图打个标 / 改成两句话…）",
+    );
 
     await user.type(input, "给这张图打个标");
     await user.click(screen.getByRole("button", { name: "发送" }));
@@ -86,7 +91,8 @@ describe("ChatTab", () => {
 
   it("发送中：按钮显示等待进度并禁用（防重复提交）", async () => {
     // 手动控制 promise 的 resolve 时机，才能观察到「发送中」的中间态。
-    let resolveLabel: (value: { session_id: string; caption: string }) => void = () => {};
+    let resolveLabel: (value: { session_id: string; caption: string }) => void =
+      () => {};
     mocks.label.mockImplementation(
       () =>
         new Promise((resolve) => {
@@ -95,7 +101,9 @@ describe("ChatTab", () => {
     );
     const user = userEvent.setup();
     render(<ChatTab />);
-    const input = screen.getByPlaceholderText("打标指令（如：给这张图打个标 / 改成两句话…）");
+    const input = screen.getByPlaceholderText(
+      "打标指令（如：给这张图打个标 / 改成两句话…）",
+    );
 
     await user.type(input, "打标");
     await user.click(screen.getByRole("button", { name: "发送" }));
