@@ -15,6 +15,9 @@ import openai
 from openai.types.chat import (
     ChatCompletion,
     ChatCompletionAssistantMessageParam,
+    ChatCompletionContentPartImageParam,
+    ChatCompletionContentPartParam,
+    ChatCompletionContentPartTextParam,
     ChatCompletionMessageParam,
     ChatCompletionSystemMessageParam,
     ChatCompletionUserMessageParam,
@@ -22,7 +25,8 @@ from openai.types.chat import (
 
 from .config import EndpointConfig
 from .errors import LLMError
-from .messages import Message
+from .images import encode_image_data_url
+from .messages import ImagePart, Message, TextPart
 
 # 大图 / 慢模型把 timeout 放长；max_retries 复用 SDK 内建对超时 / 5xx / 429 的指数退避。
 _DEFAULT_TIMEOUT_SECONDS = 120.0
@@ -98,13 +102,43 @@ def build_completer(config: EndpointConfig) -> Completer:
 
 
 def _to_openai_message(message: Message) -> ChatCompletionMessageParam:
-    """把中立 Message 转成 openai SDK 的消息参数：按角色分派、文本内容块拼成正文。"""
-    text = "\n".join(part.text for part in message.parts)
+    """把中立 Message 转成 openai SDK 的消息参数：按角色分派。
+
+    system / assistant 只承载文本（拼成正文字符串）；user 可含图片，逐块转成
+    OpenAI 内容块列表（文本块 + image_url data URL）。
+    """
     if message.role == "system":
-        return ChatCompletionSystemMessageParam(role="system", content=text)
+        return ChatCompletionSystemMessageParam(
+            role="system", content=_joined_text(message)
+        )
     if message.role == "assistant":
-        return ChatCompletionAssistantMessageParam(role="assistant", content=text)
-    return ChatCompletionUserMessageParam(role="user", content=text)
+        return ChatCompletionAssistantMessageParam(
+            role="assistant", content=_joined_text(message)
+        )
+    return ChatCompletionUserMessageParam(role="user", content=_user_content(message))
+
+
+def _joined_text(message: Message) -> str:
+    """把消息里的文本块拼成正文（system / assistant 只用文本，图片块在此忽略）。"""
+    return "\n".join(part.text for part in message.parts if isinstance(part, TextPart))
+
+
+def _user_content(message: Message) -> list[ChatCompletionContentPartParam]:
+    """把 user 消息的内容块逐个转成 OpenAI 内容块：文本块 → text，图片块 → image_url。"""
+    content: list[ChatCompletionContentPartParam] = []
+    for part in message.parts:
+        if isinstance(part, ImagePart):
+            content.append(
+                ChatCompletionContentPartImageParam(
+                    type="image_url",
+                    image_url={"url": encode_image_data_url(part.data)},
+                )
+            )
+        else:
+            content.append(
+                ChatCompletionContentPartTextParam(type="text", text=part.text)
+            )
+    return content
 
 
 def _extract_text(response: ChatCompletion) -> str:

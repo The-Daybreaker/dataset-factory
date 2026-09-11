@@ -3,8 +3,8 @@
 对外接口：
 - 配置与密钥：EndpointConfig / SecretValue / ConfigError / data_root / read_config / write_config
 - 补全接口与客户端：Completer / OpenAIChatClient / build_completer
-- 消息模型：Message / Role / TextPart / ContentPart
-- 异常：LLMError
+- 消息模型：Message / Role / TextPart / ImagePart / ContentPart
+- 异常：LLMError / UnsupportedImageError / ImageTooLargeError
 """
 
 from .client import Completer, OpenAIChatClient, build_completer
@@ -16,20 +16,23 @@ from .config import (
     read_config,
     write_config,
 )
-from .errors import LLMError
-from .messages import ContentPart, Message, Role, TextPart
+from .errors import ImageTooLargeError, LLMError, UnsupportedImageError
+from .messages import ContentPart, ImagePart, Message, Role, TextPart
 
 __all__ = [
     "Completer",
     "ConfigError",
     "ContentPart",
     "EndpointConfig",
+    "ImagePart",
+    "ImageTooLargeError",
     "LLMError",
     "Message",
     "OpenAIChatClient",
     "Role",
     "SecretValue",
     "TextPart",
+    "UnsupportedImageError",
     "build_completer",
     "data_root",
     "read_config",

@@ -13,6 +13,7 @@ import pytest
 
 from dataset_factory.llm import (
     EndpointConfig,
+    ImagePart,
     LLMError,
     Message,
     OpenAIChatClient,
@@ -62,9 +63,26 @@ def test_complete_converts_messages_by_role() -> None:
     assert kwargs["model"] == "gpt-test"
     assert kwargs["messages"] == [
         {"role": "system", "content": "base prompt"},
-        {"role": "user", "content": "do this"},
+        {"role": "user", "content": [{"type": "text", "text": "do this"}]},
         {"role": "assistant", "content": "prior reply"},
     ]
+
+
+def test_complete_converts_user_message_with_image() -> None:
+    """user 消息含图片块：转成 OpenAI 内容块列表（text + image_url data URL）。"""
+    sdk = MagicMock()
+    sdk.chat.completions.create.return_value = _response_with_content("caption")
+    client = OpenAIChatClient(cast(openai.OpenAI, sdk), "gpt-test")
+    png = b"\x89PNG\r\n\x1a\nfake"
+    messages = [Message(role="user", parts=(TextPart("describe"), ImagePart(png)))]
+
+    client.complete(messages)
+
+    sent = sdk.chat.completions.create.call_args.kwargs["messages"]
+    user_content = sent[0]["content"]
+    assert user_content[0] == {"type": "text", "text": "describe"}
+    assert user_content[1]["type"] == "image_url"
+    assert user_content[1]["image_url"]["url"].startswith("data:image/png;base64,")
 
 
 def test_complete_raises_on_empty_choices() -> None:

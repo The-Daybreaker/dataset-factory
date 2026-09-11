@@ -16,8 +16,15 @@ class TextPart:
     text: str
 
 
-# 消息内容块类型。
-ContentPart = TextPart
+@dataclass(frozen=True)
+class ImagePart:
+    """一张图片内容块：持原始字节，编码与格式 / 大小校验在发送前统一做。"""
+
+    data: bytes
+
+
+# 消息内容块类型：文本块或图片块。
+ContentPart = TextPart | ImagePart
 
 
 @dataclass(frozen=True)
