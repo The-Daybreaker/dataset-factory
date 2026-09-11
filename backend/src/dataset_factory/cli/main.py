@@ -19,12 +19,43 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from typing import Annotated
 
 import typer
 
+from .._obs import RequestIdFilter
 from . import config, label, prompt, session, skill
+
+# 日志级别与格式：级别优先级 = `dsf serve --log-level` > 环境变量 DSF_LOG_LEVEL > 默认 INFO。
+# 默认给 INFO 而不是 WARNING，是为了让「服务收到了什么请求、各段花多久」开箱可见——可观测性
+# 的目的就是出了问题能查，默认静音等于白做（这也是 T10 要修的原始缺口）。
+_LOG_FORMAT = "%(asctime)s %(levelname)s [%(request_id)s] %(name)s: %(message)s"
+_LOG_LEVEL_ENV = "DSF_LOG_LEVEL"
+_DEFAULT_LOG_LEVEL = "INFO"
+
+
+def _configure_logging(level_name: str) -> None:
+    """配置应用日志输出到 stderr（stdout 留给结果正文，供外部 agent 干净解析）。
+
+    应用层负责日志配置、核心库只发记录（见 design「可观测性与日志」分工）；请求 id 由
+    `RequestIdFilter` 自动注入每行，非请求上下文（如 CLI 单发）显示为 `-`。
+
+    Args:
+        level_name: 日志级别名（DEBUG / INFO / WARNING / ERROR，大小写不敏感）；无法识别时
+            回落到 INFO。
+    """
+    level = getattr(logging, level_name.upper(), None)
+    handler = logging.StreamHandler(sys.stderr)
+    handler.addFilter(RequestIdFilter())
+    handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+    logging.basicConfig(
+        level=level if isinstance(level, int) else logging.INFO,
+        handlers=[handler],
+        force=True,  # 覆盖已有配置：uvicorn 等库可能已配过 root，这里以应用为准
+    )
+
 
 app = typer.Typer(
     help="Dataset Factory —— AI 打标工具（发图 + 指令产出 caption，支持迭代改写）。",
@@ -43,22 +74,31 @@ app.command(name="chat")(label.chat)
 def serve(
     host: Annotated[str, typer.Option("--host", help="监听地址")] = "127.0.0.1",
     port: Annotated[int, typer.Option("--port", help="监听端口")] = 8000,
+    log_level: Annotated[
+        str | None,
+        typer.Option(
+            "--log-level",
+            help=(
+                "日志级别（DEBUG / INFO / WARNING / ERROR）；"
+                f"缺省读环境变量 {_LOG_LEVEL_ENV}，再缺省 {_DEFAULT_LOG_LEVEL}"
+            ),
+        ),
+    ] = None,
 ) -> None:
-    """启动本地 Web 服务（HTTP API + 前端测试界面），Ctrl+C 停止。"""
+    """启动本地 Web 服务（HTTP API + 前端界面），Ctrl+C 停止。"""
     import uvicorn
 
     from ..api import app as api_app
 
+    if log_level is not None:
+        _configure_logging(log_level)
     typer.secho(
         f"Web 服务启动：http://{host}:{port}（Ctrl+C 停止）", fg=typer.colors.YELLOW
     )
-    uvicorn.run(api_app, host=host, port=port, log_level="warning")
+    # log_config=None：不让 uvicorn 覆盖应用刚配好的日志（否则级别与格式会被打回它的默认）。
+    # access_log=False：访问日志由 RequestLogMiddleware 接管——uvicorn 自带那条不含耗时。
+    uvicorn.run(api_app, host=host, port=port, log_config=None, access_log=False)
 
 
-# 核心库不配日志（只挂 NullHandler 的约定在库侧首次发日志时落地）；本文件是应用层，
-# 在最早期配置日志到 stderr——stdout 留给结果正文（退出码约定见模块 docstring）。
-logging.basicConfig(
-    stream=sys.stderr,
-    level=logging.WARNING,
-    format="%(levelname)s %(name)s: %(message)s",
-)
+# 应用层在最早期配置日志（stdout 留给结果正文，退出码约定见模块 docstring）。
+_configure_logging(os.environ.get(_LOG_LEVEL_ENV, _DEFAULT_LOG_LEVEL))

@@ -48,6 +48,7 @@ from ..skills import (
     SkillSourceError,
 )
 from . import routes_config, routes_labeling, routes_prompts, routes_skills
+from .middleware import RequestLogMiddleware
 
 
 def create_app(frontend_dir: Path | None = None) -> FastAPI:
@@ -57,6 +58,8 @@ def create_app(frontend_dir: Path | None = None) -> FastAPI:
         summary="AI 打标工具（发图 + 指令产出 caption，支持迭代改写）",
         version="0.1.0",
     )
+    # 访问日志中间件：放在最外层，它量到的耗时才是整个请求的真实总耗时。
+    app.add_middleware(RequestLogMiddleware)
     _register_error_handlers(app)
     app.include_router(routes_labeling.router)
     app.include_router(routes_prompts.router)

@@ -8,7 +8,9 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
+from time import perf_counter
 from typing import Protocol
 
 import openai
@@ -23,6 +25,7 @@ from openai.types.chat import (
     ChatCompletionUserMessageParam,
 )
 
+from .._obs import ms_since
 from .config import EndpointConfig
 from .errors import (
     LLMAuthError,
@@ -41,6 +44,8 @@ from .messages import ImagePart, Message, TextPart
 # 大图 / 慢模型把 timeout 放长；max_retries 复用 SDK 内建对超时 / 5xx / 429 的指数退避。
 _DEFAULT_TIMEOUT_SECONDS = 120.0
 _DEFAULT_MAX_RETRIES = 2
+
+logger = logging.getLogger(__name__)
 
 
 class Completer(Protocol):
@@ -87,12 +92,22 @@ class OpenAIChatClient:
             LLMError: SDK 调用失败（翻译成对应分类异常），或响应无 choices / 无文本内容。
         """
         payload = [_to_openai_message(message) for message in messages]
+        start = perf_counter()
         try:
             response = self._client.chat.completions.create(
                 model=self._model, messages=payload
             )
         except openai.APIError as exc:
+            # 第三段边界：模型调用本身。失败也记耗时——「卡了多久才失败」是排查的关键信息；
+            # 同时留下 SDK 异常类名（如 APITimeoutError），便于与用户可见消息对照。
+            logger.warning(
+                "模型调用失败（%.0fms，模型 %s，%s）",
+                ms_since(start),
+                self._model,
+                type(exc).__name__,
+            )
             raise _translate_sdk_error(exc) from exc
+        logger.info("模型调用完成（%.0fms，模型 %s）", ms_since(start), self._model)
         return _extract_text(response)
 
 

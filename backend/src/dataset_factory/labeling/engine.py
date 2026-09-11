@@ -10,11 +10,14 @@ sessions 落盘（用户消息 → 设置变更 → 请求信封 → 模型回�
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 from typing import cast
 
+from .._obs import ms_since
 from ..llm import Completer, ImagePart, Message, Role, TextPart
 from ..prompts import read_prompt
 from ..sessions import (
@@ -46,6 +49,8 @@ _KEY_SKILLS = "skills"  # pragma: allowlist secret
 # skill 全文的边界标记：让模型认出这是注入的 skill 说明，也让记录能认出来源。
 _SKILL_OPEN = "<skill>"
 _SKILL_CLOSE = "</skill>"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -166,6 +171,7 @@ class LabelingEngine:
             LLMError: 模型调用失败（此时信封已落盘，「当时喂了什么」有据可查）。
             ValueError: image 与 image_bytes 同时提供。
         """
+        start = perf_counter()
         if image is not None and image_bytes is not None:
             raise ValueError("image 与 image_bytes 只能二选一。")
         if not instruction.strip() and image is None and image_bytes is None:
@@ -223,8 +229,31 @@ class LabelingEngine:
             session_id, {"model": self._model, "messages": envelope_messages}
         )
 
-        caption = self._completer.complete(messages)
+        # 分层计时的第二段边界（第一段是 HTTP 接入、第三段在 llm 客户端内部）：这一段包含
+        # 读事件流、折叠设置、读提示词与 skill 全文、拼消息、落信封——skill 包很大或历史很长
+        # 时它也会明显变慢，所以必须与「模型调用」分开计时，否则排查时分不清卡在哪一层。
+        assemble_ms = ms_since(start)
+
+        llm_start = perf_counter()
+        try:
+            caption = self._completer.complete(messages)
+        except Exception:
+            logger.warning(
+                "一轮打标失败：组装 %.0fms 后模型调用出错（会话 %s）",
+                assemble_ms,
+                session_id,
+            )
+            raise
+        llm_ms = ms_since(llm_start)
+
         append_message(session_id, "assistant", caption)
+        logger.info(
+            "一轮打标完成：组装 %.0fms、模型 %.0fms、合计 %.0fms（会话 %s）",
+            assemble_ms,
+            llm_ms,
+            ms_since(start),
+            session_id,
+        )
         return LabelResult(session_id=session_id, caption=caption)
 
     def restore(self, session_id: str) -> SessionSnapshot:
