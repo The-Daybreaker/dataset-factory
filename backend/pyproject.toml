@@ -26,6 +26,7 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "detect-secrets>=1.5.0",
+    "httpx>=0.28",
     "import-linter>=2.15",
     "mkdocs-material>=9.7.7",
     "mkdocstrings[python]>=1.0.6",
@@ -40,6 +41,10 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers --strict-config"
+# tmp 目录即用即删（none）：不留跨轮次垃圾，避免下一次运行启动时的批量清理
+# 在受限环境下（rmtree 有单次删除上限）被拦；单个测试的 tmp 目录远小于上限。
+tmp_path_retention_policy = "none"
+tmp_path_retention_count = 0
 
 [tool.coverage.run]
 source = ["dataset_factory"]

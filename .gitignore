@@ -7,6 +7,9 @@ __pycache__/
 # uv 虚拟环境（可再生：uv sync 重建）
 .venv/
 
+# pytest 临时目录（tmp_path basetemp；测试运行产物，绝不进仓）
+.pytest-tmp/
+
 # npm 依赖与缓存（可再生：npm ci 重建）；前端构建产物由下方 dist/ 覆盖
 node_modules/
 .vite/

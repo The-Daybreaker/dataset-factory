@@ -11,7 +11,6 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
-from conftest import FakeCompleter
 
 from dataset_factory.labeling import (
     AttachmentReadError,
@@ -35,6 +34,8 @@ from dataset_factory.sessions import (
     read_events,
 )
 from dataset_factory.skills import import_skill, set_enabled
+
+from .conftest import FakeCompleter
 
 _SKILL_PACK = Path(__file__).parent / "fixtures" / "skill-pack"
 _MODEL = "test-model"

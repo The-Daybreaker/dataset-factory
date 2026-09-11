@@ -10,7 +10,6 @@ import json
 from pathlib import Path
 
 import pytest
-from conftest import FakeCompleter
 from typer.testing import CliRunner
 
 import dataset_factory.cli.label as label_module
@@ -19,6 +18,8 @@ from dataset_factory.llm import ImagePart, TextPart
 from dataset_factory.prompts import Prompt, save_prompt
 from dataset_factory.sessions import list_sessions
 from dataset_factory.skills import import_skill
+
+from .conftest import FakeCompleter
 
 _SKILL_PACK = Path(__file__).parent / "fixtures" / "skill-pack"
 runner = CliRunner()

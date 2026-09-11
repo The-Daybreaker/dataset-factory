@@ -10,7 +10,6 @@ import base64
 from pathlib import Path
 
 import pytest
-from conftest import FakeCompleter
 from fastapi.testclient import TestClient
 
 import dataset_factory.api.routes_labeling as routes_labeling
@@ -18,6 +17,8 @@ from dataset_factory.api import create_app
 from dataset_factory.llm import ImagePart
 from dataset_factory.prompts import Prompt, save_prompt
 from dataset_factory.sessions import list_sessions
+
+from .conftest import FakeCompleter
 
 _SKILL_PACK = Path(__file__).parent / "fixtures" / "skill-pack"
 # 最小合法 PNG（magic bytes 开头即可，FakeCompleter 不做图片校验）。
