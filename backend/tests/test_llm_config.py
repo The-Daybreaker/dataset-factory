@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 from pathlib import Path
 
@@ -66,6 +67,18 @@ def test_read_config_from_files(temp_data_root: Path) -> None:
     assert cfg.base_url == "https://api.example.com/v1"
     assert cfg.model == "test-model"
     assert cfg.api_key.reveal() == "sk-abc123"
+
+
+def test_read_config_parses_golden_fixture(temp_data_root: Path) -> None:
+    """契约测试：read_config 正确解析一份手写标准 config.json（把磁盘格式钉成独立样例，防读写两侧一起漂移）。"""
+    golden = Path(__file__).parent / "fixtures" / "config.json"
+    shutil.copyfile(golden, temp_data_root / "config.json")
+    _write_credentials(temp_data_root, "sk-golden-fixture")
+
+    cfg = read_config()
+
+    assert cfg.base_url == "https://api.example.com/v1"
+    assert cfg.model == "example-caption-model"
 
 
 def test_env_key_overrides_credentials(
