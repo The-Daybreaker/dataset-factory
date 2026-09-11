@@ -26,7 +26,7 @@ from openai.types.chat import (
 )
 
 from .._obs import ms_since
-from .config import EndpointConfig
+from .config import EndpointConfig, RequestConfig
 from .errors import (
     LLMAuthError,
     LLMBadRequestError,
@@ -40,10 +40,6 @@ from .errors import (
 )
 from .images import encode_image_data_url
 from .messages import ImagePart, Message, TextPart
-
-# 大图 / 慢模型把 timeout 放长；max_retries 复用 SDK 内建对超时 / 5xx / 429 的指数退避。
-_DEFAULT_TIMEOUT_SECONDS = 120.0
-_DEFAULT_MAX_RETRIES = 2
 
 logger = logging.getLogger(__name__)
 
@@ -69,15 +65,22 @@ class Completer(Protocol):
 class OpenAIChatClient:
     """OpenAI 兼容 /v1/chat/completions 的 Completer 实现（非流式）。"""
 
-    def __init__(self, client: openai.OpenAI, model: str) -> None:
-        """注入已装配好的 openai 客户端与模型名（注入便于测试替换假客户端）。
+    def __init__(
+        self,
+        client: openai.OpenAI,
+        model: str,
+        request: RequestConfig | None = None,
+    ) -> None:
+        """注入已装配好的 openai 客户端、模型名与请求参数（注入便于测试替换假客户端）。
 
         Args:
             client: 官方 openai SDK 客户端（base_url / api_key / timeout 已配好）。
             model: 模型名。
+            request: 请求参数（生成参数 + 透传的端点专有参数）；缺省表示不额外传任何参数。
         """
         self._client = client
         self._model = model
+        self._request = request if request is not None else RequestConfig()
 
     def complete(self, messages: Sequence[Message]) -> str:
         """把中立消息转成 OpenAI 消息、发非流式请求、取回文本。
@@ -95,7 +98,18 @@ class OpenAIChatClient:
         start = perf_counter()
         try:
             response = self._client.chat.completions.create(
-                model=self._model, messages=payload
+                model=self._model,
+                messages=payload,
+                # 未配置的项传 SDK 的 NOT_GIVEN 哨兵（而非 None）：哨兵表示「这个参数别发」，
+                # 传 None 会被序列化成 JSON null、部分端点会直接判为非法请求。
+                temperature=_given_or_omit(self._request.temperature),
+                top_p=_given_or_omit(self._request.top_p),
+                max_tokens=_given_or_omit(self._request.max_tokens),
+                extra_body=(
+                    dict(self._request.extra_body)
+                    if self._request.extra_body is not None
+                    else None
+                ),
             )
         except openai.APIError as exc:
             # 第三段边界：模型调用本身。失败也记耗时——「卡了多久才失败」是排查的关键信息；
@@ -114,8 +128,11 @@ class OpenAIChatClient:
 def build_completer(config: EndpointConfig) -> Completer:
     """从端点配置装配 OpenAI 兼容客户端（当前唯一 provider 实现）。
 
+    超时与重试次数取自 config.request（可被 config.json 覆盖）——硬编码的 120 秒对默认
+    带思考模式的推理型模型可能不够。
+
     Args:
-        config: 端点三要素（base_url / model / api_key）。
+        config: 端点配置（base_url / model / api_key / 请求参数）。
 
     Returns:
         实现 Completer 的客户端。
@@ -123,10 +140,25 @@ def build_completer(config: EndpointConfig) -> Completer:
     client = openai.OpenAI(
         base_url=config.base_url,
         api_key=config.api_key.reveal(),
-        timeout=_DEFAULT_TIMEOUT_SECONDS,
-        max_retries=_DEFAULT_MAX_RETRIES,
+        timeout=config.request.timeout_seconds,
+        max_retries=config.request.max_retries,
     )
-    return OpenAIChatClient(client, config.model)
+    return OpenAIChatClient(client, config.model, config.request)
+
+
+def _given_or_omit[T](value: T | None) -> T | openai.Omit:
+    """把 None 转成 SDK 的 omit 哨兵（区分「不传该参数」与「显式传 null」）。
+
+    SDK 3.x 用 `omit` 作默认哨兵（旧版的 `NOT_GIVEN` 语义仍是「没传」）；传 None 会被
+    序列化成 JSON null、部分端点直接判为非法请求，所以未配置的项一律走哨兵。
+
+    Args:
+        value: 参数值；None 表示不传。
+
+    Returns:
+        原值，或 SDK 的 omit 哨兵。
+    """
+    return openai.omit if value is None else value
 
 
 def _to_openai_message(message: Message) -> ChatCompletionMessageParam:

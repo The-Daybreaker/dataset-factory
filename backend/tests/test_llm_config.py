@@ -44,6 +44,99 @@ def _endpoint(
     return EndpointConfig(base_url=base_url, model=model, api_key=SecretValue(key))
 
 
+def test_read_config_parses_request_params(temp_data_root: Path) -> None:
+    """config.json 里配了请求参数时，read_config 把它们带进 EndpointConfig.request。"""
+    (temp_data_root / "config.json").write_text(
+        json.dumps(
+            {
+                "base_url": "https://api.example.com/v1",
+                "model": "test-model",
+                "temperature": 0.7,
+                "top_p": 0.8,
+                "max_tokens": 2048,
+                "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+                "timeout_seconds": 300,
+                "max_retries": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_credentials(temp_data_root)
+
+    request = read_config().request
+
+    assert request.temperature == 0.7
+    assert request.top_p == 0.8
+    assert request.max_tokens == 2048
+    assert request.extra_body == {"chat_template_kwargs": {"enable_thinking": False}}
+    assert request.timeout_seconds == 300
+    assert request.max_retries == 1
+
+
+def test_read_config_request_params_default_when_absent(temp_data_root: Path) -> None:
+    """没配请求参数时用内置默认；生成参数为 None（意思是「不传」而不是「传 0」）。"""
+    _write_config(temp_data_root)
+    _write_credentials(temp_data_root)
+
+    request = read_config().request
+
+    assert request.temperature is None
+    assert request.top_p is None
+    assert request.max_tokens is None
+    assert request.extra_body is None
+    assert request.timeout_seconds == 120.0
+    assert request.max_retries == 2
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("temperature", "热"),
+        ("max_tokens", 1.5),
+        ("extra_body", [1, 2]),
+        ("timeout_seconds", True),
+    ],
+)
+def test_read_config_rejects_bad_request_param(
+    temp_data_root: Path, field: str, value: object
+) -> None:
+    """请求参数字段类型不对 → ConfigError（边界 fail loud，不静默退回默认值）。"""
+    (temp_data_root / "config.json").write_text(
+        json.dumps(
+            {"base_url": "https://api.example.com/v1", "model": "m", field: value}
+        ),
+        encoding="utf-8",
+    )
+    _write_credentials(temp_data_root)
+
+    with pytest.raises(ConfigError):
+        read_config()
+
+
+def test_write_config_keeps_existing_request_params(temp_data_root: Path) -> None:
+    """write_config 只更新端点两项：config.json 里已有的请求参数原样保留（不被抹掉）。"""
+    (temp_data_root / "config.json").write_text(
+        json.dumps(
+            {
+                "base_url": "https://old/v1",
+                "model": "old-model",
+                "temperature": 0.3,
+                "timeout_seconds": 300,
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_credentials(temp_data_root)
+
+    write_config(_endpoint(base_url="https://new/v1", model="new-model"))
+
+    saved = json.loads((temp_data_root / "config.json").read_text(encoding="utf-8"))
+    assert saved["base_url"] == "https://new/v1"
+    assert saved["model"] == "new-model"
+    assert saved["temperature"] == 0.3
+    assert saved["timeout_seconds"] == 300
+
+
 def test_read_config_from_files(temp_data_root: Path) -> None:
     """正常路径：config.json 出 base_url/model，credentials 出密钥。"""
     _write_config(temp_data_root)

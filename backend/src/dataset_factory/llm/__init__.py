@@ -12,6 +12,7 @@ from .client import Completer, OpenAIChatClient, build_completer
 from .config import (
     ConfigError,
     EndpointConfig,
+    RequestConfig,
     SecretValue,
     data_root,
     describe_config,
@@ -52,6 +53,7 @@ __all__ = [
     "LLMUnexpectedError",
     "Message",
     "OpenAIChatClient",
+    "RequestConfig",
     "Role",
     "SecretValue",
     "TextPart",

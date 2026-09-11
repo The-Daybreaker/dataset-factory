@@ -25,6 +25,7 @@ from dataset_factory.llm import (
     LLMUnexpectedError,
     Message,
     OpenAIChatClient,
+    RequestConfig,
     SecretValue,
     TextPart,
     build_completer,
@@ -54,6 +55,45 @@ def _client_raising(exc: BaseException, model: str = "test-model") -> OpenAIChat
 def _bare_sdk_error[T: BaseException](cls: type[T]) -> T:
     """造未初始化的 SDK 异常实例：只测 isinstance 分派，绕开 __init__ 对 httpx 参数的依赖。"""
     return cls.__new__(cls)
+
+
+def test_complete_passes_configured_request_params() -> None:
+    """配好的生成参数与透传参数真的进到 SDK 调用里（否则「能配」只是摆设）。"""
+    sdk = MagicMock()
+    sdk.chat.completions.create.return_value = _response_with_content("ok")
+    client = OpenAIChatClient(
+        cast(openai.OpenAI, sdk),
+        "gpt-test",
+        RequestConfig(
+            temperature=0.7,
+            top_p=0.8,
+            max_tokens=128,
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+        ),
+    )
+
+    client.complete((Message(role="user", parts=(TextPart("hi"),)),))
+
+    kwargs = sdk.chat.completions.create.call_args.kwargs
+    assert kwargs["temperature"] == 0.7
+    assert kwargs["top_p"] == 0.8
+    assert kwargs["max_tokens"] == 128
+    assert kwargs["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
+
+
+def test_complete_omits_unconfigured_params() -> None:
+    """未配置的生成参数走 SDK 的 omit 哨兵（而非 None——传 null 会让部分端点判为非法请求）。"""
+    sdk = MagicMock()
+    sdk.chat.completions.create.return_value = _response_with_content("ok")
+    client = OpenAIChatClient(cast(openai.OpenAI, sdk), "gpt-test")
+
+    client.complete((Message(role="user", parts=(TextPart("hi"),)),))
+
+    kwargs = sdk.chat.completions.create.call_args.kwargs
+    assert kwargs["temperature"] is openai.omit
+    assert kwargs["top_p"] is openai.omit
+    assert kwargs["max_tokens"] is openai.omit
+    assert kwargs["extra_body"] is None
 
 
 def test_complete_returns_model_text() -> None:

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -28,6 +29,21 @@ _CREDENTIALS_FILENAME = (
     "credentials"  # pragma: allowlist secret —— 文件名常量、非密钥值
 )
 _MASK = "**********"
+
+# 请求参数的默认值（可被 config.json 覆盖；见 design「llm 模块实现基调」的生成参数条）。
+_DEFAULT_TIMEOUT_SECONDS = 120.0
+_DEFAULT_MAX_RETRIES = 2
+
+# config.json 里「请求参数」相关的键：本模块读它们，但 write_config 不负责写（写入只更新
+# 端点三要素）——这些键若已存在则原样保留，避免 `dsf config set` 改端点时抹掉用户配好的参数。
+_REQUEST_PARAM_KEYS = (
+    "temperature",
+    "top_p",
+    "max_tokens",
+    "extra_body",
+    "timeout_seconds",
+    "max_retries",
+)
 
 
 class ConfigError(Exception):
@@ -55,26 +71,71 @@ class SecretValue:
 
 
 @dataclass(frozen=True)
+class RequestConfig:
+    """一次模型请求的可调参数：生成参数（标准层 + 透传层）与传输参数。
+
+    分两层是刻意的（见 design「llm 模块实现基调」）：**标准层**只放 OpenAI 标准参数
+    （temperature / top_p / max_tokens，语义跨端点通用）；**透传层** `extra_body` 原样转发
+    端点专有参数（如 Qwen 的 `chat_template_kwargs.enable_thinking`、`top_k`），llm 不解释
+    其语义——这样将来端点冒出的新参数不必改核心接口，符合「不绑定厂商」的方向。
+
+    所有字段都有默认值：不配也能跑，配了才生效。
+
+    Attributes:
+        temperature: 采样温度；None = 不传该参数（用端点默认）。
+        top_p: 核采样阈值；None = 不传。
+        max_tokens: **输出** token 上限；None = 不传。注意它管输出侧，不是上下文窗口——
+            上下文窗口是模型的固有属性、不可设置。
+        extra_body: 端点专有参数，原样放进 SDK 的 extra_body 转发；None = 不传。
+        timeout_seconds: 单次 HTTP 调用超时（秒）。推理型模型默认带思考模式时响应明显更慢，
+            必要时调大它。
+        max_retries: SDK 内建重试次数（对超时 / 5xx / 429 指数退避）。
+    """
+
+    temperature: float | None = None
+    top_p: float | None = None
+    max_tokens: int | None = None
+    extra_body: Mapping[str, object] | None = None
+    timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS
+    max_retries: int = _DEFAULT_MAX_RETRIES
+
+
+@dataclass(frozen=True)
 class EndpointConfig:
-    """构建 API 客户端所需的端点三要素。
+    """构建 API 客户端所需的端点配置。
 
     api_key 为 SecretValue，因此本对象自动生成的 repr 也不会泄露密钥。
+
+    Attributes:
+        base_url: 端点地址。
+        model: 模型名。
+        api_key: 密钥（脱敏包裹）。
+        request: 请求参数（生成 + 传输），全部有默认值——调用方不关心时无需提供。
     """
 
     base_url: str
     model: str
     api_key: SecretValue
+    request: RequestConfig = RequestConfig()
 
 
 def read_config() -> EndpointConfig:
-    """读取端点配置 + 密钥，组装成 EndpointConfig。
+    """读取端点配置 + 请求参数 + 密钥，组装成 EndpointConfig。
 
     数据根由 data_root() 决定；测试用 temp_data_root fixture 设 DATASET_FACTORY_HOME 隔离真实目录。
+
+    Returns:
+        EndpointConfig：端点三要素 + 请求参数（未配置时用内置默认）。
+
+    Raises:
+        ConfigError: 配置或密钥缺失 / 损坏（消息可操作、不含密钥）。
     """
     root = data_root()
-    base_url, model = _read_config_json(root / _CONFIG_FILENAME)
+    base_url, model, request = _read_config_json(root / _CONFIG_FILENAME)
     api_key = _resolve_api_key(root / _CREDENTIALS_FILENAME)
-    return EndpointConfig(base_url=base_url, model=model, api_key=api_key)
+    return EndpointConfig(
+        base_url=base_url, model=model, api_key=api_key, request=request
+    )
 
 
 def describe_config() -> tuple[str | None, str | None, str | None]:
@@ -95,7 +156,8 @@ def describe_config() -> tuple[str | None, str | None, str | None]:
     model: str | None = None
     config_path = root / _CONFIG_FILENAME
     if config_path.exists():
-        base_url, model = _read_config_json(config_path)
+        # 只关心端点两项：请求参数不影响「现在配了什么」这个诊断视图。
+        base_url, model, _ = _read_config_json(config_path)
     if os.environ.get(ENV_API_KEY, "").strip():
         key_source: str | None = "env"
     else:
@@ -110,14 +172,14 @@ def describe_config() -> tuple[str | None, str | None, str | None]:
     return base_url, model, key_source
 
 
-def _read_config_json(path: Path) -> tuple[str, str]:
-    """从 config.json 读端点配置。
+def _read_config_json(path: Path) -> tuple[str, str, RequestConfig]:
+    """从 config.json 读端点配置与可选的请求参数。
 
     Args:
         path: config.json 的路径。
 
     Returns:
-        (base_url, model) 两个非空字符串。
+        (base_url, model, 请求参数)——前两项是非空字符串；第三项在文件里没配时全是内置默认值。
 
     Raises:
         ConfigError: 文件缺失 / 不可读 / 非合法 JSON / 顶层非对象 / 字段缺失或类型错。
@@ -147,7 +209,85 @@ def _read_config_json(path: Path) -> tuple[str, str]:
         raise ConfigError(f"端点配置 {path} 的 base_url 缺失或不是非空字符串；请补全。")
     if not isinstance(model, str) or not model:
         raise ConfigError(f"端点配置 {path} 的 model 缺失或不是非空字符串；请补全。")
-    return base_url, model
+    return base_url, model, _parse_request_config(path, data)
+
+
+def _parse_request_config(path: Path, data: Mapping[str, object]) -> RequestConfig:
+    """解析 config.json 里可选的请求参数（没配就用内置默认）。
+
+    Args:
+        path: config.json 路径（仅用于报错信息）。
+        data: config.json 解析出的顶层对象。
+
+    Returns:
+        请求参数；所有字段都可缺省。
+
+    Raises:
+        ConfigError: 某个参数字段存在但类型不对。
+    """
+    timeout = _opt_float(path, data, "timeout_seconds")
+    retries = _opt_int(path, data, "max_retries")
+    return RequestConfig(
+        temperature=_opt_float(path, data, "temperature"),
+        top_p=_opt_float(path, data, "top_p"),
+        max_tokens=_opt_int(path, data, "max_tokens"),
+        extra_body=_opt_mapping(path, data, "extra_body"),
+        timeout_seconds=timeout if timeout is not None else _DEFAULT_TIMEOUT_SECONDS,
+        max_retries=retries if retries is not None else _DEFAULT_MAX_RETRIES,
+    )
+
+
+def _opt_float(path: Path, data: Mapping[str, object], key: str) -> float | None:
+    """取可选数字字段；缺失返回 None。
+
+    Raises:
+        ConfigError: 字段存在但不是数字（bool 不算数字）。
+    """
+    raw = data.get(key)
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise ConfigError(f"端点配置 {path} 的 {key} 应是数字；请检查内容。")
+    return float(raw)
+
+
+def _opt_int(path: Path, data: Mapping[str, object], key: str) -> int | None:
+    """取可选整数字段；缺失返回 None。
+
+    Raises:
+        ConfigError: 字段存在但不是整数（bool 不算整数）。
+    """
+    raw = data.get(key)
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise ConfigError(f"端点配置 {path} 的 {key} 应是整数；请检查内容。")
+    return raw
+
+
+def _opt_mapping(
+    path: Path, data: Mapping[str, object], key: str
+) -> dict[str, object] | None:
+    """取可选对象字段；缺失返回 None。
+
+    Raises:
+        ConfigError: 字段存在但不是 JSON 对象。
+    """
+    raw = data.get(key)
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ConfigError(f"端点配置 {path} 的 {key} 应是 JSON 对象；请检查内容。")
+    return cast(dict[str, object], raw)
+
+
+def _read_optional_json(path: Path) -> dict[str, object] | None:
+    """尽力读一个 JSON 对象（用于保留既有字段）；文件不存在或不是对象时返回 None。"""
+    try:
+        parsed: object = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return cast(dict[str, object], parsed) if isinstance(parsed, dict) else None
 
 
 def _resolve_api_key(credentials_path: Path) -> SecretValue:
@@ -227,10 +367,15 @@ def write_config(config: EndpointConfig) -> None:
     if not api_key:
         raise ConfigError("api_key 不能为空；请填写密钥。")
     root = data_root()
-    config_json = (
-        json.dumps({"base_url": base_url, "model": model}, ensure_ascii=False, indent=2)
-        + "\n"
-    )
+    # 请求参数（temperature / extra_body / timeout 等）由用户自行维护（手改 config.json，
+    # 后续入口再扩展）：这里把既有值原样保留，避免「改端点」顺带抹掉配好的生成参数。
+    payload: dict[str, object] = {"base_url": base_url, "model": model}
+    existing = _read_optional_json(root / _CONFIG_FILENAME)
+    if existing is not None:
+        for key in _REQUEST_PARAM_KEYS:
+            if key in existing:
+                payload[key] = existing[key]
+    config_json = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     _atomic_write_text(root / _CONFIG_FILENAME, config_json)
     _atomic_write_text(root / _CREDENTIALS_FILENAME, api_key)
 
