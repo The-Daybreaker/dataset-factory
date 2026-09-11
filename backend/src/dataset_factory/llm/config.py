@@ -77,6 +77,39 @@ def read_config() -> EndpointConfig:
     return EndpointConfig(base_url=base_url, model=model, api_key=api_key)
 
 
+def describe_config() -> tuple[str | None, str | None, str | None]:
+    """只读描述当前配置状态（诊断用，不因密钥缺失而报错）。
+
+    与 read_config 的分工：read_config 是「装配客户端」用的完整读取（缺一样就 fail loud）；
+    describe_config 是「给用户看现在配了什么」的诊断视图（缺什么就显示缺什么）。
+
+    Returns:
+        (base_url, model, 密钥来源) 三元组：config.json 缺失时前两项为 None；密钥来源为
+        "env"（环境变量 DSF_API_KEY）/ "file"（credentials 文件）/ None（两通道都没配）。
+
+    Raises:
+        ConfigError: config.json 存在但损坏（非法 JSON / 顶层非对象 / 字段类型错）。
+    """
+    root = data_root()
+    base_url: str | None = None
+    model: str | None = None
+    config_path = root / _CONFIG_FILENAME
+    if config_path.exists():
+        base_url, model = _read_config_json(config_path)
+    if os.environ.get(ENV_API_KEY, "").strip():
+        key_source: str | None = "env"
+    else:
+        credentials = root / _CREDENTIALS_FILENAME
+        try:
+            has_file_key = credentials.exists() and bool(
+                credentials.read_text(encoding="utf-8").strip()
+            )
+        except OSError:
+            has_file_key = False
+        key_source = "file" if has_file_key else None
+    return base_url, model, key_source
+
+
 def _read_config_json(path: Path) -> tuple[str, str]:
     """从 config.json 读端点配置。
 

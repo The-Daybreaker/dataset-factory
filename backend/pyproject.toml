@@ -7,7 +7,11 @@ license = "MIT"
 dependencies = [
     "openai>=3.13.0",
     "pyyaml>=6.0.3",
+    "typer>=0.27.2",
 ]
+
+[project.scripts]
+dsf = "dataset_factory.cli:app"
 
 [project.urls]
 Repository = "https://github.com/The-Daybreaker/dataset-factory"
@@ -87,7 +91,7 @@ line-length = 88
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM", "C4", "PT", "N", "RUF", "D", "TRY", "BLE"]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM", "C4", "PT", "N", "RUF", "D", "TRY", "BLE", "S"]
 ignore = [
     "D400", "D415",   # 首行句末标点：中文用「。」，英文句号规则误报
     "D401", "D403",   # 祈使语气 / 首词大写：英文语法检测，对中文不适用
@@ -102,6 +106,10 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["D104"]   # 骨架包暂无 docstring，各模块有内容时再补
+"tests/**" = [
+    "S101",   # 测试就是用 assert 断言
+    "S105", "S106", "S107",  # 测试里的假密钥字面量（"test-key" 等），非真实凭据
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["dataset_factory"]
