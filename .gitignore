@@ -7,6 +7,10 @@ __pycache__/
 # uv 虚拟环境（可再生：uv sync 重建）
 .venv/
 
+# npm 依赖与缓存（可再生：npm ci 重建）；前端构建产物由下方 dist/ 覆盖
+node_modules/
+.vite/
+
 # 测试 / 覆盖率缓存与报告
 .pytest_cache/
 .coverage

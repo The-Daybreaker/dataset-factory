@@ -1,0 +1,18 @@
+{
+  "files": {
+    "includes": ["src/**", "*.ts", "*.json", "index.html"]
+  },
+  "formatter": {
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 88
+  },
+  "linter": {
+    "enabled": true
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double"
+    }
+  }
+}

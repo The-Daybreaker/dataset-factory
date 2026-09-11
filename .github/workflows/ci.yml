@@ -1,5 +1,7 @@
 # GitHub Actions CI —— 持续集成流水线：
-# 每次 push / PR，自动在 Windows + Linux 两个系统上跑「测试 + 覆盖率 + 风格检查 + 仓库卫生 + 架构契约」，全绿才算过。
+# 每次 push / PR，自动在 Windows + Linux 两个系统上跑两套 job，全绿才算过：
+#   - test（后端）：测试 + 覆盖率 + 架构契约 + ruff lint/format + pyright 类型 + pre-commit + docs 构建
+#   - frontend（前端）：Biome lint/format + tsc 类型检查 + Vitest + Vite 构建
 # 注意：本文件本地跑不了，推到 GitHub 后才在它的 runner 上真正执行。
 
 name: CI
@@ -67,3 +69,39 @@ jobs:
 
       - name: Docs build (mkdocs --strict)
         run: uv run mkdocs build --strict         # 文档骨架构建（mkdocstrings 从 docstring 抽 API；--strict 把警告当错误）
+
+  frontend:
+    name: "frontend (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false                            # 与后端一致：一个系统挂不取消另一个
+      matrix:
+        os: [ubuntu-latest, windows-latest]       # 跨平台矩阵（与后端同规格）
+    defaults:
+      run:
+        working-directory: frontend               # npm 工程在 frontend/ 子目录
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Node (+ npm 缓存)
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"                      # 与本地开发所用的大版本一致
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Sync dependencies
+        run: npm ci                               # 按 package-lock.json 装（可复现，等价后端的 uv sync --frozen）
+
+      - name: Lint (Biome)
+        run: npm run lint
+
+      - name: Type check (tsc --noEmit)
+        run: npm run typecheck                    # 类型检查独立成步：Vite 构建只转译、不做类型检查
+
+      - name: Test (Vitest)
+        run: npm run test
+
+      - name: Build (Vite)
+        run: npm run build

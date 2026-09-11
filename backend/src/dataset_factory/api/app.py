@@ -72,8 +72,13 @@ def create_app(frontend_dir: Path | None = None) -> FastAPI:
 
 
 def _default_frontend_dir() -> Path:
-    """frontend 默认位置 = backend 工程旁的 ../frontend（workspace/frontend）。"""
-    return Path(__file__).resolve().parents[3].parent / "frontend"
+    """frontend 默认位置 = backend 工程旁的 ../frontend/dist（前端构建产物）。
+
+    前端已改为工程化构建（Vite + React + TypeScript）：托管的是构建产物而非源码。
+    开发期改用 `npm run dev` 起 Vite dev server（它自带 /api 代理到后端），
+    平时用 `npm run build` 产出 dist/ 后由本服务托管。
+    """
+    return Path(__file__).resolve().parents[3].parent / "frontend" / "dist"
 
 
 # 域异常 → HTTP 状态码：先注册子类（精确匹配优先），再注册基类兜底。
