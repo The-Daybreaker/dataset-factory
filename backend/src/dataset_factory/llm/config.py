@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from .._fs import atomic_write_text, data_root
+from .._fs import atomic_write_bytes, data_root
 
 ENV_API_KEY = "DSF_API_KEY"  # pragma: allowlist secret —— 环境变量名常量、非密钥值（辅通道，优先覆盖 credentials 文件）
 
@@ -186,29 +186,35 @@ def _read_config_json(path: Path) -> tuple[str, str, RequestConfig]:
     """
     if not path.exists():
         raise ConfigError(
-            f"未找到端点配置 {path}；请先用 `dsf config set` 设置 base_url 与模型名。"
+            f"未找到端点配置 {path.name}；请先用 `dsf config set` 设置 base_url 与模型名。"
         )
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise ConfigError(f"无法读取端点配置 {path}：{exc.strerror or exc}") from exc
+        raise ConfigError(
+            f"无法读取端点配置 {path.name}：{exc.strerror or exc}"
+        ) from exc
     try:
         parsed: object = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ConfigError(
-            f"端点配置 {path} 不是合法 JSON（第 {exc.lineno} 行第 {exc.colno} 列）；请检查语法。"
+            f"端点配置 {path.name} 不是合法 JSON（第 {exc.lineno} 行第 {exc.colno} 列）；请检查语法。"
         ) from exc
     if not isinstance(parsed, dict):
-        raise ConfigError(f"端点配置 {path} 顶层应为 JSON 对象；请检查内容。")
+        raise ConfigError(f"端点配置 {path.name} 顶层应为 JSON 对象；请检查内容。")
     # json.loads 返回 Any：显式收成 dict[str, object] 再逐字段 isinstance 校验，
     # 既满足 strict 类型检查，也把「外部不可信数据在边界做运行时校验」落实。
     data = cast(dict[str, object], parsed)
     base_url = data.get("base_url")
     model = data.get("model")
     if not isinstance(base_url, str) or not base_url:
-        raise ConfigError(f"端点配置 {path} 的 base_url 缺失或不是非空字符串；请补全。")
+        raise ConfigError(
+            f"端点配置 {path.name} 的 base_url 缺失或不是非空字符串；请补全。"
+        )
     if not isinstance(model, str) or not model:
-        raise ConfigError(f"端点配置 {path} 的 model 缺失或不是非空字符串；请补全。")
+        raise ConfigError(
+            f"端点配置 {path.name} 的 model 缺失或不是非空字符串；请补全。"
+        )
     return base_url, model, _parse_request_config(path, data)
 
 
@@ -247,7 +253,7 @@ def _opt_float(path: Path, data: Mapping[str, object], key: str) -> float | None
     if raw is None:
         return None
     if isinstance(raw, bool) or not isinstance(raw, (int, float)):
-        raise ConfigError(f"端点配置 {path} 的 {key} 应是数字；请检查内容。")
+        raise ConfigError(f"端点配置 {path.name} 的 {key} 应是数字；请检查内容。")
     return float(raw)
 
 
@@ -261,7 +267,7 @@ def _opt_int(path: Path, data: Mapping[str, object], key: str) -> int | None:
     if raw is None:
         return None
     if isinstance(raw, bool) or not isinstance(raw, int):
-        raise ConfigError(f"端点配置 {path} 的 {key} 应是整数；请检查内容。")
+        raise ConfigError(f"端点配置 {path.name} 的 {key} 应是整数；请检查内容。")
     return raw
 
 
@@ -277,7 +283,7 @@ def _opt_mapping(
     if raw is None:
         return None
     if not isinstance(raw, dict):
-        raise ConfigError(f"端点配置 {path} 的 {key} 应是 JSON 对象；请检查内容。")
+        raise ConfigError(f"端点配置 {path.name} 的 {key} 应是 JSON 对象；请检查内容。")
     return cast(dict[str, object], raw)
 
 
@@ -376,36 +382,38 @@ def write_config(config: EndpointConfig) -> None:
             if key in existing:
                 payload[key] = existing[key]
     config_json = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
-    _atomic_write_text(root / _CONFIG_FILENAME, config_json)
-    _atomic_write_text(root / _CREDENTIALS_FILENAME, api_key)
+    try:
+        config_bytes = config_json.encode("utf-8")
+        key_bytes = api_key.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ConfigError(
+            f"端点配置含 UTF-8 无法编码的字符（{exc.reason}）；请检查输入内容。"
+        ) from exc
+    # 两个文件先各自编码（内容错误在这一步全部暴露）、再连续落盘：「新端点配旧密钥」的
+    # 中间态窗口只剩两次连续改名。真正的成对原子需要日志式提交，本地单机工具不值当。
+    _atomic_write_bytes(root / _CONFIG_FILENAME, config_bytes)
+    _atomic_write_bytes(root / _CREDENTIALS_FILENAME, key_bytes)
 
 
-def _atomic_write_text(path: Path, text: str) -> None:
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
     """建目录后复用共享原子写落盘，把底层错误翻译成 ConfigError。
 
-    原子写的机制（同目录临时文件 + fsync + os.replace + 兜底清理）收敛在 `_fs` 供各
-    数据域复用；本封装只补 llm 域的两件事：先建父目录（以便区分「建目录失败」与
-    「写文件失败」），再把底层 OSError / UnicodeEncodeError 翻译成 ConfigError（消息可
-    操作、不含密钥）。
+    原子写的机制（同目录临时文件 + fsync + os.replace + 刷父目录项）收敛在 `_fs` 供各
+    数据域复用；本封装只补 llm 域的两件事：先建父目录（以便区分「建目录失败」与「写文件
+    失败」），再把底层 OSError 翻译成 ConfigError（消息可操作、不含密钥、不暴露绝对路径）。
 
     Args:
         path: 目标文件路径。
-        text: 要写入的文本内容。
+        data: 要写入的字节内容。
 
     Raises:
-        ConfigError: 目录无法创建，或底层写入 / 改名失败，或内容含 UTF-8 无法编码的字符。
+        ConfigError: 目录无法创建，或底层写入 / 改名失败。
     """
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        raise ConfigError(
-            f"无法在 {path.parent} 准备写入：{exc.strerror or exc}"
-        ) from exc
+        raise ConfigError(f"无法在数据根目录准备写入：{exc.strerror or exc}") from exc
     try:
-        atomic_write_text(path, text)
+        atomic_write_bytes(path, data)
     except OSError as exc:
-        raise ConfigError(f"无法写入 {path}：{exc.strerror or exc}") from exc
-    except UnicodeEncodeError as exc:
-        raise ConfigError(
-            f"无法写入 {path}：内容含 UTF-8 无法编码的字符（{exc.reason}）"
-        ) from exc
+        raise ConfigError(f"无法写入 {path.name}：{exc.strerror or exc}") from exc

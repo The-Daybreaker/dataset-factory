@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime, tzinfo
 from pathlib import Path
 from typing import cast
 
@@ -95,14 +95,15 @@ def test_create_session_ids_unique_on_same_tick(
 
     class _FixedDatetime:
         @staticmethod
-        def now() -> datetime:
-            return datetime(2026, 9, 11, 10, 30, 0, 123456)
+        def now(tz: tzinfo | None = None) -> datetime:
+            return datetime(2026, 9, 11, 10, 30, 0, 123456, tzinfo=UTC)
 
     monkeypatch.setattr(store, "datetime", _FixedDatetime)
 
     first = create_session()
     second = create_session()
 
+    assert first == "20260911-103000-123456"
     assert second == f"{first}-1"
     assert list_sessions() == [first, second]
 
@@ -120,7 +121,11 @@ def test_append_message_round_trips(temp_data_root: Path) -> None:
     assert event.role == "user"
     assert event.text == "给这张图打个标"
     assert event.attachment is None
-    assert event.ts
+    # ts 带时区（UTC）：时间戳无歧义、跨机器 / 跨时区可比较。
+    parsed = datetime.fromisoformat(event.ts)
+    offset = parsed.utcoffset()
+    assert offset is not None
+    assert offset.total_seconds() == 0
 
 
 def test_append_message_with_attachment_round_trips(temp_data_root: Path) -> None:

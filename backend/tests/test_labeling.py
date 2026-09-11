@@ -33,7 +33,7 @@ from dataset_factory.sessions import (
     list_sessions,
     read_events,
 )
-from dataset_factory.skills import import_skill, set_enabled
+from dataset_factory.skills import SkillNotFoundError, import_skill, set_enabled
 
 from .conftest import FakeCompleter
 
@@ -486,3 +486,36 @@ def test_end_to_end_labeling_flow(
         "envelope",
         "message",
     ]
+
+
+def test_resume_with_missing_prompt_leaves_no_trace(
+    temp_data_root: Path, fake_completer: FakeCompleter
+) -> None:
+    """续接时传不存在的提示词名：报错且会话零痕迹（不落坏设置、不留孤儿消息），下轮照常。"""
+    _save_prompt("h3", "你是打标助手。")
+    engine = LabelingEngine(fake_completer, _MODEL)
+    first = engine.label(prompt_name="h3", instruction="第一轮")
+
+    with pytest.raises(PromptNotFoundError):
+        engine.label(
+            session_id=first.session_id, prompt_name="不存在", instruction="改"
+        )
+
+    events = read_events(first.session_id)
+    assert _event_types(events) == ["settings", "message", "envelope", "message"]
+    resumed = engine.label(session_id=first.session_id, instruction="再改一次")
+    assert resumed.caption == "打标结果"
+    assert fake_completer.calls[-1][0].parts == (TextPart("你是打标助手。"),)
+
+
+def test_unknown_skill_name_fails_loud(
+    temp_data_root: Path, fake_completer: FakeCompleter
+) -> None:
+    """勾选了库里不存在的 skill 名：SkillNotFoundError（fail loud；对比：库级停用才是静默跳过）。"""
+    _save_prompt("h3", "你是打标助手。")
+    engine = LabelingEngine(fake_completer, _MODEL)
+
+    with pytest.raises(SkillNotFoundError):
+        engine.label(prompt_name="h3", skill_names=["拼错了"], instruction="打标")
+
+    assert list_sessions() == []

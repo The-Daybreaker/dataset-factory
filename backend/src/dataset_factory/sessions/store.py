@@ -1,6 +1,6 @@
 """会话持久化（数据域）——读写只收敛在本模块。
 
-一会话一目录 ``sessions/<会话id>/``（会话 id = 创建时间戳，定宽、字典序即时间序）：
+一会话一目录 ``sessions/<会话id>/``（会话 id = 创建时刻的 UTC 时间戳，定宽、字典序即时间序）：
 ``events.jsonl`` 是 append-only 事件流（消息 + 请求信封 + 设置，每行一个 JSON 对象，只追加
 不改写）；``attachments/`` 存本会话图片副本（原名 + 序号、重名不覆盖，会话自包含）。恢复 = 读
 最新目录回放。崩溃 / 中断安全靠三点：append-only（已落盘的行不受后续崩溃影响）、每次追加后
@@ -14,7 +14,7 @@ import json
 import os
 import re
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .._fs import data_root
@@ -109,12 +109,13 @@ def _require_session(session_id: str) -> Path:
 
 
 def _new_session_id(sessions_root: Path) -> str:
-    """生成一个不撞名的会话 id：创建时间戳，同一 tick 撞名则加 -<序号>。
+    """生成一个不撞名的会话 id：创建时刻的 UTC 时间戳，同一 tick 撞名则加 -<序号>。
 
+    用 UTC 而非本地时间：「字典序即时间序」这个排序前提在跨时区与夏令时回拨下仍成立。
     Windows 系统时钟粒度较粗（约 15ms），同一 tick 内连创两个会话会得到相同时间戳；加序号
     保证不撞（会话 id 即目录名，撞名会覆盖旧会话）。
     """
-    stamp = datetime.now().strftime(_STAMP_FORMAT)
+    stamp = datetime.now(UTC).strftime(_STAMP_FORMAT)
     candidate = stamp
     seq = 1
     while (sessions_root / candidate).exists():
@@ -252,7 +253,7 @@ def append_message(
         SessionNotFoundError: 没有这个会话。
         SessionError: 写入失败，或内容含 UTF-8 无法编码的字符。
     """
-    ts = datetime.now().isoformat()
+    ts = datetime.now(UTC).isoformat()
     _append_event(
         session_id, MessageEvent(ts=ts, role=role, text=text, attachment=attachment)
     )
@@ -272,7 +273,7 @@ def append_envelope(session_id: str, request: Mapping[str, JsonValue]) -> None:
         SessionNotFoundError: 没有这个会话。
         SessionError: 写入失败、request 不可 JSON 序列化，或含 UTF-8 无法编码的字符。
     """
-    ts = datetime.now().isoformat()
+    ts = datetime.now(UTC).isoformat()
     _append_event(session_id, EnvelopeEvent(ts=ts, request=dict(request)))
 
 
@@ -290,7 +291,7 @@ def append_settings(session_id: str, settings: Mapping[str, JsonValue]) -> None:
         SessionNotFoundError: 没有这个会话。
         SessionError: 写入失败、settings 不可 JSON 序列化，或含 UTF-8 无法编码的字符。
     """
-    ts = datetime.now().isoformat()
+    ts = datetime.now(UTC).isoformat()
     _append_event(session_id, SettingsEvent(ts=ts, settings=dict(settings)))
 
 

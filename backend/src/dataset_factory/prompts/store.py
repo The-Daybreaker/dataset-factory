@@ -252,20 +252,39 @@ def _history_target(history_dir: Path, name: str, stamp: str) -> Path:
     return candidate
 
 
-def _history_versions(history_dir: Path, name: str) -> list[Path]:
-    """某条目在 _history/ 里的全部版本，按时间戳（文件名）从旧到新排序。
+# _STAMP_FORMAT 产出的时间戳定宽（8+1+6+1+6 = 22）：历史排序按它切出时间戳与同戳序号。
+_STAMP_WIDTH = len(datetime(2026, 12, 31, 23, 59, 59, 999999).strftime(_STAMP_FORMAT))
 
-    历史文件名形如 `<name>.<时间戳>.md`；名称已禁点号，故 `<name>.` 前缀能精确锁定该条目、
-    不会误配到别的条目（如 name=foo 不会匹配 foobar 的历史）。
+
+def _history_versions(history_dir: Path, name: str) -> list[Path]:
+    """某条目在 _history/ 里的全部版本，按产生顺序（时间戳 + 同戳序号）从旧到新排序。
+
+    历史文件名形如 `<name>.<时间戳>.md`（名称已禁点号，`<name>.` 前缀能精确锁定该条目）；
+    同戳撞名加 `-<序号>`，序号即产生顺序。排序不能用字典序——`-` 排在 `.` 之前，会把同戳
+    的 `-1` 版排到基础版前面、颠倒新旧；按「定宽时间戳 + 序号」解析出真实顺序。
     """
     prefix = f"{name}."
-    return sorted(
+    versions = [
         path
         for path in history_dir.iterdir()
         if path.is_file()
         and path.name.startswith(prefix)
         and path.name.endswith(_SUFFIX)
-    )
+    ]
+
+    def sort_key(path: Path) -> tuple[str, int]:
+        middle = path.name[len(prefix) : -len(_SUFFIX)]
+        tail = middle[_STAMP_WIDTH + 1 :]
+        if (
+            len(middle) > _STAMP_WIDTH
+            and middle[_STAMP_WIDTH] == "-"
+            and tail.isdigit()
+        ):
+            return middle[:_STAMP_WIDTH], int(tail)
+        return middle, 0
+
+    versions.sort(key=sort_key)
+    return versions
 
 
 def _evict_old_history(history_dir: Path, name: str) -> None:

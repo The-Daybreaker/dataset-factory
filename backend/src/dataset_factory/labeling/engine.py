@@ -2,8 +2,9 @@
 
 一轮打标 = 基础提示词（system 消息）+ 启用的 skill 全文（<skill> 标记包裹进当轮 user 消息）
 + 图片与指令（当轮 user 消息）+ 历史回放（按原角色重建、历史图片降为占位文本）。每轮经
-sessions 落盘（用户消息 → 设置变更 → 请求信封 → 模型回复，信封先落盘再调模型，失败也有
-「当时喂了什么」可查）；llm 消息模型与会话事件 JSON 的来回转换收敛在本模块（sessions 只把
+sessions 落盘（设置变更 → 用户消息 → 请求信封 → 模型回复；先校验本轮全部输入再落任何事件，
+失败轮零痕迹，信封先落盘再调模型、失败也有「当时喂了什么」可查）；llm 消息模型与会话事件
+JSON 的来回转换收敛在本模块（sessions 只把
 设置与信封当任意 JSON 忠实存取，守分层）。历史不缓存、每轮回放 events.jsonl 重建——新进程
 （如 CLI 续接）与崩溃重启后天然续上同一会话。
 """
@@ -34,7 +35,7 @@ from ..sessions import (
     save_attachment,
     save_attachment_bytes,
 )
-from ..skills import list_skills, read_skill
+from ..skills import SkillNotFoundError, list_skills, read_skill
 from .errors import (
     AttachmentReadError,
     EmptyTurnError,
@@ -168,6 +169,7 @@ class LabelingEngine:
             SettingsFormatError: 会话的设置事件结构非法。
             SessionNotFoundError: session_id 指向不存在的会话。
             PromptNotFoundError: 基础提示词在提示词库中不存在。
+            SkillNotFoundError: 勾选的 skill 名不在 skill 库中（拼写错误或已被删除）。
             LLMError: 模型调用失败（此时信封已落盘，「当时喂了什么」有据可查）。
             ValueError: image 与 image_bytes 同时提供。
         """
@@ -176,15 +178,10 @@ class LabelingEngine:
             raise ValueError("image 与 image_bytes 只能二选一。")
         if not instruction.strip() and image is None and image_bytes is None:
             raise EmptyTurnError("本轮没有任何可打标的内容：请输入指令或附一张图片。")
-        if session_id is None and prompt_name is None:
-            # 新会话必然没有已存设置，此时连 prompt_name 都不传一定无底座；在建会话前拦下，
-            # 不留只有空事件流的半成品会话。
-            raise PromptNotSelectedError(
-                "尚未选定基础提示词（一轮打标必须有一个作 system 底座）；请传入 prompt_name。"
-            )
         if session_id is None:
-            session_id = create_session()
-        events = read_events(session_id)
+            events: list[SessionEvent] = []
+        else:
+            events = read_events(session_id)
         settings = _fold_settings(events)
         history = _replay_history(events)
 
@@ -196,6 +193,12 @@ class LabelingEngine:
             raise PromptNotSelectedError(
                 "尚未选定基础提示词（一轮打标必须有一个作 system 底座）；请传入 prompt_name。"
             )
+        # 先校验、后落盘：提示词与 skill 是本轮的两个用户输入，在任何写盘（含新会话建目录）
+        # 之前全部验证完——失败轮零痕迹（不留坏设置、不留孤儿消息、也不留空壳会话）。
+        prompt = read_prompt(wanted_prompt)
+        skill_texts = _load_enabled_skill_texts(wanted_skills)
+        if session_id is None:
+            session_id = create_session()
         if (wanted_prompt, wanted_skills) != (
             settings.prompt_name,
             settings.skill_names,
@@ -215,8 +218,6 @@ class LabelingEngine:
             sent_image_bytes = image_bytes
         append_message(session_id, "user", instruction, attachment)
 
-        prompt = read_prompt(wanted_prompt)
-        skill_texts = _load_enabled_skill_texts(wanted_skills)
         messages, envelope_messages = _assemble(
             prompt_body=prompt.body,
             skill_texts=skill_texts,
@@ -237,14 +238,10 @@ class LabelingEngine:
         llm_start = perf_counter()
         try:
             caption = self._completer.complete(messages)
-        except Exception:
-            logger.warning(
-                "一轮打标失败：组装 %.0fms 后模型调用出错（会话 %s）",
-                assemble_ms,
-                session_id,
-            )
-            raise
-        llm_ms = ms_since(llm_start)
+        finally:
+            # 模型层耗时无论成败都记一行；失败详情由入口层边界记录（库层不 catch 异常）。
+            llm_ms = ms_since(llm_start)
+            logger.info("一轮打标模型调用结束：%.0fms（会话 %s）", llm_ms, session_id)
 
         append_message(session_id, "assistant", caption)
         logger.info(
@@ -357,10 +354,21 @@ def _replay_history(events: Sequence[SessionEvent]) -> tuple[Message, ...]:
 
 
 def _load_enabled_skill_texts(names: Sequence[str]) -> list[str]:
-    """读出应注入的 skill 全文：会话勾选 ∩ 库级启用（停用的跳过），保持勾选顺序。"""
+    """读出应注入的 skill 全文：会话勾选 ∩ 库级启用（停用的跳过），保持勾选顺序。
+
+    库里不存在的名字（拼错，或会话设置里残留的已删除 skill）直接报错而不是静默跳过——
+    静默跳过会让用户以为 skill 生效了、输出却莫名变差，排查成本高；fail loud 才能当场纠正。
+    """
     if not names:
         return []
-    enabled = {skill.name for skill in list_skills() if skill.enabled}
+    skills = list_skills()
+    unknown = [name for name in names if name not in {s.name for s in skills}]
+    if unknown:
+        raise SkillNotFoundError(
+            f"skill {unknown[0]!r} 不在 skill 库中；请检查名称拼写（dsf skill list 查看"
+            "可用清单）。若它来自会话设置里已删除的 skill，重新勾选 / 传新的 skill 清单即可覆盖。"
+        )
+    enabled = {skill.name for skill in skills if skill.enabled}
     return [read_skill(name) for name in names if name in enabled]
 
 

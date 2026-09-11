@@ -220,10 +220,15 @@ def test_history_evicts_beyond_keep_limit(temp_data_root: Path) -> None:
     assert len(history) == 20
 
 
-def test_history_collision_adds_sequence(
+def test_history_same_stamp_versions_keep_creation_order(
     temp_data_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """同一时间戳连存多次：历史文件名加序号避免覆盖，每版备份都留得住（Windows 时钟粒度粗也不丢版）。"""
+    """同戳撞名加序号、序号即产生顺序：裁历史时裁掉的是最旧版，而不是字典序靠前的较新版。
+
+    固定时钟让 21 次覆盖备份全部同戳（Windows 时钟粒度粗的真实场景）；历史裁到 N=20 后
+    被裁的必须是基础时间戳版（最早那版）——字典序会把 `-1` 版排在基础版前面，按字典序
+    裁就会错留旧版、裁掉较新版。
+    """
     from dataset_factory.prompts import store
 
     class _FixedDatetime:
@@ -232,17 +237,15 @@ def test_history_collision_adds_sequence(
             return datetime(2026, 9, 11, 12, 0, 0, 123456)
 
     monkeypatch.setattr(store, "datetime", _FixedDatetime)
-    for i in range(3):
+    for i in range(22):
         save_prompt(Prompt(name="cap", description="", body=f"v{i}"))
 
-    history = sorted(
-        p.name for p in (_prompts_dir(temp_data_root) / "_history").glob("cap.*.md")
-    )
+    history_dir = _prompts_dir(temp_data_root) / "_history"
+    remaining = sorted(p.name for p in history_dir.glob("cap.*.md"))
 
-    assert history == [
-        "cap.20260911-120000-123456-1.md",
-        "cap.20260911-120000-123456.md",
-    ]
+    assert len(remaining) == 20
+    assert "cap.20260911-120000-123456.md" not in remaining
+    assert "cap.20260911-120000-123456-1.md" in remaining
 
 
 def test_read_corrupt_frontmatter_raises(temp_data_root: Path) -> None:
