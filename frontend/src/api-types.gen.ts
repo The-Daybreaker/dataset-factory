@@ -13,15 +13,85 @@ export interface paths {
         };
         /**
          * Get Config
-         * @description 查看当前配置（密钥只报来源与是否已配置，绝不回内容）。
+         * @description 查看当前使用的配置（密钥只报来源与是否已配置，绝不回内容）。
          */
         get: operations["get_config_api_config_get"];
         /**
          * Update Config
-         * @description 更新配置；api_key 缺省沿用现有密钥（Web 表单改 base_url 不必重输密钥）。
+         * @description 更新当前使用的配置；尚无可用配置时创建 default 并启用。
+         *
+         *     api_key 缺省沿用该配置已存的密钥（Web 表单改 base_url 不必重输密钥）。
          */
         put: operations["update_config_api_config_put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/endpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List All
+         * @description 列出全部端点配置（按名称排序；密钥只报有无）。
+         */
+        get: operations["list_all_api_endpoints_get"];
+        put?: never;
+        /**
+         * Create
+         * @description 新增一套端点配置；当前没有生效配置时自动设为当前使用。
+         */
+        post: operations["create_api_endpoints_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/endpoints/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update
+         * @description 更新一套配置的端点字段；api_key 缺省沿用已存密钥（不强迫重输）。
+         */
+        put: operations["update_api_endpoints__name__put"];
+        post?: never;
+        /**
+         * Remove
+         * @description 删除一套端点配置（连同其密钥文件）。
+         */
+        delete: operations["remove_api_endpoints__name__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/endpoints/{name}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Activate
+         * @description 把一套配置设为当前使用；对新请求立即生效。
+         */
+        post: operations["activate_api_endpoints__name__activate_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -236,6 +306,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/skills/{name}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Package Files
+         * @description 列出技能包内文件（角色标注：SKILL.md 与 references/ 可预览，assets / scripts 灰显占位）。
+         */
+        get: operations["list_package_files_api_skills__name__files_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/skills/{name}/files/{path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Package File
+         * @description 读技能包内一个可预览文件的文本内容（UTF-8；仅 SKILL.md 与 references/ 开放）。
+         */
+        get: operations["read_package_file_api_skills__name__files__path__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -253,12 +363,89 @@ export interface components {
             key_source: string | null;
             /** Model */
             model: string | null;
+            /** Name */
+            name?: string | null;
         };
         /**
          * ConfigUpdateRequest
          * @description PUT /api/config 的请求体——api_key 缺省沿用现有密钥（不强迫重输）。
          */
         ConfigUpdateRequest: {
+            /** Api Key */
+            api_key?: string | null;
+            /** Base Url */
+            base_url: string;
+            /** Model */
+            model: string;
+        };
+        /**
+         * EndpointConfigSummary
+         * @description 端点配置概要——列表 / 创建 / 更新的响应体，密钥只报有无、绝不回内容。
+         */
+        EndpointConfigSummary: {
+            /**
+             * Api Format
+             * @description API 调用格式（一期仅 OpenAI Chat Completions）
+             */
+            api_format: string;
+            /**
+             * Base Url
+             * @description 端点地址
+             */
+            base_url: string;
+            /**
+             * Has Api Key
+             * @description 是否已存密钥（只报有无）
+             */
+            has_api_key: boolean;
+            /**
+             * Is Active
+             * @description 是否为当前使用的配置
+             */
+            is_active: boolean;
+            /**
+             * Model
+             * @description 模型名
+             */
+            model: string;
+            /**
+             * Name
+             * @description 配置名（endpoints/ 下的目录名）
+             */
+            name: string;
+        };
+        /**
+         * EndpointCreateRequest
+         * @description POST /api/endpoints 的请求体——新增一套配置；api_key 缺省暂不配置（可用环境变量兜底）。
+         */
+        EndpointCreateRequest: {
+            /**
+             * Api Format
+             * @default openai-chat-completions
+             */
+            api_format: string;
+            /** Api Key */
+            api_key?: string | null;
+            /** Base Url */
+            base_url: string;
+            /** Model */
+            model: string;
+            /**
+             * Name
+             * @description 配置名（即目录名，1–64 字符、不含路径保留字符）
+             */
+            name: string;
+        };
+        /**
+         * EndpointUpdateRequest
+         * @description PUT /api/endpoints/{name} 的请求体——api_key 缺省沿用已存密钥（不强迫重输）。
+         */
+        EndpointUpdateRequest: {
+            /**
+             * Api Format
+             * @default openai-chat-completions
+             */
+            api_format: string;
             /** Api Key */
             api_key?: string | null;
             /** Base Url */
@@ -399,6 +586,47 @@ export interface components {
             skill_names: string[];
         };
         /**
+         * SkillFileContent
+         * @description GET /api/skills/{name}/files/{path} 的响应体——UTF-8 文本内容。
+         */
+        SkillFileContent: {
+            /** Content */
+            content: string;
+            /** Path */
+            path: string;
+        };
+        /**
+         * SkillFileInfo
+         * @description 技能包内单个文件的条目（预览清单用）。
+         */
+        SkillFileInfo: {
+            /**
+             * Path
+             * @description 包内相对路径（POSIX 风格，如 SKILL.md、references/h3.md）
+             */
+            path: string;
+            /**
+             * Previewable
+             * @description 是否可通过文件内容端点预览
+             */
+            previewable: boolean;
+            /**
+             * Role
+             * @description 角色：skill=注入源 / reference=参考资料（两者可预览）；asset、script、other=不参与注入且不可预览
+             */
+            role: string;
+        };
+        /**
+         * SkillFilesResponse
+         * @description GET /api/skills/{name}/files 的响应体。
+         */
+        SkillFilesResponse: {
+            /** Files */
+            files: components["schemas"]["SkillFileInfo"][];
+            /** Name */
+            name: string;
+        };
+        /**
          * SkillImportRequest
          * @description POST /api/skills/import 的请求体。
          */
@@ -499,6 +727,215 @@ export interface operations {
             };
             /** @description 参数不合法 / 未提供密钥 */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_all_api_endpoints_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndpointConfigSummary"][];
+                };
+            };
+        };
+    };
+    create_api_endpoints_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EndpointCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndpointConfigSummary"];
+                };
+            };
+            /** @description 名称不合法 / 字段为空 / API 格式暂未支持 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description 已存在同名（不区分大小写）配置 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_api_endpoints__name__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EndpointUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndpointConfigSummary"];
+                };
+            };
+            /** @description 字段为空 / API 格式暂未支持 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description 配置不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_api_endpoints__name__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 配置不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description 是当前使用中的配置（先切换到其他配置再删） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    activate_api_endpoints__name__activate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 配置不存在 */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -979,6 +1416,96 @@ export interface operations {
                 content?: never;
             };
             /** @description skill 不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_package_files_api_skills__name__files_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillFilesResponse"];
+                };
+            };
+            /** @description skill 不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_package_file_api_skills__name__files__path__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+                path: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillFileContent"];
+                };
+            };
+            /** @description 路径不合法 / 文件不参与预览 / 内容不是 UTF-8 文本 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description skill 或包内文件不存在 */
             404: {
                 headers: {
                     [name: string]: unknown;

@@ -2,11 +2,13 @@
 //
 // 为什么用 vitest/config 的 defineConfig：它在 Vite 配置类型上补了 `test` 字段，
 // 这样「测试配置」和「构建配置」同处一个文件、不漂移，且类型检查能覆盖到。
+
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   build: {
     outDir: "dist",
     emptyOutDir: true,

@@ -6,6 +6,9 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "./App";
+// globals.css = 新 UI 底座（Tailwind + 设计令牌）；style.css = 旧四页签的过渡样式，
+// 页面按新信息架构重构完成后移除。
+import "./globals.css";
 import "./style.css";
 
 const container = document.getElementById("app");

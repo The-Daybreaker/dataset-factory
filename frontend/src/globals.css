@@ -1,0 +1,124 @@
+/*
+ * 全局样式与设计令牌（design.md「UI 设计规范」节）——shadcn/ui 令牌体系 + 蓝色主色预设。
+ *
+ * 数值口径：主色与中性面取 shadcn 官方 blue 预设；画布与侧栏取视觉定稿的「灰画布 + 白
+ * 面板 + 竖装饰线」三层分离值（画布浅冷灰、侧栏再深一档、卡片白色圆角面板）；暗色模式
+ * 主色取同色相亮变体、不反白。主色的透明度派生（/10 选中底、/22 气泡边、/55 焦点环）
+ * 在组件里按需使用，不新增色值。
+ */
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* 亮暗切换走 class 策略（<html class="dark">），由 useTheme 钩子管理（跟随系统 + 手动记忆）。 */
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* 画布（页面底）与前景 */
+  --background: 220 13% 96.5%;
+  --foreground: 240 10% 3.9%;
+  /* 卡片 = 白色圆角面板 */
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 3.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 10% 3.9%;
+  /* 品牌主色（shadcn blue 预设 · 亮） */
+  --primary: 221.2 83.2% 53.3%;
+  --primary-foreground: 210 40% 98%;
+  --secondary: 240 4.8% 95.9%;
+  --secondary-foreground: 240 5.9% 10%;
+  --muted: 240 4.8% 95.9%;
+  --muted-foreground: 240 3.8% 46.1%;
+  --accent: 240 4.8% 95.9%;
+  --accent-foreground: 240 5.9% 10%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 0 0% 98%;
+  --success: 142.1 70.6% 45.3%;
+  --success-foreground: 0 0% 98%;
+  --border: 240 5.9% 90%;
+  --input: 240 5.9% 90%;
+  --ring: 221.2 83.2% 53.3%;
+  /* 侧栏：比画布再深一档，与内容区分层 */
+  --sidebar: 220 13% 94.3%;
+  --sidebar-foreground: 240 10% 3.9%;
+  --radius: 0.5rem;
+}
+
+.dark {
+  --background: 240 6% 5.8%;
+  --foreground: 0 0% 98%;
+  --card: 240 5.9% 8%;
+  --card-foreground: 0 0% 98%;
+  --popover: 240 5.9% 8%;
+  --popover-foreground: 0 0% 98%;
+  /* 暗色主色 = 同色相亮变体（不反白，与亮模式同一「品牌色」印象） */
+  --primary: 217.2 91.2% 59.8%;
+  --primary-foreground: 222.2 47.4% 11.2%;
+  --secondary: 240 3.7% 15.9%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 240 3.7% 15.9%;
+  --muted-foreground: 240 5% 64.9%;
+  --accent: 240 3.7% 15.9%;
+  --accent-foreground: 0 0% 98%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 0 0% 98%;
+  --success: 142.1 70.6% 45.3%;
+  --success-foreground: 0 0% 98%;
+  --border: 240 3.7% 15.9%;
+  --input: 240 3.7% 15.9%;
+  --ring: 224.3 76.3% 48%;
+  --sidebar: 240 6% 4.6%;
+  --sidebar-foreground: 0 0% 98%;
+}
+
+/* 把 HSL 令牌映射成 Tailwind 的颜色工具类（bg-background / text-muted-foreground / …）。 */
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-success: hsl(var(--success));
+  --color-success-foreground: hsl(var(--success-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-sidebar: hsl(var(--sidebar));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  /* 圆角阶梯：卡片 8px（lg）、控件 6px（md）、气泡 10px（xl） */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 2px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground;
+    /* 可读性基线：正文 14px、行高 1.7、系统字体栈（中文回退交给系统）。 */
+    font-family:
+      ui-sans-serif, system-ui, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+    line-height: 1.7;
+    height: 100%;
+  }
+  #app {
+    height: 100%;
+  }
+}
