@@ -6,20 +6,27 @@
 
 ## 安装
 
-要求：Python 3.12 + [uv](https://docs.astral.sh/uv/)。
+要求：Python 3.12 + [uv](https://docs.astral.sh/uv/)；Web 界面构建需要 Node.js。
+
+**一键方式（推荐）**：仓库根目录的启动脚本会自动同步依赖、按需构建前端、拉起服务并打开浏览器——Windows 双击 `start.bat`，Linux / macOS 运行 `./start.sh`（设 `DSF_NO_BROWSER=1` 跳过自动开浏览器）。
+
+**手动方式**：
 
 ```bash
-cd backend
-uv sync
+cd backend && uv sync          # 后端依赖
+cd frontend && npm install && npm run build   # 前端构建产物 dist/（由后端托管）
+
+# 可选：把 dsf 命令装成全局工具（任意目录可用，代码改动即时生效）
+cd backend && uv tool install --editable .
 ```
 
 ## 快速上手
 
 ```bash
-# 1. 配置 OpenAI 兼容端点（base_url / 模型名 / 密钥，密钥输入不回显）
-dsf config set --base-url https://opencode.ai/zen/go/v1 --model deepseek-v4-flash-vision-exp
+# 1. 配置 OpenAI 兼容端点（多套配置按名称保存，密钥交互输入不回显）
+dsf config add siliconflow --base-url https://api.siliconflow.cn/v1 --model Qwen/Qwen3.5-4B
 
-# 2a. 起 Web 测试界面（浏览器打开 http://127.0.0.1:8000）
+# 2a. 起 Web 界面（提示词工作台 + 设置；浏览器打开 http://127.0.0.1:8000）
 dsf serve
 
 # 2b. 或直接用 CLI 单发打标
@@ -31,10 +38,11 @@ dsf label -p h3 -i 素材.jpg -m "给这张图打个标"
 
 ## 核心功能
 
+- **提示词工作台（Web 主界面）**：三栏布局——左侧提示词卡片列表（选中的即本轮基础提示词）、中间编辑器（Markdown 正文带行号槽与 32 KiB 字节计量）、右侧调试对话（端点切换、Skill 勾选、消息流带模型 / 耗时 / 复制 / 时间戳）。
 - **聊天打标（Web + CLI 对等）**：发图 + 指令产出 caption；多轮迭代改写（`dsf chat` 终端多轮，输入 `@图片路径 指令` 附图）；会话自动落盘、重启可恢复。
 - **提示词库**：每轮打标必选一个基础提示词（进 system 消息，会话内选定后每轮自动携带、可中途切换）。`dsf prompt list / show / save / rm`；保存旧版自动进 `_history/` 滚动备份。
-- **Skill 扩展**：导入 agentskills.io 标准 skill 包，打标时可选启用（全文以 `<skill>` 标记注入）。`dsf skill import / list / enable / disable / rm`。
-- **配置驱动切换端点**：任何 OpenAI 兼容端点，改 `dsf config set` 即换；密钥存本地 credentials 文件（Unix 0600），或用环境变量 `DSF_API_KEY`（程序 / 外部 agent 用）。
+- **Skill 扩展**：导入 agentskills.io 标准 skill 包，打标时可选启用（全文以 `<skill>` 标记注入）；技能页可只读预览包内文件（SKILL.md 与 references/ 可看，assets / scripts 不参与注入）。`dsf skill import / list / enable / disable / rm`。
+- **端点多配置**：多套「名称 + Base URL + 模型名 + 密钥」并存、一键切换当前使用（切换对新请求立即生效）。Web 设置页增删改查，CLI 用 `dsf config list / add / remove / use / set / show`。密钥随配置独立存放（credentials 文件，Unix 0600），或用环境变量 `DSF_API_KEY`（程序 / 外部 agent 用）。
 - **可复盘**：每轮实际发出的完整请求（请求信封）先落盘再调模型，失败也有「当时喂了什么」可查。
 
 ## CLI 退出码
@@ -43,7 +51,11 @@ dsf label -p h3 -i 素材.jpg -m "给这张图打个标"
 
 ## 数据位置
 
-工具自身数据存 `~/.dataset_factory/`（环境变量 `DATASET_FACTORY_HOME` 可覆盖）：`config.json`（端点配置）、`credentials`（密钥）、`prompts/`、`skills/`、`sessions/`。
+工具自身数据存 `~/.dataset_factory/`（环境变量 `DATASET_FACTORY_HOME` 可覆盖）：`endpoints/<配置名>/`（每套端点配置的 config.json 与 credentials 密钥）+ `endpoints/active`（当前使用指针）、`prompts/`、`skills/`、`sessions/`。
+
+## 界面
+
+Web 端是产品正式 UI 底座：亮 / 暗双主题（跟随系统，可手动切换并记忆）、可折叠侧栏、「提示词 / 设置」两个工作区页面。流水线各环节（导入、归一、质检、数据集、复核、导出）以低保真占位挂在侧栏导航上，随二、三期长入，布局不推倒重做。
 
 ## 架构
 
