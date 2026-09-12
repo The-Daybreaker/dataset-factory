@@ -41,7 +41,7 @@ atexit.register(shutil.rmtree, data_home, True)
 from dataset_factory.api import create_app
 
 system_app = create_app()
-from dataset_factory.llm import EndpointConfig, SecretValue, write_config
+from dataset_factory.llm import MIGRATED_CONFIG_NAME, SecretValue, create_config
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
@@ -87,12 +87,11 @@ def build_fake_llm_app() -> FastAPI:
 
 def main() -> None:
     # 端点配置预先写进临时数据根：打标请求将指向同源 /fake-llm/v1。
-    write_config(
-        EndpointConfig(
-            base_url=f"http://127.0.0.1:{PORT}/fake-llm/v1",
-            model="fake-e2e-model",
-            api_key=SecretValue("sk-e2e-not-a-real-key"),
-        )
+    create_config(
+        MIGRATED_CONFIG_NAME,
+        base_url=f"http://127.0.0.1:{PORT}/fake-llm/v1",
+        model="fake-e2e-model",
+        api_key=SecretValue("sk-e2e-not-a-real-key"),
     )
     # 假端点必须**插在路由表最前**：system_app 已经有一个 mount("/", StaticFiles)
     # （前端托管），Starlette 按注册顺序匹配，/ 前缀会吞掉后面所有路径——

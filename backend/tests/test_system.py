@@ -23,7 +23,7 @@ import httpx
 import pytest
 import uvicorn
 
-from dataset_factory.llm import EndpointConfig, SecretValue, write_config
+from dataset_factory.llm import MIGRATED_CONFIG_NAME, SecretValue, create_config
 
 from .fake_llm_endpoint import FakeLLMEndpoint
 
@@ -92,12 +92,11 @@ def system_client(
     真实网络栈——那是 L1 的做法。这里不带 transport，直连 127.0.0.1 上的真端口，
     请求真正经过完整的 HTTP 协议栈（连接、编码、解码、超时）。
     """
-    write_config(
-        EndpointConfig(
-            base_url=fake_endpoint.base_url,
-            model="fake-label-model",
-            api_key=SecretValue("sk-fake-for-system-test"),
-        )
+    create_config(
+        MIGRATED_CONFIG_NAME,
+        base_url=fake_endpoint.base_url,
+        model="fake-label-model",
+        api_key=SecretValue("sk-fake-for-system-test"),
     )
     with httpx.Client(
         base_url=f"http://127.0.0.1:{system_port}",

@@ -112,6 +112,7 @@ class SkillImportResponse(BaseModel):
 class ConfigResponse(BaseModel):
     """GET /api/config 的响应体——密钥只报来源、绝不回内容。"""
 
+    name: str | None = None
     base_url: str | None
     model: str | None
     api_key_configured: bool

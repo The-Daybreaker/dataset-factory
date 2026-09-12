@@ -269,12 +269,13 @@ def test_skills_import_bad_path_is_400(client: TestClient) -> None:
 
 
 def test_config_get_empty(client: TestClient) -> None:
-    """空配置：base_url/model 为 null、api_key_configured=false。"""
+    """空配置：name/base_url/model 为 null、api_key_configured=false。"""
     response = client.get("/api/config")
 
     assert response.status_code == 200
     body = response.json()
     assert body == {
+        "name": None,
         "base_url": None,
         "model": None,
         "api_key_configured": False,
@@ -296,6 +297,8 @@ def test_config_update_and_get(client: TestClient) -> None:
 
     assert update.status_code == 204
     body = get.json()
+    # 空数据根上 PUT：创建 default 配置并设为当前使用。
+    assert body["name"] == "default"
     assert body["base_url"] == "https://api.example.com/v1"
     assert body["model"] == "m1"
     assert body["api_key_configured"] is True

@@ -40,6 +40,17 @@
               }
             ],
             "title": "Model"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
           }
         },
         "required": [
@@ -464,7 +475,7 @@
   "paths": {
     "/api/config": {
       "get": {
-        "description": "查看当前配置（密钥只报来源与是否已配置，绝不回内容）。",
+        "description": "查看当前使用的配置（密钥只报来源与是否已配置，绝不回内容）。",
         "operationId": "get_config_api_config_get",
         "responses": {
           "200": {
@@ -484,7 +495,7 @@
         ]
       },
       "put": {
-        "description": "更新配置；api_key 缺省沿用现有密钥（Web 表单改 base_url 不必重输密钥）。",
+        "description": "更新当前使用的配置；尚无可用配置时创建 default 并启用。\n\napi_key 缺省沿用该配置已存的密钥（Web 表单改 base_url 不必重输密钥）。",
         "operationId": "update_config_api_config_put",
         "requestBody": {
           "content": {

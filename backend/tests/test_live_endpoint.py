@@ -32,7 +32,7 @@ import pytest
 import uvicorn
 
 from dataset_factory.api import create_app
-from dataset_factory.llm import EndpointConfig, SecretValue, write_config
+from dataset_factory.llm import MIGRATED_CONFIG_NAME, SecretValue, create_config
 
 system_app = create_app()
 
@@ -56,12 +56,11 @@ def live_system_client(
     temp_data_root: Path,
 ) -> Iterator[tuple[httpx.Client, Path]]:
     """真实端点配置 + 线程内真服务的组合（复用 T17 的服务装配方式）。"""
-    write_config(
-        EndpointConfig(
-            base_url=_LIVE_BASE_URL,
-            model=_LIVE_MODEL,
-            api_key=SecretValue(_LIVE_API_KEY),
-        )
+    create_config(
+        MIGRATED_CONFIG_NAME,
+        base_url=_LIVE_BASE_URL,
+        model=_LIVE_MODEL,
+        api_key=SecretValue(_LIVE_API_KEY),
     )
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))
