@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import type { ReactElement } from "react";
 import { useState } from "react";
-
+import { ConfigTab } from "./ConfigTab";
 import { ThemeToggle } from "./components/theme-toggle";
 import { Badge } from "./components/ui/badge";
 import {
@@ -21,9 +21,7 @@ import {
   TooltipTrigger,
 } from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
-import { ChatTab } from "./ChatTab";
-import { ConfigTab } from "./ConfigTab";
-import { PromptsTab } from "./PromptsTab";
+import { PromptWorkbench } from "./pages/PromptWorkbench";
 import { SkillsTab } from "./SkillsTab";
 
 /** 顶级页面：工作区两项 + 流水线六个规划占位（二三期长入，布局不推倒）。 */
@@ -85,7 +83,9 @@ function PipelinePlaceholder({ label }: { label: string }): ReactElement {
     <div className="relative flex h-full flex-col items-center justify-center gap-4 p-8">
       <div className="flex w-full max-w-3xl flex-1 flex-col justify-end rounded-lg border-2 border-dashed border-muted-foreground/30 p-6">
         <div className="space-y-2 text-[12px] text-muted-foreground">
-          <p>页面骨架占位：该环节的二、三期功能将以本页为落点设计（列名、按钮位、关键说明）。</p>
+          <p>
+            页面骨架占位：该环节的二、三期功能将以本页为落点设计（列名、按钮位、关键说明）。
+          </p>
           <p>结构标注区——正式设计随对应期的 PRD 与方案走。</p>
         </div>
       </div>
@@ -100,13 +100,11 @@ function PipelinePlaceholder({ label }: { label: string }): ReactElement {
 /**
  * 应用外壳：可折叠侧栏（展开 250px / 折叠 64px，DF 图标复用折叠钮）+ 满高内容画布。
  *
- * 提示词与设置两页暂嵌旧四页签组件过渡（功能不变），T25 / T26 按新信息架构逐页替换。
- * promptSaved 计数器：提示词保存后通知对话列重拉列表（同页挂载后不再有页签重挂载的顺带刷新）。
+ * 设置页暂嵌旧配置 / Skill 页签组件过渡（T26 替换）；提示词页已是工作台三栏。
  */
 export function App(): ReactElement {
   const [page, setPage] = useState<PageKey>("prompts");
   const [collapsed, setCollapsed] = useState(false);
-  const [promptSaved, setPromptSaved] = useState(0);
 
   return (
     <TooltipProvider>
@@ -172,9 +170,7 @@ export function App(): ReactElement {
                           <Tooltip>
                             <TooltipTrigger asChild>{button}</TooltipTrigger>
                             <TooltipContent side="right">
-                              {collapsed
-                                ? item.label
-                                : "规划中——随二、三期长入本底座"}
+                              {collapsed ? item.label : "规划中——随二、三期长入本底座"}
                             </TooltipContent>
                           </Tooltip>
                         ) : (
@@ -195,10 +191,7 @@ export function App(): ReactElement {
 
         <main className="h-full min-w-0 flex-1 overflow-y-auto">
           {page === "prompts" && (
-            <div className="grid h-full grid-cols-2 gap-3 p-4 max-lg:grid-cols-1">
-              <PromptsTab onSaved={() => setPromptSaved((n) => n + 1)} />
-              <ChatTab refreshSignal={promptSaved} />
-            </div>
+            <PromptWorkbench onNavigateToSettings={() => setPage("settings")} />
           )}
           {page === "settings" && (
             <div className="grid h-full grid-cols-2 gap-3 p-4 max-lg:grid-cols-1">

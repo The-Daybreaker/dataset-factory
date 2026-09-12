@@ -1,7 +1,7 @@
 import { MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
 import type { ReactElement } from "react";
 
-import { useTheme, type ThemeMode } from "../hooks/use-theme";
+import { type ThemeMode, useTheme } from "../hooks/use-theme";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
@@ -23,7 +23,7 @@ export function ThemeToggle(): ReactElement {
   const { mode, setMode } = useTheme();
   // noUncheckedIndexedAccess 下数组下标访问带 undefined，兜底回 system（三态循环不会真走到）。
   const next =
-    CYCLE[(CYCLE.indexOf(mode) + 1) % CYCLE.length] satisfies ThemeMode | undefined ??
+    (CYCLE[(CYCLE.indexOf(mode) + 1) % CYCLE.length] satisfies ThemeMode | undefined) ??
     "system";
   const Icon = modeIcon(mode);
 
@@ -40,7 +40,9 @@ export function ThemeToggle(): ReactElement {
           <Icon />
         </Button>
       </TooltipTrigger>
-      <TooltipContent>主题：{MODE_LABEL[mode]}（切换为{MODE_LABEL[next]}）</TooltipContent>
+      <TooltipContent>
+        主题：{MODE_LABEL[mode]}（切换为{MODE_LABEL[next]}）
+      </TooltipContent>
     </Tooltip>
   );
 }

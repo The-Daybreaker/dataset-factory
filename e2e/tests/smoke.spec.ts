@@ -21,38 +21,38 @@ test.describe("界面冒烟", () => {
   });
 });
 
-test.describe("提示词库旅程", () => {
-  test("新建提示词 → 列表立即可见（后端写盘 + 界面刷新）", async ({ page }) => {
+test.describe("提示词工作台", () => {
+  test("新建提示词 → 列表卡片出现并被选为本轮基础提示词（后端写盘 + 界面刷新）", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("button", { name: "提示词" }).click();
+    await page.getByRole("button", { name: "新建" }).click();
 
     await page.getByLabel("名称").fill("e2e-prompt");
-    await page.getByLabel(/描述/).fill("E2E 建的条目");
-    await page.getByLabel(/正文/).fill("你是打标助手（E2E）");
+    await page.getByLabel("描述").fill("E2E 建的条目");
+    await page.getByLabel("正文（Markdown）").fill("你是打标助手（E2E）");
     await page.getByRole("button", { name: "保存" }).click();
 
     await expect(page.getByText("已保存提示词「e2e-prompt」")).toBeVisible();
-    // 精确匹配列表按钮（含描述）；模糊 /e2e-prompt/ 会同时命中「删除「e2e-prompt」」按钮。
+    await expect(page.getByText("基础提示词：e2e-prompt")).toBeVisible();
+    // 列表里出现新卡片（精确匹配名称文本，避免命中其他含 e2e-prompt 的元素）。
     await expect(
-      page.getByRole("button", { name: "e2e-prompt E2E 建的条目" }),
+      page.getByRole("button", { name: /e2e-prompt E2E 建的条目/ }),
     ).toBeVisible();
   });
 });
 
 test.describe("打标全链路", () => {
   test("发指令打标：假模型回复直达界面（浏览器 → HTTP → 引擎 → 假端点）", async ({ page }) => {
-    // 先建一条基础提示词（打标请求要求已选定基础提示词）。
+    // 先建一条基础提示词（打标请求要求已选定基础提示词）；保存后自动选中。
     await page.goto("/");
-    await page.getByRole("button", { name: "提示词" }).click();
+    await page.getByRole("button", { name: "新建" }).click();
     await page.getByLabel("名称").fill("e2e-label-prompt");
-    await page.getByLabel(/正文/).fill("你是打标助手");
+    await page.getByLabel("正文（Markdown）").fill("你是打标助手");
     await page.getByRole("button", { name: "保存" }).click();
     await expect(page.getByText("已保存提示词「e2e-label-prompt」")).toBeVisible();
 
-    // 过渡期提示词与对话同页：选提示词、发指令、等待假模型回复上屏。
-    await page.getByLabel("基础提示词").selectOption("e2e-label-prompt");
+    // 发指令、等待假模型回复上屏（请求条里应带着刚建的基础提示词）。
     await page
-      .getByPlaceholder("打标指令（如：给这张图打个标 / 改成两句话…）")
+      .getByLabel("打标指令")
       .fill("给这张图打个标");
     await page.getByRole("button", { name: "发送" }).click();
 

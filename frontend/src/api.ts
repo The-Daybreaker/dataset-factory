@@ -21,6 +21,12 @@ export type SkillInfo = components["schemas"]["SkillInfo"];
 export type SkillImportResponse = components["schemas"]["SkillImportResponse"];
 export type ConfigResponse = components["schemas"]["ConfigResponse"];
 export type ConfigUpdateRequest = components["schemas"]["ConfigUpdateRequest"];
+export type EndpointConfigSummary = components["schemas"]["EndpointConfigSummary"];
+export type EndpointCreateRequest = components["schemas"]["EndpointCreateRequest"];
+export type EndpointUpdateRequest = components["schemas"]["EndpointUpdateRequest"];
+export type SkillFilesResponse = components["schemas"]["SkillFilesResponse"];
+export type SkillFileInfo = components["schemas"]["SkillFileInfo"];
+export type SkillFileContent = components["schemas"]["SkillFileContent"];
 /** 错误体的契约形状（{"detail": string}）——错误路径也在契约里，不再有盲区。 */
 export type ErrorDetail = components["schemas"]["ErrorDetail"];
 
@@ -197,4 +203,41 @@ export const api = {
   /** 写端点配置（api_key 缺省表示沿用已存密钥）。 */
   updateConfig: (payload: ConfigUpdateRequest) =>
     request<void>("PUT", "/api/config", payload),
+
+  /** 列出端点多配置概要（密钥只报有无）。 */
+  listEndpoints: () => request<EndpointConfigSummary[]>("GET", "/api/endpoints"),
+
+  /** 新增一套端点配置；当前没有生效配置时后端自动设为当前使用。 */
+  createEndpoint: (payload: EndpointCreateRequest) =>
+    request<EndpointConfigSummary>("POST", "/api/endpoints", payload),
+
+  /** 更新一套端点配置（api_key 缺省沿用已存密钥）。 */
+  updateEndpoint: (name: string, payload: EndpointUpdateRequest) =>
+    request<EndpointConfigSummary>(
+      "PUT",
+      `/api/endpoints/${encodeURIComponent(name)}`,
+      payload,
+    ),
+
+  /** 删除一套端点配置（当前使用中的会被后端拒绝）。 */
+  deleteEndpoint: (name: string) =>
+    request<void>("DELETE", `/api/endpoints/${encodeURIComponent(name)}`),
+
+  /** 把一套配置设为当前使用；对新请求立即生效。 */
+  activateEndpoint: (name: string) =>
+    request<void>("POST", `/api/endpoints/${encodeURIComponent(name)}/activate`),
+
+  /** 列出技能包内文件（角色标注：SKILL.md / references 可预览，assets / scripts 不可）。 */
+  listSkillFiles: (name: string) =>
+    request<SkillFilesResponse>("GET", `/api/skills/${encodeURIComponent(name)}/files`),
+
+  /** 读技能包内一个可预览文件的文本内容（UTF-8）。 */
+  readSkillFile: (name: string, path: string) =>
+    request<SkillFileContent>(
+      "GET",
+      `/api/skills/${encodeURIComponent(name)}/files/${path
+        .split("/")
+        .map(encodeURIComponent)
+        .join("/")}`,
+    ),
 };
