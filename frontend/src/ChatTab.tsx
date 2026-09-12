@@ -20,7 +20,7 @@ interface ChatMessage extends HistoryMessageView {
 }
 
 /** 聊天打标：发图 + 指令产出 caption；同一会话内多轮即迭代改写。 */
-export function ChatTab(): ReactElement {
+export function ChatTab({ refreshSignal = 0 }: { refreshSignal?: number }): ReactElement {
   const [prompts, setPrompts] = useState<PromptInfo[]>([]);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -56,7 +56,7 @@ export function ChatTab(): ReactElement {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [refreshSignal]);
 
   // 恢复最近一次会话：重启程序后历史仍在。
   useEffect(() => {

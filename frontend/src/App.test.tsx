@@ -1,12 +1,13 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 
-// App 默认渲染聊天页，而它进页面就要拉列表并恢复会话。这里把 API 层整体换掉，
-// 让这条测试只关心「标题与页签渲染得对不对」，不碰网络（更细的交互测试见 T18）。
+// App 渲染外壳并默认进提示词页（旧组件过渡期会拉列表与恢复会话）。这里把 API 层整体
+// 换掉，让测试只关心「外壳与导航渲染得对不对」，不碰网络（页面级交互测试随后续页面重构补）。
 vi.mock("./api", () => {
-  // ChatTab 依赖 ApiError（按 status 404 判定「还没有会话」的正常空态），mock 模块需提供该类。
+  // 过渡期嵌入的 ChatTab 依赖 ApiError（按 status 404 判定「还没有会话」的正常空态）。
   class ApiError extends Error {
     status: number | null;
     kind: string;
@@ -32,21 +33,50 @@ vi.mock("./api", () => {
         .mockRejectedValue(
           new ApiError("http", "还没有任何会话；发第一轮打标即自动创建。", 404, null),
         ),
+      getConfig: vi.fn().mockResolvedValue({
+        name: null,
+        base_url: null,
+        model: null,
+        api_key_configured: false,
+        key_source: null,
+      }),
     },
     errorMessage: (error: unknown) => String(error),
     ApiError,
   };
 });
 
-describe("App", () => {
-  it("渲染应用标题与四个页签", () => {
+describe("App 外壳", () => {
+  it("渲染品牌与两组导航（工作区可点、流水线规划中禁用）", () => {
     render(<App />);
 
-    expect(
-      screen.getByRole("heading", { name: "Dataset Factory 打标测试台" }),
-    ).toBeInTheDocument();
-    for (const label of ["聊天打标", "提示词库", "Skill", "配置"]) {
-      expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
-    }
+    expect(screen.getByText("Dataset Factory")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "提示词" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "设置" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "导入 / 素材库" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "导出" })).toBeDisabled();
+  });
+
+  it("点击导航切换页面：设置页出现旧配置面板（过渡期嵌入）", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "设置" }));
+
+    expect(screen.getByRole("button", { name: "设置" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  it("侧栏可折叠：收起后品牌文字隐藏、宽度收窄", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "收起侧栏" }));
+
+    expect(screen.queryByText("Dataset Factory")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "展开侧栏" }));
+    expect(screen.getByText("Dataset Factory")).toBeInTheDocument();
   });
 });

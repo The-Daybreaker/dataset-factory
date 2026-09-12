@@ -3,8 +3,17 @@ import { useCallback, useEffect, useState } from "react";
 import type { PromptInfo } from "./api";
 import { api, errorMessage } from "./api";
 
-/** 提示词库：左侧列表、右侧编辑；名称即文件名（改名 = 另存为新条目）。 */
-export function PromptsTab(): ReactElement {
+/**
+ * 提示词库：左侧列表、右侧编辑；名称即文件名（改名 = 另存为新条目）。
+ *
+ * onSaved：可选回调——过渡期与对话同页挂载时，App 借它通知对话列刷新提示词列表
+ * （旧四页签形态下靠「切页签重挂载」顺带刷新，掩盖了列表陈旧的问题）。
+ */
+export function PromptsTab({
+  onSaved,
+}: {
+  onSaved?: () => void;
+}): ReactElement {
   const [prompts, setPrompts] = useState<PromptInfo[]>([]);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -43,6 +52,7 @@ export function PromptsTab(): ReactElement {
       setMessage(`已保存提示词「${name}」`);
       setError("");
       await reload();
+      onSaved?.();
     } catch (err) {
       setError(errorMessage(err));
       setMessage("");
