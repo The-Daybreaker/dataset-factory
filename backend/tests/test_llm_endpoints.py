@@ -15,7 +15,9 @@ import pytest
 
 from dataset_factory.llm import (
     SUPPORTED_API_FORMAT,
+    ConfigConflictError,
     ConfigError,
+    ConfigNotFoundError,
     SecretValue,
     active_config_name,
     create_config,
@@ -79,7 +81,7 @@ def test_create_rejects_duplicate_casefold(temp_data_root: Path) -> None:
     """重名检查不区分大小写（Windows 目录名不区分大小写，跨平台口径取其严）。"""
     _create("Foo")
 
-    with pytest.raises(ConfigError, match="不区分大小写"):
+    with pytest.raises(ConfigConflictError, match="不区分大小写"):
         _create("foo")
 
 
@@ -121,6 +123,17 @@ def test_create_rejects_blank_endpoint_fields(temp_data_root: Path) -> None:
         create_config("x", base_url="https://x/v1", model="", api_key=None)
 
     assert not (temp_data_root / "endpoints").exists()
+
+
+def test_create_returns_canonical_name(temp_data_root: Path) -> None:
+    """create_config 返回规整后的配置名（去空白）——落盘目录即此名，入口层组装响应用它。"""
+    final = create_config(
+        "  padded  ", base_url="https://x/v1", model="m", api_key=None
+    )
+
+    assert final == "padded"
+    assert has_config("padded")
+    assert active_config_name() == "padded"
 
 
 def test_create_rejects_blank_api_key(temp_data_root: Path) -> None:
@@ -194,8 +207,8 @@ def test_update_with_new_key_overwrites_credentials(temp_data_root: Path) -> Non
 
 
 def test_update_missing_config_raises(temp_data_root: Path) -> None:
-    """更新不存在的配置 → ConfigError。"""
-    with pytest.raises(ConfigError, match="不存在"):
+    """更新不存在的配置 → ConfigNotFoundError（接口层据此映射 404）。"""
+    with pytest.raises(ConfigNotFoundError, match="不存在"):
         update_config("ghost", base_url="https://x/v1", model="m")
 
 
@@ -204,7 +217,7 @@ def test_delete_refuses_active_and_allows_others(temp_data_root: Path) -> None:
     _create("a")
     _create("b")
 
-    with pytest.raises(ConfigError, match="当前使用"):
+    with pytest.raises(ConfigConflictError, match="当前使用"):
         delete_config("a")
 
     set_active_config("b")

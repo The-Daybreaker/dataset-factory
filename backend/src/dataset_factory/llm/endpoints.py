@@ -66,6 +66,14 @@ class ConfigError(Exception):
     """
 
 
+class ConfigNotFoundError(ConfigError):
+    """端点配置不存在（按名称找不到）。"""
+
+
+class ConfigConflictError(ConfigError):
+    """配置状态冲突（重名、删除当前使用中的配置等）。"""
+
+
 @dataclass(frozen=True, repr=False)
 class SecretValue:
     """密钥包裹：任何字符串化都只显掩码，防止误入日志 / repr / 错误信息。
@@ -283,7 +291,7 @@ def create_config(
     model: str,
     api_key: SecretValue | None,
     api_format: str = SUPPORTED_API_FORMAT,
-) -> None:
+) -> str:
     """新增一套端点配置；当前没有生效的 active 指针时，顺手把它设为当前使用。
 
     自动激活只发生在「指针缺失」时（典型：第一套配置，创建完就能用）；指针已指向其他
@@ -296,8 +304,12 @@ def create_config(
         api_key: 密钥；None = 暂不配置（请求时可用 DSF_API_KEY 环境变量兜底）。
         api_format: API 调用格式；一期仅支持 OpenAI Chat Completions。
 
+    Returns:
+        规整后的配置名（去首尾空白）——落盘目录即此名，入口层组装响应要用它。
+
     Raises:
-        ConfigError: 名称不合法 / 重名 / 字段为空 / 格式不支持 / 落盘失败。
+        ConfigConflictError: 已存在同名（或仅大小写不同）的配置。
+        ConfigError: 名称不合法 / 字段为空 / 格式不支持 / 落盘失败。
     """
     clean = validate_config_name(name)
     clean_base_url = _require_clean(base_url, "base_url")
@@ -311,6 +323,7 @@ def create_config(
     )
     if active_config_name() is None:
         set_active_config(clean)
+    return clean
 
 
 def update_config(
@@ -319,7 +332,7 @@ def update_config(
     model: str,
     api_key: SecretValue | None = None,
     api_format: str = SUPPORTED_API_FORMAT,
-) -> None:
+) -> str:
     """更新一套已存在配置的端点字段；api_key 传 None 表示沿用该配置已存的密钥。
 
     「沿用」= 不动 credentials 文件（而不是把环境变量或其他配置的密钥抄过来）。
@@ -332,8 +345,12 @@ def update_config(
         api_key: 新密钥；None = 沿用已存密钥。
         api_format: API 调用格式；一期仅支持 OpenAI Chat Completions。
 
+    Returns:
+        规整后的配置名（去首尾空白）。
+
     Raises:
-        ConfigError: 配置不存在 / 名称不合法 / 字段为空 / 格式不支持 / 落盘失败。
+        ConfigNotFoundError: 配置不存在。
+        ConfigError: 名称不合法 / 字段为空 / 格式不支持 / 落盘失败。
     """
     clean = validate_config_name(name)
     clean_base_url = _require_clean(base_url, "base_url")
@@ -350,6 +367,7 @@ def update_config(
         api_key,
         preserve_params_from=dir_path,
     )
+    return clean
 
 
 def delete_config(name: str) -> None:
@@ -359,13 +377,17 @@ def delete_config(name: str) -> None:
         name: 配置名（必须已存在）。
 
     Raises:
-        ConfigError: 名称不合法 / 配置不存在 / 试图删除当前使用中的配置 / 删除失败。
+        ConfigNotFoundError: 配置不存在。
+        ConfigConflictError: 试图删除当前使用中的配置。
+        ConfigError: 名称不合法 / 删除失败。
     """
     clean = validate_config_name(name)
     dir_path = _require_config_exists(clean)
     active = active_config_name()
     if active is not None and active == clean:
-        raise ConfigError(f"「{clean}」是当前使用的配置；请先切换到其他配置再删除。")
+        raise ConfigConflictError(
+            f"「{clean}」是当前使用的配置；请先切换到其他配置再删除。"
+        )
     try:
         shutil.rmtree(dir_path)
     except OSError as exc:
@@ -438,11 +460,11 @@ def _require_name_available(name: str) -> None:
     """重名检查（不区分大小写——Windows 目录名不区分大小写，跨平台口径取其严）。
 
     Raises:
-        ConfigError: 已存在同名（或仅大小写不同）的配置。
+        ConfigConflictError: 已存在同名（或仅大小写不同）的配置。
     """
     for existing in _existing_config_dirs():
         if existing.casefold() == name.casefold():
-            raise ConfigError(
+            raise ConfigConflictError(
                 f"已存在配置「{existing}」（名称不区分大小写）；请换一个名称。"
             )
 
@@ -451,11 +473,11 @@ def _require_config_exists(name: str) -> Path:
     """要求配置存在，返回其目录路径。
 
     Raises:
-        ConfigError: 配置不存在。
+        ConfigNotFoundError: 配置不存在。
     """
     dir_path = _config_dir(name)
     if not (dir_path / _CONFIG_FILENAME).is_file():
-        raise ConfigError(f"端点配置「{name}」不存在；请检查名称。")
+        raise ConfigNotFoundError(f"端点配置「{name}」不存在；请检查名称。")
     return dir_path
 
 

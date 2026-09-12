@@ -22,7 +22,9 @@ from ..labeling import (
     SettingsFormatError,
 )
 from ..llm import (
+    ConfigConflictError,
     ConfigError,
+    ConfigNotFoundError,
     ImageTooLargeError,
     LLMError,
     UnsupportedImageError,
@@ -48,7 +50,13 @@ from ..skills import (
     SkillNotFoundError,
     SkillSourceError,
 )
-from . import routes_config, routes_labeling, routes_prompts, routes_skills
+from . import (
+    routes_config,
+    routes_endpoints,
+    routes_labeling,
+    routes_prompts,
+    routes_skills,
+)
 from .middleware import RequestLogMiddleware
 
 
@@ -65,6 +73,7 @@ def create_app(frontend_dir: Path | None = None) -> FastAPI:
     app.include_router(routes_labeling.router)
     app.include_router(routes_prompts.router)
     app.include_router(routes_skills.router)
+    app.include_router(routes_endpoints.router)
     app.include_router(routes_config.router)
     directory = frontend_dir if frontend_dir is not None else _default_frontend_dir()
     if directory.is_dir():
@@ -102,9 +111,14 @@ _ERROR_MAP: list[tuple[int, tuple[type[Exception], ...]]] = [
     ),
     (
         404,
-        (PromptNotFoundError, SkillNotFoundError, SessionNotFoundError),
+        (
+            PromptNotFoundError,
+            SkillNotFoundError,
+            SessionNotFoundError,
+            ConfigNotFoundError,
+        ),
     ),
-    (409, (SkillExistsError,)),
+    (409, (SkillExistsError, ConfigConflictError)),
     (413, (PromptTooLargeError,)),
     (502, (LLMError,)),
     (
@@ -135,23 +149,3 @@ def _register_error_handlers(app: FastAPI) -> None:
     for status_code, exc_types in _ERROR_MAP:
         for exc_type in exc_types:
             app.add_exception_handler(exc_type, make_handler(status_code))
-
-
-# 注意：本模块刻意**不提供**模块级 `app` 单例——组装会探测磁盘（frontend/dist 存在才挂载
-# 静态文件），藏进 import 副作用里会让装配结果悄悄依赖运行环境。每个入口（serve / 测试 /
-# e2e / 契约导出）在各自启动点显式 `create_app()`，import 本模块零副作用。
-
-
-# 模块级 `app` 惰性构建（PEP 562）：组装会探测磁盘（frontend/dist 存在才挂载静态文件），
-# 推迟到真正取用 app 时（`dsf serve` / uvicorn import string / 测试），import 本模块零副作用。
-_app: FastAPI | None = None
-
-
-def __getattr__(name: str) -> FastAPI:
-    """模块属性惰性求值：`app` 首次访问时组装并缓存（同一进程内始终同一实例）。"""
-    if name != "app":
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    global _app
-    if _app is None:
-        _app = create_app()
-    return _app

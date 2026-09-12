@@ -92,6 +92,127 @@
         "title": "ConfigUpdateRequest",
         "type": "object"
       },
+      "EndpointConfigSummary": {
+        "description": "端点配置概要——列表 / 创建 / 更新的响应体，密钥只报有无、绝不回内容。",
+        "properties": {
+          "api_format": {
+            "description": "API 调用格式（一期仅 OpenAI Chat Completions）",
+            "title": "Api Format",
+            "type": "string"
+          },
+          "base_url": {
+            "description": "端点地址",
+            "title": "Base Url",
+            "type": "string"
+          },
+          "has_api_key": {
+            "description": "是否已存密钥（只报有无）",
+            "title": "Has Api Key",
+            "type": "boolean"
+          },
+          "is_active": {
+            "description": "是否为当前使用的配置",
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "model": {
+            "description": "模型名",
+            "title": "Model",
+            "type": "string"
+          },
+          "name": {
+            "description": "配置名（endpoints/ 下的目录名）",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "base_url",
+          "model",
+          "api_format",
+          "has_api_key",
+          "is_active"
+        ],
+        "title": "EndpointConfigSummary",
+        "type": "object"
+      },
+      "EndpointCreateRequest": {
+        "description": "POST /api/endpoints 的请求体——新增一套配置；api_key 缺省暂不配置（可用环境变量兜底）。",
+        "properties": {
+          "api_format": {
+            "default": "openai-chat-completions",
+            "title": "Api Format",
+            "type": "string"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "base_url": {
+            "title": "Base Url",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "name": {
+            "description": "配置名（即目录名，1–64 字符、不含路径保留字符）",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "base_url",
+          "model"
+        ],
+        "title": "EndpointCreateRequest",
+        "type": "object"
+      },
+      "EndpointUpdateRequest": {
+        "description": "PUT /api/endpoints/{name} 的请求体——api_key 缺省沿用已存密钥（不强迫重输）。",
+        "properties": {
+          "api_format": {
+            "default": "openai-chat-completions",
+            "title": "Api Format",
+            "type": "string"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "base_url": {
+            "title": "Base Url",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          }
+        },
+        "required": [
+          "base_url",
+          "model"
+        ],
+        "title": "EndpointUpdateRequest",
+        "type": "object"
+      },
       "ErrorDetail": {
         "description": "错误响应的统一形状——所有域错误都长这样（`{\"detail\": \"一句话\"}`）。\n\n各端点在 `responses=` 里引用它，把错误路径写进 OpenAPI 契约：\n前端生成类型时才能覆盖错误体，而不是只看到成功路径。",
         "properties": {
@@ -535,6 +656,265 @@
         "summary": "Update Config",
         "tags": [
           "配置"
+        ]
+      }
+    },
+    "/api/endpoints": {
+      "get": {
+        "description": "列出全部端点配置（按名称排序；密钥只报有无）。",
+        "operationId": "list_all_api_endpoints_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EndpointConfigSummary"
+                  },
+                  "title": "Response List All Api Endpoints Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List All",
+        "tags": [
+          "端点配置"
+        ]
+      },
+      "post": {
+        "description": "新增一套端点配置；当前没有生效配置时自动设为当前使用。",
+        "operationId": "create_api_endpoints_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EndpointCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EndpointConfigSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "名称不合法 / 字段为空 / API 格式暂未支持"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "已存在同名（不区分大小写）配置"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create",
+        "tags": [
+          "端点配置"
+        ]
+      }
+    },
+    "/api/endpoints/{name}": {
+      "delete": {
+        "description": "删除一套端点配置（连同其密钥文件）。",
+        "operationId": "remove_api_endpoints__name__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "配置不存在"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "是当前使用中的配置（先切换到其他配置再删）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove",
+        "tags": [
+          "端点配置"
+        ]
+      },
+      "put": {
+        "description": "更新一套配置的端点字段；api_key 缺省沿用已存密钥（不强迫重输）。",
+        "operationId": "update_api_endpoints__name__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EndpointUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EndpointConfigSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "字段为空 / API 格式暂未支持"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "配置不存在"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update",
+        "tags": [
+          "端点配置"
+        ]
+      }
+    },
+    "/api/endpoints/{name}/activate": {
+      "post": {
+        "description": "把一套配置设为当前使用；对新请求立即生效。",
+        "operationId": "activate_api_endpoints__name__activate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "配置不存在"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Activate",
+        "tags": [
+          "端点配置"
         ]
       }
     },

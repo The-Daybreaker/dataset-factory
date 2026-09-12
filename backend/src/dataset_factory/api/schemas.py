@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from ..llm import SUPPORTED_API_FORMAT
+
 
 class ErrorDetail(BaseModel):
     """错误响应的统一形状——所有域错误都长这样（`{"detail": "一句话"}`）。
@@ -125,3 +127,35 @@ class ConfigUpdateRequest(BaseModel):
     base_url: str
     model: str
     api_key: str | None = None
+
+
+class EndpointConfigSummary(BaseModel):
+    """端点配置概要——列表 / 创建 / 更新的响应体，密钥只报有无、绝不回内容。"""
+
+    name: str = Field(description="配置名（endpoints/ 下的目录名）")
+    base_url: str = Field(description="端点地址")
+    model: str = Field(description="模型名")
+    api_format: str = Field(
+        description="API 调用格式（一期仅 OpenAI Chat Completions）"
+    )
+    has_api_key: bool = Field(description="是否已存密钥（只报有无）")
+    is_active: bool = Field(description="是否为当前使用的配置")
+
+
+class EndpointCreateRequest(BaseModel):
+    """POST /api/endpoints 的请求体——新增一套配置；api_key 缺省暂不配置（可用环境变量兜底）。"""
+
+    name: str = Field(description="配置名（即目录名，1–64 字符、不含路径保留字符）")
+    base_url: str
+    model: str
+    api_key: str | None = None
+    api_format: str = SUPPORTED_API_FORMAT
+
+
+class EndpointUpdateRequest(BaseModel):
+    """PUT /api/endpoints/{name} 的请求体——api_key 缺省沿用已存密钥（不强迫重输）。"""
+
+    base_url: str
+    model: str
+    api_key: str | None = None
+    api_format: str = SUPPORTED_API_FORMAT

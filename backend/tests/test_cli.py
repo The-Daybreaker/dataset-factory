@@ -245,6 +245,98 @@ def test_config_show_empty(temp_data_root: Path) -> None:
     assert "未配置" in result.output
 
 
+def test_config_list_empty(temp_data_root: Path) -> None:
+    """config list 空数据根：显示引导提示（不报错）。"""
+    result = runner.invoke(app, ["config", "list"])
+
+    assert result.exit_code == 0
+    assert "还没有端点配置" in result.output
+
+
+def test_config_add_list_use_show_roundtrip(temp_data_root: Path) -> None:
+    """add（密钥留空跳过）/ list（* 标记当前使用）/ use 切换 / show 跟随——多配置命令闭环。"""
+    first = runner.invoke(
+        app,
+        ["config", "add", "alpha", "--base-url", "https://a/v1", "--model", "m-a"],
+        input="test-key-123\n",
+    )
+    second = runner.invoke(
+        app,
+        ["config", "add", "beta", "--base-url", "https://b/v1", "--model", "m-b"],
+        input="\n",
+    )
+    listing = runner.invoke(app, ["config", "list"])
+
+    assert first.exit_code == 0
+    assert second.exit_code == 0
+    assert listing.exit_code == 0
+    lines = listing.output.splitlines()
+    assert lines[0].startswith("* alpha")
+    assert "密钥已配置" in lines[0]
+    assert lines[1].startswith("  beta")
+    assert "密钥未配置" in lines[1]
+    # 密钥只进不出：列表输出绝不含密钥明文。
+    assert "test-key-123" not in listing.output
+
+    use = runner.invoke(app, ["config", "use", "beta"])
+    after = runner.invoke(app, ["config", "list"])
+    show = runner.invoke(app, ["config", "show"])
+
+    assert use.exit_code == 0
+    assert after.output.splitlines()[0].startswith("  alpha")
+    assert after.output.splitlines()[1].startswith("* beta")
+    assert show.exit_code == 0
+    assert "beta" in show.output
+
+
+def test_config_add_duplicate_fails(temp_data_root: Path) -> None:
+    """重名（不区分大小写）：退出码 1，stderr 给可操作消息。"""
+    runner.invoke(
+        app,
+        ["config", "add", "alpha", "--base-url", "https://a/v1", "--model", "m"],
+        input="\n",
+    )
+    result = runner.invoke(
+        app,
+        ["config", "add", "ALPHA", "--base-url", "https://b/v1", "--model", "m"],
+        input="\n",
+    )
+
+    assert result.exit_code == 1
+    assert "不区分大小写" in result.stderr
+
+
+def test_config_use_missing_fails(temp_data_root: Path) -> None:
+    """切换到不存在的配置：退出码 1。"""
+    result = runner.invoke(app, ["config", "use", "ghost"])
+
+    assert result.exit_code == 1
+    assert "不存在" in result.stderr
+
+
+def test_config_remove_roundtrip_and_active_guard(temp_data_root: Path) -> None:
+    """remove 删非当前配置成功；删当前使用中的配置被拒（先切换再删）。"""
+    runner.invoke(
+        app,
+        ["config", "add", "alpha", "--base-url", "https://a/v1", "--model", "m"],
+        input="\n",
+    )
+    runner.invoke(
+        app,
+        ["config", "add", "beta", "--base-url", "https://b/v1", "--model", "m"],
+        input="\n",
+    )
+
+    remove_beta = runner.invoke(app, ["config", "remove", "beta", "-y"])
+    listing = runner.invoke(app, ["config", "list"])
+    remove_alpha = runner.invoke(app, ["config", "remove", "alpha", "-y"])
+
+    assert remove_beta.exit_code == 0
+    assert listing.output.splitlines()[0].startswith("* alpha")
+    assert remove_alpha.exit_code == 1
+    assert "当前使用" in remove_alpha.stderr
+
+
 def test_prompt_lifecycle(temp_data_root: Path, tmp_path: Path) -> None:
     """prompt save（--file）/ list / show / rm 全生命周期。"""
     body_file = tmp_path / "body.md"

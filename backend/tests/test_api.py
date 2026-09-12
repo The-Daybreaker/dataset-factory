@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 import dataset_factory.api.routes_labeling as routes_labeling
 from dataset_factory.api import create_app
-from dataset_factory.llm import ImagePart
+from dataset_factory.llm import ImagePart, read_stored_api_key
 from dataset_factory.prompts import Prompt, save_prompt
 from dataset_factory.sessions import list_sessions
 
@@ -335,6 +335,223 @@ def test_config_update_without_key_when_none_is_400(client: TestClient) -> None:
 
     assert response.status_code == 400
     assert "api_key" in response.json()["detail"]
+
+
+def test_endpoints_list_empty(client: TestClient) -> None:
+    """空数据根：端点配置列表为空数组。"""
+    response = client.get("/api/endpoints")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_endpoints_create_and_list(client: TestClient) -> None:
+    """创建一套配置：201 返回概要（密钥只报有无）；第一套自动成为当前使用。"""
+    response = client.post(
+        "/api/endpoints",
+        json={
+            "name": "siliconflow",
+            "base_url": "https://api.example.com/v1",
+            "model": "m1",
+            "api_key": "test-key-123",  # pragma: allowlist secret —— 测试假密钥
+        },
+    )
+    listing = client.get("/api/endpoints")
+    current = client.get("/api/config")
+
+    assert response.status_code == 201
+    assert response.json() == {
+        "name": "siliconflow",
+        "base_url": "https://api.example.com/v1",
+        "model": "m1",
+        "api_format": "openai-chat-completions",
+        "has_api_key": True,
+        "is_active": True,
+    }
+    assert [item["name"] for item in listing.json()] == ["siliconflow"]
+    assert current.json()["name"] == "siliconflow"
+
+
+def test_endpoints_create_duplicate_conflict_409(client: TestClient) -> None:
+    """重名（不区分大小写）：409 冲突。"""
+    client.post(
+        "/api/endpoints",
+        json={"name": "Alpha", "base_url": "https://a/v1", "model": "m"},
+    )
+    response = client.post(
+        "/api/endpoints",
+        json={"name": "alpha", "base_url": "https://b/v1", "model": "m"},
+    )
+
+    assert response.status_code == 409
+
+
+def test_endpoints_create_invalid_name_400(client: TestClient) -> None:
+    """非法名称（含路径分隔符）：400。"""
+    response = client.post(
+        "/api/endpoints",
+        json={"name": "a/b", "base_url": "https://a/v1", "model": "m"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_endpoints_create_unsupported_format_400(client: TestClient) -> None:
+    """API 格式不支持：400，消息说明当前仅支持什么。"""
+    response = client.post(
+        "/api/endpoints",
+        json={
+            "name": "x",
+            "base_url": "https://a/v1",
+            "model": "m",
+            "api_format": "anthropic-messages",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "暂未支持" in response.json()["detail"]
+
+
+def test_endpoints_create_without_key(client: TestClient) -> None:
+    """创建不带密钥：成功，has_api_key=false（请求时可由环境变量兜底）。"""
+    response = client.post(
+        "/api/endpoints",
+        json={"name": "nokey", "base_url": "https://a/v1", "model": "m"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["has_api_key"] is False
+
+
+def test_endpoints_update_keeps_key_then_overwrites(client: TestClient) -> None:
+    """更新：不带 api_key 沿用已存密钥（文件不动）；带新密钥则替换。"""
+    client.post(
+        "/api/endpoints",
+        json={
+            "name": "prod",
+            "base_url": "https://old/v1",
+            "model": "m1",
+            "api_key": "stored-key",  # pragma: allowlist secret —— 测试假密钥
+        },
+    )
+
+    keep = client.put(
+        "/api/endpoints/prod", json={"base_url": "https://new/v1", "model": "m2"}
+    )
+    kept_key = read_stored_api_key("prod")
+
+    assert keep.status_code == 200
+    assert keep.json()["base_url"] == "https://new/v1"
+    assert keep.json()["has_api_key"] is True
+    assert kept_key is not None
+    assert kept_key.reveal() == "stored-key"
+
+    client.put(
+        "/api/endpoints/prod",
+        json={
+            "base_url": "https://new/v1",
+            "model": "m2",
+            "api_key": "brand-new-key",  # pragma: allowlist secret —— 测试假密钥
+        },
+    )
+    replaced = read_stored_api_key("prod")
+
+    assert replaced is not None
+    assert replaced.reveal() == "brand-new-key"
+
+
+def test_endpoints_update_missing_404(client: TestClient) -> None:
+    """更新不存在的配置：404。"""
+    response = client.put(
+        "/api/endpoints/ghost", json={"base_url": "https://a/v1", "model": "m"}
+    )
+
+    assert response.status_code == 404
+
+
+def test_endpoints_activate_switches_current(client: TestClient) -> None:
+    """切换当前使用：204；列表 is_active 跟随；GET /api/config 读到新配置。"""
+    client.post(
+        "/api/endpoints",
+        json={"name": "alpha", "base_url": "https://a/v1", "model": "m-a"},
+    )
+    client.post(
+        "/api/endpoints",
+        json={"name": "beta", "base_url": "https://b/v1", "model": "m-b"},
+    )
+
+    response = client.post("/api/endpoints/beta/activate")
+    listing = client.get("/api/endpoints")
+    current = client.get("/api/config")
+
+    assert response.status_code == 204
+    by_name = {item["name"]: item for item in listing.json()}
+    assert by_name["alpha"]["is_active"] is False
+    assert by_name["beta"]["is_active"] is True
+    assert current.json()["name"] == "beta"
+
+
+def test_endpoints_activate_missing_404(client: TestClient) -> None:
+    """切换到不存在的配置：404。"""
+    response = client.post("/api/endpoints/ghost/activate")
+
+    assert response.status_code == 404
+
+
+def test_endpoints_delete_non_active_204(client: TestClient) -> None:
+    """删除非当前使用的配置：204，列表少一项。"""
+    client.post(
+        "/api/endpoints",
+        json={"name": "alpha", "base_url": "https://a/v1", "model": "m"},
+    )
+    client.post(
+        "/api/endpoints",
+        json={"name": "beta", "base_url": "https://b/v1", "model": "m"},
+    )
+
+    response = client.delete("/api/endpoints/beta")
+
+    assert response.status_code == 204
+    assert [item["name"] for item in client.get("/api/endpoints").json()] == ["alpha"]
+
+
+def test_endpoints_delete_active_409(client: TestClient) -> None:
+    """删除当前使用中的配置：409（先切换再删）。"""
+    client.post(
+        "/api/endpoints",
+        json={"name": "alpha", "base_url": "https://a/v1", "model": "m"},
+    )
+
+    response = client.delete("/api/endpoints/alpha")
+
+    assert response.status_code == 409
+
+
+def test_endpoints_delete_missing_404(client: TestClient) -> None:
+    """删除不存在的配置：404。"""
+    response = client.delete("/api/endpoints/ghost")
+
+    assert response.status_code == 404
+
+
+def test_endpoints_never_leak_secret(client: TestClient) -> None:
+    """密钥只进不出：创建后，端点配置与当前配置的响应文本都不含密钥明文。"""
+    secret = "sk-super-secret-do-not-leak"  # pragma: allowlist secret
+    client.post(
+        "/api/endpoints",
+        json={
+            "name": "prod",
+            "base_url": "https://a/v1",
+            "model": "m",
+            "api_key": secret,
+        },
+    )
+
+    endpoints_text = client.get("/api/endpoints").text
+    config_text = client.get("/api/config").text
+
+    assert secret not in endpoints_text
+    assert secret not in config_text
 
 
 def test_frontend_served_when_dir_has_index(
