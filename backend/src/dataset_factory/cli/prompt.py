@@ -27,7 +27,7 @@ app = typer.Typer(help="提示词库管理（增删改查）", no_args_is_help=T
 
 @app.callback()
 @handle_domain_errors
-def _seed_builtin() -> None:
+def seed_builtin_callback() -> None:
     """任一 prompt 子命令执行前先播种内置预置提示词（标记文件在即 no-op）。"""
     seed_builtin_presets()
 
