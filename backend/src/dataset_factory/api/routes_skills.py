@@ -13,10 +13,20 @@ from fastapi import APIRouter, Response, status
 from ..skills import (
     delete_skill,
     import_skill,
+    list_skill_files,
     list_skills,
+    read_skill_file,
     set_enabled,
 )
-from .schemas import ErrorDetail, SkillImportRequest, SkillImportResponse, SkillInfo
+from .schemas import (
+    ErrorDetail,
+    SkillFileContent,
+    SkillFileInfo,
+    SkillFilesResponse,
+    SkillImportRequest,
+    SkillImportResponse,
+    SkillInfo,
+)
 
 router = APIRouter(prefix="/api/skills", tags=["Skill 库"])
 
@@ -47,6 +57,40 @@ def import_one(request: SkillImportRequest) -> SkillImportResponse:
         enabled=result.skill.enabled,
         total_bytes=result.total_bytes,
     )
+
+
+@router.get(
+    "/{name}/files",
+    response_model=SkillFilesResponse,
+    responses={404: {"model": ErrorDetail, "description": "skill 不存在"}},
+)
+def list_package_files(name: str) -> SkillFilesResponse:
+    """列出技能包内文件（角色标注：SKILL.md 与 references/ 可预览，assets / scripts 灰显占位）。"""
+    return SkillFilesResponse(
+        name=name,
+        files=[
+            SkillFileInfo(
+                path=entry.path, role=entry.role, previewable=entry.previewable
+            )
+            for entry in list_skill_files(name)
+        ],
+    )
+
+
+@router.get(
+    "/{name}/files/{path:path}",
+    response_model=SkillFileContent,
+    responses={
+        400: {
+            "model": ErrorDetail,
+            "description": "路径不合法 / 文件不参与预览 / 内容不是 UTF-8 文本",
+        },
+        404: {"model": ErrorDetail, "description": "skill 或包内文件不存在"},
+    },
+)
+def read_package_file(name: str, path: str) -> SkillFileContent:
+    """读技能包内一个可预览文件的文本内容（UTF-8；仅 SKILL.md 与 references/ 开放）。"""
+    return SkillFileContent(path=path, content=read_skill_file(name, path))
 
 
 @router.post(

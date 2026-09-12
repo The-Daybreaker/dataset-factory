@@ -11,17 +11,27 @@
 from .errors import (
     SkillError,
     SkillExistsError,
+    SkillFileNotPreviewableError,
+    SkillFilePathError,
     SkillFormatError,
     SkillNameError,
     SkillNotFoundError,
     SkillSourceError,
 )
-from .model import Skill, SkillImport, parse_skill_frontmatter
+from .model import (
+    Skill,
+    SkillFileEntry,
+    SkillFileRole,
+    SkillImport,
+    parse_skill_frontmatter,
+)
 from .store import (
     delete_skill,
     import_skill,
+    list_skill_files,
     list_skills,
     read_skill,
+    read_skill_file,
     set_enabled,
 )
 
@@ -29,6 +39,10 @@ __all__ = [
     "Skill",
     "SkillError",
     "SkillExistsError",
+    "SkillFileEntry",
+    "SkillFileNotPreviewableError",
+    "SkillFilePathError",
+    "SkillFileRole",
     "SkillFormatError",
     "SkillImport",
     "SkillNameError",
@@ -36,8 +50,10 @@ __all__ = [
     "SkillSourceError",
     "delete_skill",
     "import_skill",
+    "list_skill_files",
     "list_skills",
     "parse_skill_frontmatter",
     "read_skill",
+    "read_skill_file",
     "set_enabled",
 ]

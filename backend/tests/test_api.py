@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import base64
+import shutil
 from pathlib import Path
 
 import pytest
@@ -552,6 +553,62 @@ def test_endpoints_never_leak_secret(client: TestClient) -> None:
 
     assert secret not in endpoints_text
     assert secret not in config_text
+
+
+def test_skill_files_list_and_content(client: TestClient) -> None:
+    """包内容预览：清单带角色标注；SKILL.md 与 references 文件可读出原文。"""
+    client.post("/api/skills/import", json={"path": str(_SKILL_PACK)})
+
+    files = client.get("/api/skills/example-caption-skill/files")
+    content = client.get("/api/skills/example-caption-skill/files/SKILL.md")
+    reference = client.get(
+        "/api/skills/example-caption-skill/files/references/detail.md"
+    )
+
+    assert files.status_code == 200
+    body = files.json()
+    assert body["name"] == "example-caption-skill"
+    by_path = {item["path"]: item for item in body["files"]}
+    assert by_path["SKILL.md"]["role"] == "skill"
+    assert by_path["SKILL.md"]["previewable"] is True
+    assert by_path["references/detail.md"]["previewable"] is True
+
+    assert content.status_code == 200
+    assert content.json()["path"] == "SKILL.md"
+    assert "name:" in content.json()["content"]
+    assert reference.status_code == 200
+    assert reference.json()["content"].startswith("# Detail")
+
+
+def test_skill_files_assets_not_previewable_400(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """assets / scripts 不参与预览：400（灰显的契约面）。"""
+    source = tmp_path / "skill-pack-with-assets"
+    shutil.copytree(_SKILL_PACK, source)
+    (source / "assets").mkdir()
+    (source / "assets" / "cover.png").write_bytes(b"\x89PNG\r\n")
+    client.post("/api/skills/import", json={"path": str(source)})
+
+    response = client.get("/api/skills/example-caption-skill/files/assets/cover.png")
+
+    assert response.status_code == 400
+
+
+def test_skill_files_missing_file_404(client: TestClient) -> None:
+    """包内无此文件：404。"""
+    client.post("/api/skills/import", json={"path": str(_SKILL_PACK)})
+
+    response = client.get("/api/skills/example-caption-skill/files/references/nope.md")
+
+    assert response.status_code == 404
+
+
+def test_skill_files_missing_skill_404(client: TestClient) -> None:
+    """skill 不存在：404。"""
+    response = client.get("/api/skills/ghost/files")
+
+    assert response.status_code == 404
 
 
 def test_frontend_served_when_dir_has_index(

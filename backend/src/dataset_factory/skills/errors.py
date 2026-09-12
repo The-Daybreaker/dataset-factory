@@ -25,3 +25,11 @@ class SkillFormatError(SkillError):
 
 class SkillSourceError(SkillError):
     """导入源不可用（路径不是目录、目录不可访问）——调用方填错路径，属用户输入错。"""
+
+
+class SkillFilePathError(SkillError):
+    """请求的包内文件路径不合法（空路径、绝对路径、反斜杠、``..`` 目录上跳）——拒绝读取。"""
+
+
+class SkillFileNotPreviewableError(SkillError):
+    """文件不参与预览（assets / scripts / 其他文件不开放；或内容不是 UTF-8 文本）。"""

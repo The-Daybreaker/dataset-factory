@@ -13,19 +13,26 @@ import json
 import os
 import re
 import shutil
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import cast
 
 from .._fs import atomic_write_text, data_root
 from .errors import (
     SkillError,
     SkillExistsError,
+    SkillFileNotPreviewableError,
+    SkillFilePathError,
     SkillFormatError,
     SkillNameError,
     SkillNotFoundError,
     SkillSourceError,
 )
-from .model import Skill, SkillImport, parse_skill_frontmatter
+from .model import (
+    Skill,
+    SkillFileEntry,
+    SkillImport,
+    parse_skill_frontmatter,
+)
 
 _SKILLS_DIRNAME = "skills"
 _SKILL_MD = "SKILL.md"
@@ -326,3 +333,144 @@ def delete_skill(name: str) -> None:
     if name in disabled:
         disabled.discard(name)
         _write_disabled(disabled)
+
+
+def _require_skill_dir(name: str) -> Path:
+    """校验名称并要求 skill 存在，返回其目录（包内容预览共用的小闸门）。
+
+    Raises:
+        SkillNameError: 名称非法。
+        SkillNotFoundError: 没有这个名字的 skill。
+    """
+    _validate_name(name)
+    directory = _skill_dir(name)
+    if not (directory / _SKILL_MD).is_file():
+        raise SkillNotFoundError(
+            f"未找到 skill {name!r}；用 list_skills 查看已导入的。"
+        )
+    return directory
+
+
+def _classify_file(parts: tuple[str, ...]) -> SkillFileEntry:
+    """按包内相对路径段判定文件角色与可预览性。
+
+    注入范围成文（design「技能双栏模式」）：仅 SKILL.md 注入请求；references/ 供查阅、
+    不自动注入；assets / scripts 与其他文件不参与注入。可预览 = SKILL.md 与 references/
+    下文件——预览服务「导入 → 核对 → 启用」闭环，不开放整包任意读。
+
+    Args:
+        parts: 包内相对路径段（已过安全解析）。
+
+    Returns:
+        带角色与可预览标注的文件条目。
+    """
+    posix = "/".join(parts)
+    top = parts[0] if parts else ""
+    if parts == (_SKILL_MD,):
+        return SkillFileEntry(path=posix, role="skill", previewable=True)
+    if top == "references":
+        return SkillFileEntry(path=posix, role="reference", previewable=True)
+    if top == "assets":
+        return SkillFileEntry(path=posix, role="asset", previewable=False)
+    if top == "scripts":
+        return SkillFileEntry(path=posix, role="script", previewable=False)
+    return SkillFileEntry(path=posix, role="other", previewable=False)
+
+
+def _safe_package_parts(raw: str) -> tuple[str, ...]:
+    """把请求提供的包内相对路径解析成安全路径段；任何可疑形态直接拒绝。
+
+    拒绝：空 / 纯空白、绝对路径（POSIX 形态或 Windows 盘符形态）、反斜杠（Windows
+    分隔符不作为包内路径语法）、``..`` 段（目录上跳）。包内真实文件名来自导入时的
+    文件系统，不会呈现这些形态——它们只可能出自构造请求，fail-fast。
+
+    Args:
+        raw: 请求提供的包内路径原文。
+
+    Returns:
+        逐段校验后的路径段元组（每段都是不含分隔符的单个名字）。
+
+    Raises:
+        SkillFilePathError: 路径为空 / 含反斜杠 / 是绝对路径 / 含 ``..`` 段。
+    """
+    text = raw.strip()
+    if not text:
+        raise SkillFilePathError(
+            "包内文件路径为空；请提供 SKILL.md 或 references/ 下的相对路径。"
+        )
+    if "\\" in text:
+        raise SkillFilePathError(f"包内路径 {raw!r} 含反斜杠；请用正斜杠分隔。")
+    if text.startswith("/") or re.match(r"^[A-Za-z]:", text):
+        raise SkillFilePathError(f"包内路径 {raw!r} 应是包内相对路径；拒绝绝对路径。")
+    parts = PurePosixPath(text).parts
+    if any(part == ".." for part in parts):
+        raise SkillFilePathError(f"包内路径 {raw!r} 不合法；不允许目录上跳（..）。")
+    return parts
+
+
+def list_skill_files(name: str) -> list[SkillFileEntry]:
+    """列出技能包内全部文件（角色标注），SKILL.md 恒排最前、其余按路径排序。
+
+    Args:
+        name: skill 名称。
+
+    Returns:
+        文件条目列表（含 assets / scripts——它们被列出但不开放内容预览，供界面灰显）。
+
+    Raises:
+        SkillNameError: 名称非法。
+        SkillNotFoundError: 没有这个名字的 skill。
+    """
+    directory = _require_skill_dir(name)
+    entries = [
+        _classify_file(path.relative_to(directory).parts)
+        for path in directory.rglob("*")
+        if path.is_file()
+    ]
+    return sorted(
+        entries, key=lambda entry: (entry.path != _SKILL_MD, entry.path.casefold())
+    )
+
+
+def read_skill_file(name: str, path: str) -> str:
+    """读技能包内一个可预览文件的 UTF-8 文本（只读；仅 SKILL.md 与 references/ 开放）。
+
+    路径安全三层：段级校验（拒绝 ``..`` / 绝对路径 / 反斜杠）→ 逐段拼接（拼不出包外
+    路径）→ resolve 后核对仍在包目录内（防符号链接逃逸）。
+
+    Args:
+        name: skill 名称。
+        path: 包内相对路径（POSIX 风格）。
+
+    Returns:
+        文件的 UTF-8 文本内容。
+
+    Raises:
+        SkillFilePathError: 路径形态不合法（穿越企图等）。
+        SkillFileNotPreviewableError: 文件不参与预览（assets / scripts 等），或内容不是 UTF-8 文本。
+        SkillNotFoundError: skill 不存在，或包内无此文件。
+        SkillNameError: 名称非法。
+        SkillError: 文件不可读。
+    """
+    directory = _require_skill_dir(name)
+    parts = _safe_package_parts(path)
+    entry = _classify_file(parts)
+    if not entry.previewable:
+        raise SkillFileNotPreviewableError(
+            f"{entry.path} 不参与预览（仅 SKILL.md 与 references/ 下文件可预览；"
+            "assets / scripts 不参与注入）。"
+        )
+    root = directory.resolve()
+    target = directory.joinpath(*parts).resolve()
+    if not target.is_relative_to(root):
+        raise SkillFilePathError(f"包内路径 {path!r} 不合法；拒绝读取。")
+    if not target.is_file():
+        raise SkillNotFoundError(f"技能包 {name!r} 中不存在文件 {entry.path}。")
+    try:
+        return target.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise SkillFileNotPreviewableError(
+            f"{entry.path} 不是 UTF-8 文本（可能是二进制文件）；无法预览。"
+        ) from exc
+    except OSError as exc:
+        raise SkillError(f"无法读取 {entry.path}：{exc.strerror or exc}") from exc

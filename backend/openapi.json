@@ -477,6 +477,74 @@
         "title": "SettingsView",
         "type": "object"
       },
+      "SkillFileContent": {
+        "description": "GET /api/skills/{name}/files/{path} 的响应体——UTF-8 文本内容。",
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ],
+        "title": "SkillFileContent",
+        "type": "object"
+      },
+      "SkillFileInfo": {
+        "description": "技能包内单个文件的条目（预览清单用）。",
+        "properties": {
+          "path": {
+            "description": "包内相对路径（POSIX 风格，如 SKILL.md、references/h3.md）",
+            "title": "Path",
+            "type": "string"
+          },
+          "previewable": {
+            "description": "是否可通过文件内容端点预览",
+            "title": "Previewable",
+            "type": "boolean"
+          },
+          "role": {
+            "description": "角色：skill=注入源 / reference=参考资料（两者可预览）；asset、script、other=不参与注入且不可预览",
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "role",
+          "previewable"
+        ],
+        "title": "SkillFileInfo",
+        "type": "object"
+      },
+      "SkillFilesResponse": {
+        "description": "GET /api/skills/{name}/files 的响应体。",
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/SkillFileInfo"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "files"
+        ],
+        "title": "SkillFilesResponse",
+        "type": "object"
+      },
       "SkillImportRequest": {
         "description": "POST /api/skills/import 的请求体。",
         "properties": {
@@ -1503,6 +1571,131 @@
           }
         },
         "summary": "Enable",
+        "tags": [
+          "Skill 库"
+        ]
+      }
+    },
+    "/api/skills/{name}/files": {
+      "get": {
+        "description": "列出技能包内文件（角色标注：SKILL.md 与 references/ 可预览，assets / scripts 灰显占位）。",
+        "operationId": "list_package_files_api_skills__name__files_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillFilesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "skill 不存在"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Package Files",
+        "tags": [
+          "Skill 库"
+        ]
+      }
+    },
+    "/api/skills/{name}/files/{path}": {
+      "get": {
+        "description": "读技能包内一个可预览文件的文本内容（UTF-8；仅 SKILL.md 与 references/ 开放）。",
+        "operationId": "read_package_file_api_skills__name__files__path__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillFileContent"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "路径不合法 / 文件不参与预览 / 内容不是 UTF-8 文本"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "skill 或包内文件不存在"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Package File",
         "tags": [
           "Skill 库"
         ]

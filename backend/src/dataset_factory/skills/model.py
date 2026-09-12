@@ -8,7 +8,7 @@ description 必填、缺失即 fail loud）；skill 目录整体原样保存，�
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import cast
+from typing import Literal, cast
 
 import yaml
 
@@ -43,6 +43,27 @@ class SkillImport:
 
     skill: Skill
     total_bytes: int
+
+
+# 包内文件角色：skill=注入源（SKILL.md）；reference=参考资料（供查阅、不自动注入）；
+# asset / script=包资产与脚本；other=其他文件。除前两者外均不参与注入。
+SkillFileRole = Literal["skill", "reference", "asset", "script", "other"]
+
+
+@dataclass(frozen=True)
+class SkillFileEntry:
+    """技能包内一个文件的条目（包内容预览用）。
+
+    Attributes:
+        path: 包内相对路径（POSIX 风格，如 ``SKILL.md``、``references/h3.md``）。
+        role: 文件角色（见 SkillFileRole）。
+        previewable: 是否可通过 read_skill_file 预览内容——仅 SKILL.md 与 references/
+            下文件开放（注入范围成文见 design「技能双栏模式」）。
+    """
+
+    path: str
+    role: SkillFileRole
+    previewable: bool
 
 
 def parse_skill_frontmatter(text: str) -> tuple[str, str]:

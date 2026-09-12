@@ -45,6 +45,8 @@ from ..sessions import (
 from ..skills import (
     SkillError,
     SkillExistsError,
+    SkillFileNotPreviewableError,
+    SkillFilePathError,
     SkillFormatError,
     SkillNameError,
     SkillNotFoundError,
@@ -107,6 +109,8 @@ _ERROR_MAP: list[tuple[int, tuple[type[Exception], ...]]] = [
             PromptNotSelectedError,
             ConfigError,
             SessionIdError,
+            SkillFilePathError,
+            SkillFileNotPreviewableError,
         ),
     ),
     (

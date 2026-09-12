@@ -12,14 +12,18 @@ import pytest
 from dataset_factory.skills import (
     SkillError,
     SkillExistsError,
+    SkillFileNotPreviewableError,
+    SkillFilePathError,
     SkillFormatError,
     SkillNameError,
     SkillNotFoundError,
     delete_skill,
     import_skill,
+    list_skill_files,
     list_skills,
     parse_skill_frontmatter,
     read_skill,
+    read_skill_file,
     set_enabled,
 )
 
@@ -271,3 +275,116 @@ def test_list_corrupt_state_raises(temp_data_root: Path) -> None:
 
     with pytest.raises(SkillError, match="损坏"):
         list_skills()
+
+
+def _make_full_source(tmp_path: Path) -> Path:
+    """造一个结构完整的 skill 包：SKILL.md + references/ + assets/ + scripts/ + 根级杂物。"""
+    source = tmp_path / "full-src"
+    (source / "references").mkdir(parents=True)
+    (source / "assets").mkdir()
+    (source / "scripts").mkdir()
+    (source / "SKILL.md").write_text(
+        "---\nname: full-pack\ndescription: 完整结构包\n---\n正文", encoding="utf-8"
+    )
+    (source / "references" / "h3.md").write_text("参考资料内容", encoding="utf-8")
+    (source / "assets" / "cover.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (source / "scripts" / "run.py").write_text("print('hi')", encoding="utf-8")
+    (source / "README.md").write_text("readme", encoding="utf-8")
+    return source
+
+
+def test_list_skill_files_classifies_roles(
+    temp_data_root: Path, tmp_path: Path
+) -> None:
+    """清单按路径段判角色：SKILL.md / references 可预览；assets / scripts / 根级杂物不可。"""
+    import_skill(_make_full_source(tmp_path))
+
+    entries = {entry.path: entry for entry in list_skill_files("full-pack")}
+
+    assert entries["SKILL.md"].role == "skill"
+    assert entries["SKILL.md"].previewable is True
+    assert entries["references/h3.md"].role == "reference"
+    assert entries["references/h3.md"].previewable is True
+    assert entries["assets/cover.png"].role == "asset"
+    assert entries["assets/cover.png"].previewable is False
+    assert entries["scripts/run.py"].role == "script"
+    assert entries["scripts/run.py"].previewable is False
+    assert entries["README.md"].role == "other"
+    assert entries["README.md"].previewable is False
+    # SKILL.md 恒排最前（界面包文件 chips 的展示顺序）。
+    assert list_skill_files("full-pack")[0].path == "SKILL.md"
+
+
+def test_read_skill_file_returns_text(temp_data_root: Path, tmp_path: Path) -> None:
+    """可预览文件能读出原文：SKILL.md 与 references/ 下的参考文件。"""
+    import_skill(_make_full_source(tmp_path))
+
+    assert read_skill_file("full-pack", "SKILL.md").endswith("正文")
+    assert read_skill_file("full-pack", "references/h3.md") == "参考资料内容"
+
+
+def test_read_skill_file_rejects_non_previewable(
+    temp_data_root: Path, tmp_path: Path
+) -> None:
+    """assets / scripts / 根级杂物一律拒绝预览（不开放内容的角色）。"""
+    import_skill(_make_full_source(tmp_path))
+
+    for path in ("assets/cover.png", "scripts/run.py", "README.md"):
+        with pytest.raises(SkillFileNotPreviewableError):
+            read_skill_file("full-pack", path)
+
+
+@pytest.mark.parametrize(
+    "bad_path",
+    [
+        "",
+        "   ",
+        "/etc/passwd",
+        "C:/evil.md",
+        "references\\..\\x.md",
+        "../escape.md",
+        "a/../../escape.md",
+        "./../escape.md",
+    ],
+)
+def test_read_skill_file_rejects_unsafe_paths(
+    temp_data_root: Path, tmp_path: Path, bad_path: str
+) -> None:
+    """路径穿越与可疑形态（绝对路径 / 反斜杠 / .. 上跳 / 空）一律 SkillFilePathError。"""
+    import_skill(_make_full_source(tmp_path))
+    escape_target = temp_data_root / "escape.md"
+    escape_target.write_text("不该被读到", encoding="utf-8")
+
+    with pytest.raises(SkillFilePathError):
+        read_skill_file("full-pack", bad_path)
+
+    # 包外文件原样无损。
+    assert escape_target.read_text(encoding="utf-8") == "不该被读到"
+
+
+def test_read_skill_file_missing_file_is_not_found(
+    temp_data_root: Path, tmp_path: Path
+) -> None:
+    """skill 存在但包内无此文件 → SkillNotFoundError（接口层映射 404）。"""
+    import_skill(_make_full_source(tmp_path))
+
+    with pytest.raises(SkillNotFoundError, match="不存在文件"):
+        read_skill_file("full-pack", "references/nope.md")
+
+
+def test_read_skill_file_missing_skill_is_not_found(temp_data_root: Path) -> None:
+    """skill 不存在 → SkillNotFoundError。"""
+    with pytest.raises(SkillNotFoundError):
+        read_skill_file("ghost", "SKILL.md")
+
+
+def test_read_skill_file_binary_reference_rejected(
+    temp_data_root: Path, tmp_path: Path
+) -> None:
+    """references/ 下的二进制内容（非法 UTF-8）→ SkillFileNotPreviewableError，不吐乱码。"""
+    source = _make_full_source(tmp_path)
+    (source / "references" / "blob.bin").write_bytes(b"\xff\xfe\x00\x81")
+    import_skill(source)
+
+    with pytest.raises(SkillFileNotPreviewableError, match="UTF-8"):
+        read_skill_file("full-pack", "references/blob.bin")

@@ -96,6 +96,33 @@ class SkillInfo(BaseModel):
     enabled: bool
 
 
+class SkillFileInfo(BaseModel):
+    """技能包内单个文件的条目（预览清单用）。"""
+
+    path: str = Field(
+        description="包内相对路径（POSIX 风格，如 SKILL.md、references/h3.md）"
+    )
+    role: str = Field(
+        description="角色：skill=注入源 / reference=参考资料（两者可预览）；"
+        "asset、script、other=不参与注入且不可预览"
+    )
+    previewable: bool = Field(description="是否可通过文件内容端点预览")
+
+
+class SkillFilesResponse(BaseModel):
+    """GET /api/skills/{name}/files 的响应体。"""
+
+    name: str
+    files: list[SkillFileInfo]
+
+
+class SkillFileContent(BaseModel):
+    """GET /api/skills/{name}/files/{path} 的响应体——UTF-8 文本内容。"""
+
+    path: str
+    content: str
+
+
 class SkillImportRequest(BaseModel):
     """POST /api/skills/import 的请求体。"""
 
