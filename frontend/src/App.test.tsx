@@ -28,6 +28,7 @@ vi.mock("./api", () => {
     api: {
       listPrompts: vi.fn().mockResolvedValue([]),
       listSkills: vi.fn().mockResolvedValue([]),
+      listEndpoints: vi.fn().mockResolvedValue([]),
       latestSession: vi
         .fn()
         .mockRejectedValue(
@@ -47,14 +48,14 @@ vi.mock("./api", () => {
 });
 
 describe("App 外壳", () => {
-  it("渲染品牌与两组导航（工作区可点、流水线规划中禁用）", () => {
+  it("渲染品牌（副标题 + 版本脚注）与工作区两项导航", () => {
     render(<App />);
 
     expect(screen.getByText("Dataset Factory")).toBeInTheDocument();
+    expect(screen.getByText("打标流水线工具")).toBeInTheDocument();
+    expect(screen.getByText("v0.1.0")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "提示词" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "设置" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "导入 / 素材库" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "导出" })).toBeDisabled();
   });
 
   it("点击导航切换页面：设置页出现旧配置面板（过渡期嵌入）", async () => {

@@ -1,15 +1,17 @@
 /**
- * 提示词工作台（无全局页头、三列满高、列间竖装饰线——design「页面骨架」）：
- * ① 列表列：提示词卡片 + 计数 + 新建；选中的卡片即本轮打标的基础提示词。
- * ② 编辑器列：名称 / 描述 / Markdown 正文（等宽 + 行号槽）+ 字节计量 + 保存。
- * ③ 对话列：端点配置切换器 + 主题切换、会话行、「本轮携带」请求条、消息流、输入区。
+ * 提示词工作台（无全局页头、三列满高、列间竖装饰线——原型稿 ui-draft-05 为视觉事实源）：
+ * ① 列表列（270px）：提示词卡片 + 计数 + 新建；选中的卡片即本轮打标的基础提示词。
+ * ② 编辑器列（430px）：名称 / 描述 / Markdown 正文（等宽 + 行号槽）+ 字节计量 + 保存；
+ *    改名保存 = 重命名文件（历史备份随迁）。
+ * ③ 对话列（自适应）：端点配置切换器 + 主题切换、会话行、「本轮携带」请求条、消息流、输入区。
  */
 import {
-  BotIcon,
-  CopyIcon,
-  FilePlusIcon,
+  ChevronDownIcon,
   FileTextIcon,
+  ImageIcon,
+  PaperclipIcon,
   PlusIcon,
+  SparklesIcon,
   XIcon,
 } from "lucide-react";
 import {
@@ -30,7 +32,6 @@ import type {
 import { ApiError, api, errorMessage } from "../api";
 import { ThemeToggle } from "../components/theme-toggle";
 import { Alert, AlertDescription } from "../components/ui/alert";
-import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import {
   Dialog,
@@ -51,7 +52,6 @@ import {
 } from "../components/ui/dropdown-menu";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
-import { Separator } from "../components/ui/separator";
 import { Textarea } from "../components/ui/textarea";
 import {
   Tooltip,
@@ -77,7 +77,7 @@ interface ChatMessage extends HistoryMessageView {
   createdAt?: Date;
 }
 
-/** 一次性反馈（编辑器列的操作结果）：kind 决定 Alert 配色，id 用于让同文案重复出现也能触发动画外重渲染。 */
+/** 一次性反馈（编辑器列的操作结果）；id 让同文案重复出现也能触发重渲染。 */
 interface Feedback {
   kind: "success" | "error";
   text: string;
@@ -101,13 +101,14 @@ function EndpointSwitcher({
           type="button"
           variant="outline"
           size="sm"
-          className="h-8 max-w-56 rounded-full"
+          className="h-[30px] max-w-60 rounded-full border-border bg-card px-3 text-[12px] text-muted-foreground"
           aria-label="端点配置切换器"
         >
-          <span className="size-2 shrink-0 rounded-full bg-success" aria-hidden />
+          <span className="size-[7px] shrink-0 rounded-full bg-success" aria-hidden />
           <span className="truncate">
             {active ? `${active.name} · ${active.model}` : "未配置端点"}
           </span>
+          <ChevronDownIcon className="size-3 shrink-0" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-64">
@@ -142,17 +143,15 @@ function BodyEditor({
   const lineCount = value === "" ? 1 : value.split("\n").length;
 
   return (
-    <div className="flex min-h-0 flex-1 overflow-hidden rounded-md border border-input focus-within:ring-2 focus-within:ring-ring/55">
+    <div className="flex min-h-0 flex-1 overflow-hidden rounded-md border border-input bg-background focus-within:ring-2 focus-within:ring-ring/55">
       <div
         aria-hidden
-        className="w-9 shrink-0 overflow-hidden border-r border-border bg-muted/40 py-2 text-right font-mono text-[11px] leading-[1.7] text-muted-foreground/70 select-none"
+        className="min-w-[30px] shrink-0 overflow-hidden border-r border-border bg-muted/50 px-2 py-2.5 text-right font-mono text-[12px] leading-[1.7] text-muted-foreground select-none"
       >
         <div style={{ transform: `translateY(-${scrollTop}px)` }}>
           {Array.from({ length: lineCount }, (_, index) => index + 1).map(
             (lineNumber) => (
-              <div key={lineNumber} className="pr-1.5">
-                {lineNumber}
-              </div>
+              <div key={lineNumber}>{lineNumber}</div>
             ),
           )}
         </div>
@@ -160,7 +159,7 @@ function BodyEditor({
       <textarea
         data-slot="prompt-body"
         aria-label="正文（Markdown）"
-        className="min-h-0 w-full resize-none bg-transparent p-2 font-mono text-[12.5px] leading-[1.7] focus-visible:outline-none"
+        className="min-h-0 w-full resize-none bg-transparent px-3 py-2.5 font-mono text-[12.5px] leading-[1.7] focus-visible:outline-none"
         value={value}
         onInput={(event) => onChange(event.currentTarget.value)}
         onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
@@ -199,16 +198,24 @@ export function PromptWorkbench({
   const [chatError, setChatError] = useState("");
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const bodyInputRef = useRef<HTMLTextAreaElement>(null);
+  // 会话恢复是否带回了基础提示词：带回了就不做「自动选中首条」（恢复优先于默认）。
+  const restoredPromptRef = useRef(false);
 
-  const reloadPrompts = useCallback(async (): Promise<void> => {
+  const selectPrompt = useCallback(async (name: string): Promise<void> => {
     try {
-      setPrompts(await api.listPrompts());
+      const full = await api.getPrompt(name);
+      setSelectedName(full.name);
+      setDraftName(full.name);
+      setDraftDescription(full.description);
+      setDraftBody(full.body);
+      setIsNewDraft(false);
+      setEditorFeedback(null);
     } catch (err) {
       setEditorFeedback({ kind: "error", text: errorMessage(err) });
     }
   }, []);
 
-  // 进页拉提示词 / skill / 端点配置三份列表。
+  // 进页拉提示词 / skill / 端点配置三份列表；没有会话恢复时默认选中首条（原型稿激活态）。
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -225,6 +232,10 @@ export function PromptWorkbench({
         setSkills(skillList);
         setEndpoints(endpointList);
         setActiveModel(endpointList.find((item) => item.is_active)?.model ?? "");
+        const first = promptList[0];
+        if (!restoredPromptRef.current && first !== undefined) {
+          await selectPrompt(first.name);
+        }
       } catch (err) {
         if (!cancelled) {
           setEditorFeedback({ kind: "error", text: errorMessage(err) });
@@ -234,7 +245,7 @@ export function PromptWorkbench({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [selectPrompt]);
 
   // 恢复最近一次会话（「还没有会话」404 是首次使用的正常情况，不当错误展示）。
   useEffect(() => {
@@ -245,11 +256,12 @@ export function PromptWorkbench({
         if (cancelled) {
           return;
         }
+        restoredPromptRef.current = true;
         setSessionId(snapshot.session_id);
         setSkillNames(snapshot.settings.skill_names);
         setMessages(snapshot.messages.map((item, index) => ({ ...item, id: index })));
         if (snapshot.settings.prompt_name !== null) {
-          setSelectedName(snapshot.settings.prompt_name);
+          await selectPrompt(snapshot.settings.prompt_name);
         }
       } catch (err) {
         const noSessionYet = err instanceof ApiError && err.status === 404;
@@ -261,7 +273,7 @@ export function PromptWorkbench({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [selectPrompt]);
 
   // 发送期间每秒累加等待时间；结束（成功 / 失败）时归零。
   useEffect(() => {
@@ -277,15 +289,9 @@ export function PromptWorkbench({
     };
   }, [sending]);
 
-  const selectPrompt = useCallback(async (name: string): Promise<void> => {
+  const reloadPrompts = useCallback(async (): Promise<void> => {
     try {
-      const full = await api.getPrompt(name);
-      setSelectedName(full.name);
-      setDraftName(full.name);
-      setDraftDescription(full.description);
-      setDraftBody(full.body);
-      setIsNewDraft(false);
-      setEditorFeedback(null);
+      setPrompts(await api.listPrompts());
     } catch (err) {
       setEditorFeedback({ kind: "error", text: errorMessage(err) });
     }
@@ -301,6 +307,7 @@ export function PromptWorkbench({
     bodyInputRef.current?.focus();
   };
 
+  /** 保存草稿：名称改动过 = 先重命名（改文件名）再写内容，旧名不再保留。 */
   const saveDraft = async (): Promise<void> => {
     const name = draftName.trim();
     if (name === "") {
@@ -308,6 +315,9 @@ export function PromptWorkbench({
       return;
     }
     try {
+      if (!isNewDraft && selectedName !== "" && name !== selectedName) {
+        await api.renamePrompt(selectedName, { new_name: name });
+      }
       await api.savePrompt(name, {
         description: draftDescription,
         body: draftBody,
@@ -441,27 +451,39 @@ export function PromptWorkbench({
   const bodyBytes = new TextEncoder().encode(draftBody).length;
   const byteOver = bodyBytes > PROMPT_BYTE_BUDGET;
   const canSend = !sending && (instruction.trim() !== "" || image !== null);
+  const bodyKiB = (bodyBytes / 1024).toFixed(1);
 
   return (
     <TooltipProvider>
       <div className="flex h-full min-h-0">
-        {/* ① 列表列（225px） */}
+        {/* ① 列表列（270px） */}
         <section
-          className="flex w-56 shrink-0 flex-col py-4 pr-4 pl-5"
+          className="flex w-[270px] shrink-0 flex-col py-4 pr-[18px] pl-5"
           aria-label="提示词列表列"
         >
-          <div className="mb-3 flex items-baseline justify-between">
-            <h2 className="text-[15px] font-semibold">
-              提示词{" "}
-              <span className="text-[12px] font-normal text-muted-foreground">
-                {prompts.length} 条
-              </span>
-            </h2>
-            <Button type="button" variant="outline" size="sm" onClick={startNewDraft}>
-              <PlusIcon /> 新建
-            </Button>
+          <div className="flex items-center gap-2 pt-1 pb-4">
+            <h2 className="text-[16.5px] font-semibold">提示词</h2>
+            <span className="rounded-full bg-secondary px-2 text-[11px] font-medium text-muted-foreground">
+              {prompts.length}
+            </span>
+            <span className="flex-1" />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="size-7 border-border bg-card text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  aria-label="新建提示词"
+                  onClick={startNewDraft}
+                >
+                  <PlusIcon className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>新建提示词</TooltipContent>
+            </Tooltip>
           </div>
-          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+          <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto pr-1">
             {prompts.length === 0 && (
               <p className="px-1 text-[12px] text-muted-foreground">
                 （提示词库为空——点「新建」写一条）
@@ -476,58 +498,51 @@ export function PromptWorkbench({
                   onClick={() => void selectPrompt(prompt.name)}
                   aria-current={active ? "true" : undefined}
                   className={
-                    "relative block w-full rounded-lg border bg-card p-3 text-left transition-colors hover:border-primary/40 " +
-                    (active ? "border-primary bg-primary/10" : "border-border")
+                    "block w-full rounded-lg border bg-card px-3.5 py-3 text-left transition-colors " +
+                    (active
+                      ? "border-primary/50 bg-primary/5"
+                      : "border-border hover:border-foreground/22")
                   }
                 >
-                  {active && (
-                    <span
-                      className="absolute top-2 bottom-2 left-0 w-0.5 rounded-full bg-primary"
-                      aria-hidden
-                    />
-                  )}
                   <span
                     className={
-                      "block truncate text-[13px] font-medium " +
+                      "block truncate text-[13.5px] leading-[1.45] font-medium " +
                       (active ? "text-primary" : "")
                     }
                   >
                     {prompt.name}
                   </span>
-                  <span className="mt-0.5 line-clamp-2 block text-[12px] leading-relaxed text-muted-foreground">
+                  <span className="mt-[3px] line-clamp-2 block text-[12.5px] leading-[1.55] text-muted-foreground">
                     {prompt.description === "" ? "（无描述）" : prompt.description}
                   </span>
                 </button>
               );
             })}
           </div>
-          <p className="mt-2 px-1 text-[11.5px] text-muted-foreground">
+          <p className="pt-3.5 text-[11.5px] text-muted-foreground">
             每条提示词 = 数据目录下的一个 .md 文件
           </p>
         </section>
 
-        <Separator className="my-4" />
-
-        {/* ② 编辑器列（395px） */}
+        {/* ② 编辑器列（430px） */}
         <section
-          className="flex w-99 shrink-0 flex-col py-4 pr-4 pl-4"
+          className="flex w-[430px] shrink-0 flex-col border-l border-border p-5"
           aria-label="提示词编辑列"
         >
-          <div className="mb-1 flex items-center gap-2">
-            <h2 className="truncate text-[15px] font-semibold">
+          <div className="pt-1 pb-4">
+            <h2 className="truncate text-[16.5px] font-semibold">
               {isNewDraft ? "新建提示词" : draftName === "" ? "编辑器" : draftName}
             </h2>
-            {!isNewDraft && selectedName !== "" && (
-              <Badge variant="success">本轮基础提示词</Badge>
-            )}
           </div>
-          <p className="mb-3 text-[12px] text-muted-foreground">
-            名称即文件名；改成新名称保存 = 另存为一条新提示词。
+          <p className="-mt-2 mb-4 text-[12.5px] text-muted-foreground">
+            文件名即名称，改名会同步重命名文件。
           </p>
 
-          <div className="flex min-h-0 flex-1 flex-col gap-3">
-            <div className="space-y-1">
-              <Label htmlFor="prompt-name">名称</Label>
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div>
+              <Label htmlFor="prompt-name" className="mb-[5px] block">
+                名称
+              </Label>
               <Input
                 id="prompt-name"
                 value={draftName}
@@ -535,8 +550,10 @@ export function PromptWorkbench({
                 onInput={(event) => setDraftName(event.currentTarget.value)}
               />
             </div>
-            <div className="space-y-1">
-              <Label htmlFor="prompt-desc">描述</Label>
+            <div className="mt-3.5">
+              <Label htmlFor="prompt-desc" className="mb-[5px] block">
+                描述
+              </Label>
               <Input
                 id="prompt-desc"
                 value={draftDescription}
@@ -544,8 +561,10 @@ export function PromptWorkbench({
                 onInput={(event) => setDraftDescription(event.currentTarget.value)}
               />
             </div>
-            <div className="flex min-h-0 flex-1 flex-col gap-1">
-              <Label htmlFor="prompt-body">正文（Markdown）</Label>
+            <div className="mt-3.5 flex min-h-0 flex-1 flex-col">
+              <Label htmlFor="prompt-body" className="mb-[5px] block">
+                正文（Markdown）
+              </Label>
               <BodyEditor value={draftBody} onChange={setDraftBody} />
             </div>
           </div>
@@ -559,36 +578,29 @@ export function PromptWorkbench({
             </Alert>
           )}
 
-          <div className="mt-3 flex items-center justify-between gap-2">
-            <span
-              className={
-                "text-[11.5px] " +
-                (byteOver ? "font-medium text-destructive" : "text-muted-foreground")
-              }
-            >
-              约 {(bodyBytes / 1024).toFixed(1)} KiB / 32 KiB
-              {byteOver && "——超出基础提示词字节护栏，模型侧可能截断"}
+          <div className="mt-auto flex items-center gap-2.5 pt-3">
+            <span className="text-[11.5px] text-muted-foreground">
+              <b
+                className={`font-semibold ${byteOver ? "text-destructive" : "text-foreground"}`}
+              >
+                {bodyKiB} KiB
+              </b>{" "}
+              / 32 KiB
             </span>
-            <div className="flex items-center gap-2">
-              {selectedName !== "" && !isNewDraft && (
-                <Button
-                  type="button"
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => setDeleteDialogOpen(true)}
-                >
-                  删除
-                </Button>
-              )}
+            <span className="flex-1" />
+            {!isNewDraft && selectedName !== "" && (
               <Button
                 type="button"
+                variant="destructive"
                 size="sm"
-                disabled={draftName.trim() === ""}
-                onClick={() => void saveDraft()}
+                onClick={() => setDeleteDialogOpen(true)}
               >
-                保存
+                删除
               </Button>
-            </div>
+            )}
+            <Button type="button" size="sm" onClick={() => void saveDraft()}>
+              保存
+            </Button>
           </div>
 
           <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
@@ -596,7 +608,7 @@ export function PromptWorkbench({
               <DialogHeader>
                 <DialogTitle>删除提示词「{selectedName}」？</DialogTitle>
                 <DialogDescription>
-                  将从提示词库移除该条目（数据目录下的 .md 文件）。此操作不可撤销。
+                  将连同其历史备份一起移除。此操作不可撤销。
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter>
@@ -619,14 +631,12 @@ export function PromptWorkbench({
           </Dialog>
         </section>
 
-        <Separator className="my-4" />
-
         {/* ③ 对话列（自适应） */}
         <section
-          className="flex min-w-0 flex-1 flex-col py-4 pr-5 pl-4"
+          className="flex min-w-0 flex-1 flex-col border-l border-border p-5"
           aria-label="调试对话列"
         >
-          <div className="flex items-center justify-end gap-2">
+          <div className="flex items-center justify-end gap-3 pt-0.5 pb-3.5">
             <EndpointSwitcher
               endpoints={endpoints}
               onActivate={(name) => void activateEndpoint(name)}
@@ -635,14 +645,18 @@ export function PromptWorkbench({
             <ThemeToggle />
           </div>
 
-          <div className="mt-3 flex items-center gap-2">
-            <Badge variant="muted">
-              {sessionId === null ? "新会话" : `会话 ${sessionId}`}
-            </Badge>
-            <span className="text-[11.5px] text-muted-foreground">历史自动保存</span>
+          <div className="flex min-w-0 items-center gap-2.5 pb-3">
+            <span className="inline-flex max-w-[45%] items-center gap-[7px] rounded-full bg-secondary px-2.5 py-0.5 text-[12px] whitespace-nowrap">
+              <span className="truncate">
+                {sessionId === null ? "新会话" : `会话 ${sessionId}`}
+              </span>
+            </span>
+            <span className="truncate text-[12px] text-muted-foreground">
+              历史自动保存，重启程序后可恢复
+            </span>
             <Button
               type="button"
-              variant="ghost"
+              variant="outline"
               size="sm"
               className="ml-auto"
               onClick={newSession}
@@ -652,75 +666,73 @@ export function PromptWorkbench({
           </div>
 
           {/* 「本轮携带」请求条 */}
-          <div className="mt-3 rounded-md border border-border bg-card/60 p-2.5">
-            <p className="mb-1.5 text-[11.5px] text-muted-foreground">本轮携带</p>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-[12px] text-primary">
-                <FileTextIcon className="size-3.5" />
-                {selectedName === ""
-                  ? "基础提示词：未选择"
-                  : `基础提示词：${selectedName}`}
-              </span>
-              {skillNames.map((name) => (
-                <span
-                  key={name}
-                  className="inline-flex items-center gap-1 rounded-full bg-secondary px-2.5 py-1 text-[12px]"
+          <div className="flex flex-wrap items-center gap-2 pb-3.5">
+            <span className="flex-none text-[11.5px] text-muted-foreground">
+              本轮携带
+            </span>
+            <span className="inline-flex h-[26px] items-center gap-1.5 rounded-full border border-primary/35 bg-primary/10 px-2.5 text-[12px] font-medium text-primary">
+              <FileTextIcon className="size-3" aria-hidden />
+              {selectedName === ""
+                ? "基础提示词：未选择"
+                : `基础提示词：${selectedName}`}
+            </span>
+            {skillNames.map((name) => (
+              <span
+                key={name}
+                className="inline-flex h-[26px] items-center gap-1.5 rounded-full border border-border bg-card px-2.5 text-[12px]"
+              >
+                {name}
+                <button
+                  type="button"
+                  aria-label={`移除 Skill ${name}`}
+                  className="text-muted-foreground hover:text-foreground"
+                  onClick={() => toggleSkill(name)}
                 >
-                  {name}
-                  <button
-                    type="button"
-                    aria-label={`移除 Skill ${name}`}
-                    className="rounded-full hover:text-destructive"
-                    onClick={() => toggleSkill(name)}
-                  >
-                    <XIcon className="size-3" />
-                  </button>
-                </span>
-              ))}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-1 rounded-full border border-dashed border-border px-2.5 py-1 text-[12px] text-muted-foreground hover:border-primary/50 hover:text-primary"
-                  >
-                    <PlusIcon className="size-3" /> 添加 Skill
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-60">
+                  <XIcon className="size-3" />
+                </button>
+              </span>
+            ))}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex h-[26px] items-center gap-1 rounded-full border border-dashed border-border px-2.5 text-[12px] text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                >
+                  <PlusIcon className="size-3" /> 添加 Skill
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-60">
+                <DropdownMenuLabel>勾选注入的 Skill（停用的不可选）</DropdownMenuLabel>
+                {skills.length === 0 && (
                   <DropdownMenuLabel>
-                    勾选注入的 Skill（停用的不可选）
+                    （Skill 库为空——到 设置 → 能力·技能 导入）
                   </DropdownMenuLabel>
-                  {skills.length === 0 && (
-                    <DropdownMenuLabel>
-                      （Skill 库为空——到 设置 → 能力·技能 导入）
-                    </DropdownMenuLabel>
-                  )}
-                  {skills.map((skill) => (
-                    <DropdownMenuCheckboxItem
-                      key={skill.name}
-                      checked={skillNames.includes(skill.name) && skill.enabled}
-                      disabled={!skill.enabled}
-                      onSelect={(event) => {
-                        event.preventDefault();
-                        toggleSkill(skill.name);
-                      }}
-                    >
-                      <span className="truncate">
-                        {skill.name}
-                        {skill.enabled ? "" : "（已停用）"}
-                      </span>
-                    </DropdownMenuCheckboxItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
+                )}
+                {skills.map((skill) => (
+                  <DropdownMenuCheckboxItem
+                    key={skill.name}
+                    checked={skillNames.includes(skill.name) && skill.enabled}
+                    disabled={!skill.enabled}
+                    onSelect={(event) => {
+                      event.preventDefault();
+                      toggleSkill(skill.name);
+                    }}
+                  >
+                    <span className="truncate">
+                      {skill.name}
+                      {skill.enabled ? "" : "（已停用）"}
+                    </span>
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
 
           {/* 消息流 */}
           <div
             role="log"
             aria-label="消息流"
-            className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1"
+            className="mt-1 min-h-0 flex-1 space-y-[18px] overflow-y-auto pr-1"
           >
             {messages.length === 0 && (
               <p className="mt-8 text-center text-[12px] text-muted-foreground">
@@ -730,49 +742,58 @@ export function PromptWorkbench({
             {messages.map((message) =>
               message.role === "user" ? (
                 <div key={message.id} className="flex justify-end">
-                  <div className="max-w-4/5 rounded-[10px] rounded-br-[4px] border border-primary/22 bg-primary/10 px-3 py-2 text-[13.5px] whitespace-pre-wrap">
+                  <div className="max-w-[94%] rounded-xl rounded-br-[4px] bg-primary/10 px-3.5 py-[11px] text-[13.5px] whitespace-pre-wrap">
                     {message.text}
                     {message.attachment !== null && (
-                      <span className="ml-1 text-[11.5px] text-muted-foreground">
-                        [@{message.attachment}]
+                      <span className="mt-2.5 flex items-center gap-2.5 rounded-lg bg-card py-2 pr-3.5 pl-2 text-[12px] text-muted-foreground shadow-sm">
+                        <ImageIcon className="size-7 shrink-0 rounded-md bg-muted p-1.5" />
+                        <span className="truncate">{message.attachment}</span>
                       </span>
                     )}
                   </div>
                 </div>
               ) : (
-                <div key={message.id} className="flex items-start gap-2">
+                <div key={message.id} className="flex items-start">
                   <span
-                    className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground"
+                    className="mt-0.5 mr-2.5 flex size-[26px] shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground"
                     aria-hidden
                   >
-                    <BotIcon className="size-4" />
+                    <SparklesIcon className="size-3.5" />
                   </span>
-                  <div className="min-w-0">
-                    <div className="inline-block max-w-full rounded-[10px] rounded-bl-[4px] border border-border bg-card px-3 py-2 text-[13.5px] whitespace-pre-wrap">
+                  <div className="min-w-0 flex-1">
+                    <div className="inline-block max-w-full rounded-xl rounded-bl-[4px] bg-muted/55 px-3.5 py-[11px] text-[13.5px] whitespace-pre-wrap">
                       {message.text}
                     </div>
-                    <div className="mt-1 flex items-center gap-2 text-[11.5px] text-muted-foreground">
-                      {message.model !== undefined && <span>{message.model}</span>}
-                      {message.durationSeconds !== undefined && (
-                        <span>耗时 {message.durationSeconds}s</span>
-                      )}
-                      {message.createdAt !== undefined && (
+                    <div className="mt-2 flex items-center gap-2.5 text-[11.5px] text-muted-foreground">
+                      {(message.model !== undefined ||
+                        message.durationSeconds !== undefined) && (
                         <span>
+                          {[
+                            message.model,
+                            message.durationSeconds !== undefined
+                              ? `${message.durationSeconds}s`
+                              : null,
+                          ]
+                            .filter((part) => part !== null && part !== undefined)
+                            .join(" · ")}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        className="text-primary underline underline-offset-[3px] hover:opacity-80"
+                        aria-label="复制 caption"
+                        onClick={() => copyCaption(message)}
+                      >
+                        {copiedId === message.id ? "已复制" : "复制"}
+                      </button>
+                      {message.createdAt !== undefined && (
+                        <span className="ml-auto">
                           {message.createdAt.toLocaleTimeString("zh-CN", {
                             hour: "2-digit",
                             minute: "2-digit",
                           })}
                         </span>
                       )}
-                      <button
-                        type="button"
-                        className="ml-auto inline-flex items-center gap-1 rounded hover:text-foreground"
-                        aria-label="复制 caption"
-                        onClick={() => copyCaption(message)}
-                      >
-                        <CopyIcon className="size-3" />
-                        {copiedId === message.id ? "已复制" : "复制"}
-                      </button>
                     </div>
                   </div>
                 </div>
@@ -787,20 +808,21 @@ export function PromptWorkbench({
           )}
 
           {/* 输入区 */}
-          <div className="mt-3 rounded-md border border-input bg-card p-2.5">
+          <div className="mt-3.5 pt-0">
             <Textarea
               aria-label="打标指令"
-              placeholder="给这张图打个标 / 改成两句话…（Enter 发送，Shift+Enter 换行）"
-              className="min-h-16 border-0 p-1 focus-visible:ring-0"
+              placeholder="输入指令，继续交互……"
+              className="min-h-[62px] rounded-lg border-input bg-card px-3.5 py-[11px] text-[13.5px] leading-[1.6]"
               value={instruction}
               onInput={(event) => setInstruction(event.currentTarget.value)}
               onKeyDown={onInstructionKeyDown}
             />
-            <div className="mt-1.5 flex items-center gap-2">
+            <div className="mt-2.5 flex items-center gap-2.5">
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <label className="inline-flex size-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
-                    <FilePlusIcon className="size-4" />
+                  <label className="inline-flex h-[30px] cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-[12px] hover:bg-accent">
+                    <PaperclipIcon className="size-3.5" />
+                    附件
                     <span className="sr-only">附图（一期单张 / 次）</span>
                     <input
                       type="file"
@@ -815,15 +837,17 @@ export function PromptWorkbench({
               </Tooltip>
               {image !== null && (
                 <img
-                  className="size-10 rounded-md border border-border object-cover"
+                  className="size-9 rounded-md border border-border object-cover"
                   src={image.dataUrl}
                   alt={`待打标图片 ${image.name}`}
                 />
               )}
+              <span className="ml-auto text-[11.5px] text-muted-foreground">
+                Enter 发送 · Shift+Enter 换行
+              </span>
               <Button
                 type="button"
                 size="sm"
-                className="ml-auto"
                 disabled={!canSend}
                 onClick={() => void send()}
               >

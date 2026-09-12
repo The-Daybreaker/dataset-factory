@@ -32,8 +32,9 @@ export function ThemeToggle(): ReactElement {
       <TooltipTrigger asChild>
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="icon"
+          className="border-border bg-card text-muted-foreground hover:bg-accent hover:text-accent-foreground"
           aria-label={`主题：${MODE_LABEL[mode]}，切换为${MODE_LABEL[next]}`}
           onClick={() => setMode(next)}
         >

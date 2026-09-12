@@ -14,6 +14,7 @@ import type { ReactElement } from "react";
 import { useCallback, useEffect, useState } from "react";
 import type { EndpointConfigSummary, SkillFileInfo, SkillInfo } from "../api";
 import { api, errorMessage } from "../api";
+import { ThemeToggle } from "../components/theme-toggle";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -34,7 +35,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
-import { Separator } from "../components/ui/separator";
 import { Switch } from "../components/ui/switch";
 import {
   Tooltip,
@@ -198,16 +198,16 @@ function EndpointConfigPanel(): ReactElement {
     draftName.trim() !== "" && draftBaseUrl.trim() !== "" && draftModel.trim() !== "";
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="grid min-h-0 grid-cols-[340px_1fr] overflow-hidden rounded-lg border border-border bg-card shadow-sm">
       {/* 左：配置列表 */}
-      <div className="flex w-64 shrink-0 flex-col p-4">
-        <div className="mb-3 flex items-baseline gap-2">
-          <h3 className="text-[15px] font-semibold">端点配置</h3>
-          <span className="text-[12px] text-muted-foreground">
+      <div className="flex min-h-0 flex-col p-2">
+        <div className="flex items-baseline gap-2 px-3 pt-2.5 pb-1.5">
+          <h3 className="text-[13px] font-semibold">端点配置</h3>
+          <span className="text-[11px] text-muted-foreground">
             {endpoints.length} 套
           </span>
         </div>
-        <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+        <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-1">
           {endpoints.map((item) => {
             const active = item.name === selected;
             return (
@@ -217,10 +217,16 @@ function EndpointConfigPanel(): ReactElement {
                 onClick={() => pick(item.name)}
                 aria-current={active ? "true" : undefined}
                 className={
-                  "relative block w-full rounded-lg border p-3 text-left transition-colors hover:border-primary/40 " +
-                  (active ? "border-primary bg-primary/10" : "border-border bg-card")
+                  "relative block w-full rounded-md px-3 py-2.5 text-left transition-colors hover:bg-accent " +
+                  (active ? "bg-primary/10" : "")
                 }
               >
+                {active && (
+                  <span
+                    className="absolute top-1 bottom-1 left-0 w-0.5 rounded-full bg-primary"
+                    aria-hidden
+                  />
+                )}
                 <span className="flex items-center gap-2">
                   <span
                     className={
@@ -231,14 +237,14 @@ function EndpointConfigPanel(): ReactElement {
                   />
                   <span
                     className={
-                      "truncate text-[13px] font-medium" +
+                      "truncate text-[13.5px] font-medium" +
                       (active ? " text-primary" : "")
                     }
                   >
                     {item.name}
                   </span>
                 </span>
-                <span className="mt-0.5 block truncate pl-4 text-[12px] text-muted-foreground">
+                <span className="mt-0.5 block truncate pl-4 text-[12.5px] text-muted-foreground">
                   {item.model}
                 </span>
               </button>
@@ -247,17 +253,15 @@ function EndpointConfigPanel(): ReactElement {
           <button
             type="button"
             onClick={startCreate}
-            className="flex w-full items-center gap-2 rounded-lg border border-dashed border-border p-3 text-[13px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
+            className="mt-1 flex w-full items-center gap-2 rounded-md border border-dashed border-border px-3 py-2.5 text-[13px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
           >
             <PlusIcon className="size-4" /> 添加配置
           </button>
         </div>
       </div>
 
-      <Separator className="my-4" />
-
       {/* 右：详情 */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto p-4">
+      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto border-l border-border p-5">
         {creating || current !== undefined ? (
           <div className="mx-auto w-full max-w-xl space-y-4">
             <div className="flex items-center gap-2">
@@ -266,6 +270,17 @@ function EndpointConfigPanel(): ReactElement {
               </h3>
               {!creating && current?.is_active && (
                 <Badge variant="success">当前使用</Badge>
+              )}
+              {!creating && (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  className="ml-auto"
+                  onClick={() => setDeleteDialogOpen(true)}
+                >
+                  删除
+                </Button>
               )}
             </div>
 
@@ -358,24 +373,26 @@ function EndpointConfigPanel(): ReactElement {
               </Alert>
             )}
 
-            <div className="flex items-center justify-end gap-2 border-t border-border pt-4">
+            <div className="flex items-center gap-2 border-t border-border pt-4">
+              {!creating && (
+                <span className="text-[12px] text-muted-foreground">
+                  切换「设为当前使用」立即生效于新请求
+                </span>
+              )}
+              <span className="flex-1" />
+              <Button
+                type="button"
+                disabled={!canSave}
+                variant="outline"
+                onClick={() => void save()}
+              >
+                {creating ? "创建配置" : "保存更改"}
+              </Button>
               {!creating && current !== undefined && !current.is_active && (
-                <Button type="button" variant="outline" onClick={() => void activate()}>
+                <Button type="button" onClick={() => void activate()}>
                   设为当前使用
                 </Button>
               )}
-              {!creating && (
-                <Button
-                  type="button"
-                  variant="destructive"
-                  onClick={() => setDeleteDialogOpen(true)}
-                >
-                  删除
-                </Button>
-              )}
-              <Button type="button" disabled={!canSave} onClick={() => void save()}>
-                {creating ? "创建配置" : "保存更改"}
-              </Button>
             </div>
           </div>
         ) : (
@@ -596,14 +613,14 @@ function SkillsPanel(): ReactElement {
   };
 
   return (
-    <div className="flex h-full min-h-0">
-      {/* 左：列表 + 导入卡 */}
-      <div className="flex w-72 shrink-0 flex-col p-4">
-        <div className="mb-2 flex items-baseline gap-2">
-          <h3 className="text-[15px] font-semibold">技能</h3>
-          <span className="text-[12px] text-muted-foreground">{skills.length} 个</span>
+    <div className="grid min-h-0 grid-cols-[340px_1fr] overflow-hidden rounded-lg border border-border bg-card shadow-sm">
+      {/* 左：列表 + 导入 */}
+      <div className="flex min-h-0 flex-col p-2">
+        <div className="flex items-baseline gap-2 px-3 pt-2.5 pb-1.5">
+          <h3 className="text-[13px] font-semibold">技能</h3>
+          <span className="text-[11px] text-muted-foreground">{skills.length} 个</span>
         </div>
-        <div className="relative mb-2">
+        <div className="relative mx-1 mb-2">
           <SearchIcon className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             aria-label="搜索技能"
@@ -613,7 +630,7 @@ function SkillsPanel(): ReactElement {
             onInput={(event) => setSearch(event.currentTarget.value)}
           />
         </div>
-        <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-1">
           {visible.length === 0 && (
             <p className="px-1 text-[12px] text-muted-foreground">
               （{skills.length === 0 ? "Skill 库为空——下方导入" : "没有匹配的技能"}）
@@ -657,7 +674,7 @@ function SkillsPanel(): ReactElement {
             );
           })}
         </div>
-        <div className="mt-3 rounded-lg border border-border bg-card p-3">
+        <div className="mt-2 border-t border-border px-3 pt-3 pb-1">
           <p className="mb-2 text-[12px] font-medium">
             导入 skill 包（agentskills.io 标准）
           </p>
@@ -688,10 +705,8 @@ function SkillsPanel(): ReactElement {
         </div>
       </div>
 
-      <Separator className="my-4" />
-
       {/* 右：详情 + 包内容预览 */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto p-4">
+      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto border-l border-border p-5">
         {current !== undefined ? (
           <div className="space-y-4">
             <div className="flex items-center gap-2">
@@ -778,6 +793,43 @@ function SkillsPanel(): ReactElement {
   );
 }
 
+/** 页头状态 chip：当前激活的端点配置（只读展示；切换在工作台切换器 / 本子页详情）。 */
+function ActiveEndpointChip(): ReactElement {
+  const [active, setActive] = useState<EndpointConfigSummary | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .listEndpoints()
+      .then((list) => {
+        if (!cancelled) {
+          setActive(list.find((item) => item.is_active) ?? null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setActive(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <span className="inline-flex h-[30px] items-center gap-[7px] rounded-full border border-border bg-card px-3 text-[12px] text-muted-foreground">
+      <span
+        className={
+          "size-[7px] rounded-full " +
+          (active !== null ? "bg-success" : "bg-muted-foreground/40")
+        }
+        aria-hidden
+      />
+      {active !== null ? `${active.name} · ${active.model}` : "未配置端点"}
+    </span>
+  );
+}
+
 /* ================= 设置容器 ================= */
 
 const SECTIONS: ReadonlyArray<{ key: SettingsSection; group: string; label: string }> =
@@ -791,50 +843,75 @@ export function SettingsPage(): ReactElement {
 
   return (
     <TooltipProvider>
-      <div className="flex h-full min-h-0">
-        <nav
-          className="w-52 shrink-0 space-y-5 py-4 pr-4 pl-5"
-          aria-label="设置二级导航"
-        >
-          {(["连接", "能力"] as const).map((group) => (
-            <div key={group}>
-              <p className="mb-1 px-3 text-[12px] text-muted-foreground">{group}</p>
-              <ul className="space-y-0.5">
-                {SECTIONS.filter((item) => item.group === group).map((item) => {
-                  const active = section === item.key;
-                  return (
-                    <li key={item.key}>
-                      <button
-                        type="button"
-                        aria-current={active ? "true" : undefined}
-                        onClick={() => setSection(item.key)}
-                        className={
-                          "relative flex w-full items-center rounded-md px-3 py-2 text-[13px] transition-colors hover:bg-accent " +
-                          (active ? "bg-primary/10 font-medium text-primary" : "")
-                        }
-                      >
-                        {active && (
-                          <span
-                            className="absolute top-1.5 bottom-1.5 left-0 w-0.5 rounded-full bg-primary"
-                            aria-hidden
-                          />
-                        )}
-                        {item.label}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          ))}
-        </nav>
+      <div className="flex h-full min-h-0 flex-col">
+        <header className="flex items-center justify-between px-7 pt-[18px] pb-3.5">
+          <div>
+            <h1 className="text-[20px] leading-[1.3] font-semibold">设置</h1>
+            <p className="mt-0.5 text-[13px] text-muted-foreground">
+              模型端点与 Skill 库的集中管理。
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <ActiveEndpointChip />
+            <ThemeToggle />
+          </div>
+        </header>
+        <div className="grid min-h-0 flex-1 grid-cols-[200px_1fr] gap-4 px-7 pb-6">
+          <nav className="pt-1" aria-label="设置二级导航">
+            {(["连接", "能力"] as const).map((group) => (
+              <div key={group}>
+                <p className="px-2.5 pt-2.5 pb-1 text-[11.5px] font-semibold text-muted-foreground">
+                  {group}
+                </p>
+                <ul className="space-y-0.5">
+                  {SECTIONS.filter((item) => item.group === group).map((item) => {
+                    const active = section === item.key;
+                    return (
+                      <li key={item.key}>
+                        <button
+                          type="button"
+                          aria-current={active ? "true" : undefined}
+                          onClick={() => setSection(item.key)}
+                          className={
+                            "flex h-[34px] w-full items-center gap-2 rounded-md px-2.5 text-[13.5px] transition-colors hover:bg-accent hover:text-accent-foreground " +
+                            (active
+                              ? "bg-primary/10 font-medium text-primary"
+                              : "text-muted-foreground")
+                          }
+                        >
+                          {item.label}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+          </nav>
 
-        <Separator className="my-4" />
-
-        <section className="min-w-0 flex-1" aria-label="设置内容区">
-          {section === "endpoints" && <EndpointConfigPanel />}
-          {section === "skills" && <SkillsPanel />}
-        </section>
+          <section className="min-w-0 overflow-y-auto" aria-label="设置内容区">
+            {section === "endpoints" && (
+              <>
+                <h2 className="mt-0.5 mb-3 text-[17px] font-semibold">端点配置</h2>
+                <p className="-mt-2 mb-3.5 text-[12.5px] text-muted-foreground">
+                  OpenAI
+                  兼容端点——可保存多套配置，随时切换当前使用；切换立即对新请求生效。
+                </p>
+                <EndpointConfigPanel />
+              </>
+            )}
+            {section === "skills" && (
+              <>
+                <h2 className="mt-0.5 mb-3 text-[17px] font-semibold">技能</h2>
+                <p className="-mt-2 mb-3.5 text-[12.5px] text-muted-foreground">
+                  导入 agentskills.io 标准 Skill 包；启用后其 SKILL.md
+                  全文注入打标请求。
+                </p>
+                <SkillsPanel />
+              </>
+            )}
+          </section>
+        </div>
       </div>
     </TooltipProvider>
   );

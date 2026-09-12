@@ -27,7 +27,7 @@
   --secondary: 240 4.8% 95.9%;
   --secondary-foreground: 240 5.9% 10%;
   --muted: 240 4.8% 95.9%;
-  --muted-foreground: 240 3.8% 46.1%;
+  --muted-foreground: 240 4% 35%;
   --accent: 240 4.8% 95.9%;
   --accent-foreground: 240 5.9% 10%;
   --destructive: 0 84.2% 60.2%;
@@ -35,7 +35,8 @@
   --success: 142.1 70.6% 45.3%;
   --success-foreground: 0 0% 98%;
   --border: 240 5.9% 90%;
-  --input: 240 5.9% 90%;
+  /* 控件描边：与白面板 / 灰画布对比度均 >=3:1（WCAG 非文本对比要求）。 */
+  --input: 240 4% 55%;
   --ring: 221.2 83.2% 53.3%;
   /* 侧栏：比画布再深一档，与内容区分层 */
   --sidebar: 220 13% 94.3%;
@@ -56,7 +57,7 @@
   --secondary: 240 3.7% 15.9%;
   --secondary-foreground: 0 0% 98%;
   --muted: 240 3.7% 15.9%;
-  --muted-foreground: 240 5% 64.9%;
+  --muted-foreground: 240 5% 68%;
   --accent: 240 3.7% 15.9%;
   --accent-foreground: 0 0% 98%;
   --destructive: 0 62.8% 30.6%;
@@ -64,7 +65,7 @@
   --success: 142.1 70.6% 45.3%;
   --success-foreground: 0 0% 98%;
   --border: 240 3.7% 15.9%;
-  --input: 240 3.7% 15.9%;
+  --input: 240 4% 40%;
   --ring: 224.3 76.3% 48%;
   --sidebar: 240 6% 4.6%;
   --sidebar-foreground: 0 0% 98%;

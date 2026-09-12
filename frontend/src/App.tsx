@@ -1,44 +1,23 @@
 import type { LucideIcon } from "lucide-react";
 import {
-  CombineIcon,
-  DatabaseIcon,
   FileTextIcon,
-  InboxIcon,
-  PackageCheckIcon,
+  PanelLeftCloseIcon,
+  PanelLeftOpenIcon,
   SettingsIcon,
-  ShieldCheckIcon,
-  UserCheckIcon,
 } from "lucide-react";
 import type { ReactElement } from "react";
 import { useState } from "react";
-import { ThemeToggle } from "./components/theme-toggle";
-import { Badge } from "./components/ui/badge";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
 import { PromptWorkbench } from "./pages/PromptWorkbench";
 import { SettingsPage } from "./pages/SettingsPage";
 
-/** 顶级页面：工作区两项 + 流水线六个规划占位（二三期长入，布局不推倒）。 */
-type PageKey =
-  | "prompts"
-  | "settings"
-  | "import"
-  | "normalize"
-  | "qc"
-  | "dataset"
-  | "review"
-  | "export";
+/** 顶级页面：一期两项（提示词工作台 / 设置容器）；后续期页面届时挂主导航长入。 */
+type PageKey = "prompts" | "settings";
 
 interface NavItem {
   key: PageKey;
   label: string;
   icon: LucideIcon;
-  enabled: boolean;
 }
 
 interface NavGroup {
@@ -50,154 +29,112 @@ const NAV_GROUPS: readonly NavGroup[] = [
   {
     title: "工作区",
     items: [
-      { key: "prompts", label: "提示词", icon: FileTextIcon, enabled: true },
-      { key: "settings", label: "设置", icon: SettingsIcon, enabled: true },
-    ],
-  },
-  {
-    title: "流水线 · 规划中",
-    items: [
-      { key: "import", label: "导入 / 素材库", icon: InboxIcon, enabled: false },
-      { key: "normalize", label: "格式归一", icon: CombineIcon, enabled: false },
-      { key: "qc", label: "机器质检", icon: ShieldCheckIcon, enabled: false },
-      { key: "dataset", label: "数据集", icon: DatabaseIcon, enabled: false },
-      { key: "review", label: "复核", icon: UserCheckIcon, enabled: false },
-      { key: "export", label: "导出", icon: PackageCheckIcon, enabled: false },
+      { key: "prompts", label: "提示词", icon: FileTextIcon },
+      { key: "settings", label: "设置", icon: SettingsIcon },
     ],
   },
 ];
 
-const PIPELINE_LABEL: Partial<Record<PageKey, string>> = {
-  import: "导入 / 素材库",
-  normalize: "格式归一",
-  qc: "机器质检",
-  dataset: "数据集",
-  review: "复核",
-  export: "导出",
-};
-
-/** 流水线占位页（低保真）：只定「有什么、摆哪里」，不定视觉细节；正式设计随对应期走。 */
-function PipelinePlaceholder({ label }: { label: string }): ReactElement {
-  return (
-    <div className="relative flex h-full flex-col items-center justify-center gap-4 p-8">
-      <div className="flex w-full max-w-3xl flex-1 flex-col justify-end rounded-lg border-2 border-dashed border-muted-foreground/30 p-6">
-        <div className="space-y-2 text-[12px] text-muted-foreground">
-          <p>
-            页面骨架占位：该环节的二、三期功能将以本页为落点设计（列名、按钮位、关键说明）。
-          </p>
-          <p>结构标注区——正式设计随对应期的 PRD 与方案走。</p>
-        </div>
-      </div>
-      <Badge variant="muted" className="absolute top-4 right-4">
-        低保真占位 · 二期 / 三期实现
-      </Badge>
-      <p className="text-[13px] text-muted-foreground">{label}——规划中</p>
-    </div>
-  );
-}
+/** 产品版本号（侧栏脚注）；与 package.json / 后端 app version 同步维护。 */
+const APP_VERSION = "v0.1.0";
 
 /**
- * 应用外壳：可折叠侧栏（展开 250px / 折叠 64px，DF 图标复用折叠钮）+ 满高内容画布。
+ * 应用外壳：可折叠侧栏（展开 250px / 折叠 64px）+ 满高内容画布（原型稿 ui-draft-05）。
  *
- * 两页均已按新信息架构实现：提示词工作台三栏 + 设置容器两子页。
+ * 侧栏 = 品牌（DF 图标复用折叠钮，悬停切换折叠 / 展开图标）+ 导航分组 + 版本脚注；
+ * 主题切换在各页页头区（工作台对话列顶行 / 设置页头），侧栏不放。
  */
 export function App(): ReactElement {
   const [page, setPage] = useState<PageKey>("prompts");
   const [collapsed, setCollapsed] = useState(false);
 
   return (
-    <TooltipProvider>
-      <div className="flex h-full min-w-128 overflow-hidden">
-        <aside
-          data-testid="sidebar"
-          className={cn(
-            "flex h-full flex-col bg-sidebar text-sidebar-foreground transition-[width] duration-150",
-            collapsed ? "w-16" : "w-62.5",
-          )}
+    <div className="flex h-full min-w-128 overflow-hidden">
+      <aside
+        data-testid="sidebar"
+        className={cn(
+          "flex h-full flex-col border-r border-border bg-sidebar text-sidebar-foreground transition-[width] duration-150",
+          collapsed ? "w-16" : "w-62.5",
+        )}
+      >
+        {/* 品牌 + 折叠钮：折叠态复用 DF 图标（悬停切换为展开箭头含义的图标）。 */}
+        <button
+          type="button"
+          onClick={() => setCollapsed((value) => !value)}
+          className="group flex items-center gap-2.5 px-4 pt-4 pb-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/55"
+          aria-label={collapsed ? "展开侧栏" : "收起侧栏"}
         >
-          {/* 品牌 + 折叠钮：折叠态复用 DF 图标（悬停切换为展开箭头含义的 tooltip）。 */}
-          <button
-            type="button"
-            onClick={() => setCollapsed((value) => !value)}
-            className="mx-4 mt-4 flex items-center gap-2.5 rounded-md p-1 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/55"
-            aria-label={collapsed ? "展开侧栏" : "收起侧栏"}
-          >
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary font-semibold text-primary-foreground">
-              DF
-            </span>
-            {!collapsed && (
-              <span className="truncate text-[15px] font-semibold tracking-tight">
-                Dataset Factory
-              </span>
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary text-[13px] font-semibold text-primary-foreground">
+            <span className="group-hover:hidden">DF</span>
+            {collapsed ? (
+              <PanelLeftOpenIcon className="hidden size-4 group-hover:block" />
+            ) : (
+              <PanelLeftCloseIcon className="hidden size-4 group-hover:block" />
             )}
-          </button>
+          </span>
+          {!collapsed && (
+            <span className="min-w-0">
+              <span className="block truncate font-semibold">Dataset Factory</span>
+              <span className="block truncate text-[12px] text-muted-foreground">
+                打标流水线工具
+              </span>
+            </span>
+          )}
+        </button>
 
-          <nav className="mt-4 flex-1 space-y-5 overflow-y-auto px-3 pb-4">
-            {NAV_GROUPS.map((group) => (
-              <div key={group.title}>
-                {!collapsed && (
-                  <p className="mb-1 px-3 text-[12px] text-muted-foreground">
-                    {group.title}
-                  </p>
-                )}
-                {collapsed && <div className="mx-auto mb-2 h-px w-8 bg-border" />}
-                <ul className="space-y-0.5">
-                  {group.items.map((item) => {
-                    const active = item.enabled && page === item.key;
-                    const button = (
+        <nav className="flex-1 overflow-y-auto overflow-x-hidden px-2.5 py-1">
+          {NAV_GROUPS.map((group) => (
+            <div key={group.title}>
+              {!collapsed && (
+                <p className="px-2.5 pt-3.5 pb-1 text-[11.5px] font-semibold text-muted-foreground">
+                  {group.title}
+                </p>
+              )}
+              {collapsed && <div className="mx-1 my-2.5 h-px bg-border" />}
+              <ul className="space-y-0.5">
+                {group.items.map((item) => {
+                  const active = page === item.key;
+                  return (
+                    <li key={item.key}>
                       <button
                         type="button"
-                        disabled={!item.enabled}
                         aria-current={active ? "page" : undefined}
                         onClick={() => setPage(item.key)}
                         className={cn(
-                          "relative flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-[13px] transition-colors",
-                          "hover:bg-accent disabled:cursor-not-allowed disabled:opacity-45",
-                          active && "bg-primary/10 text-primary font-medium",
+                          "flex h-[34px] w-full items-center gap-2.5 rounded-md px-2.5 transition-colors",
+                          "hover:bg-accent hover:text-accent-foreground",
+                          active
+                            ? "bg-primary/10 font-medium text-primary"
+                            : "text-foreground/78",
                         )}
                       >
-                        {active && (
-                          <span className="absolute top-1.5 bottom-1.5 left-0 w-0.5 rounded-full bg-primary" />
-                        )}
                         <item.icon className="size-4 shrink-0" />
                         {!collapsed && <span className="truncate">{item.label}</span>}
                       </button>
-                    );
-                    return (
-                      <li key={item.key}>
-                        {collapsed || !item.enabled ? (
-                          <Tooltip>
-                            <TooltipTrigger asChild>{button}</TooltipTrigger>
-                            <TooltipContent side="right">
-                              {collapsed ? item.label : "规划中——随二、三期长入本底座"}
-                            </TooltipContent>
-                          </Tooltip>
-                        ) : (
-                          button
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            ))}
-          </nav>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+        </nav>
 
-          <div className="flex items-center justify-end px-4 py-3">
-            <ThemeToggle />
-          </div>
-        </aside>
+        <div
+          className={cn(
+            "border-t border-border text-[12px] text-muted-foreground",
+            collapsed ? "py-3 text-center text-[10px]" : "px-4.5 py-3",
+          )}
+        >
+          {APP_VERSION}
+        </div>
+      </aside>
 
-        <main className="h-full min-w-0 flex-1 overflow-y-auto">
-          {page === "prompts" && (
-            <PromptWorkbench onNavigateToSettings={() => setPage("settings")} />
-          )}
-          {page === "settings" && <SettingsPage />}
-          {PIPELINE_LABEL[page] !== undefined && (
-            <PipelinePlaceholder label={PIPELINE_LABEL[page] ?? ""} />
-          )}
-        </main>
-      </div>
-    </TooltipProvider>
+      <main className="h-full min-w-0 flex-1 overflow-y-auto">
+        {page === "prompts" && (
+          <PromptWorkbench onNavigateToSettings={() => setPage("settings")} />
+        )}
+        {page === "settings" && <SettingsPage />}
+      </main>
+    </div>
   );
 }

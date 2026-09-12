@@ -11,20 +11,24 @@
 import { expect, test } from "@playwright/test";
 
 test.describe("界面冒烟", () => {
-  test("页面加载：品牌、两组导航与流水线占位就位", async ({ page }) => {
+  test("页面加载：品牌（副标题 + 版本）与工作区两项导航就位", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByText("Dataset Factory")).toBeVisible();
-    await expect(page.getByRole("button", { name: "提示词" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "设置" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "导入 / 素材库" })).toBeDisabled();
-    await expect(page.getByRole("button", { name: "导出" })).toBeDisabled();
+    await expect(page.getByText("打标流水线工具")).toBeVisible();
+    await expect(page.getByText("v0.1.0")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "提示词", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "设置", exact: true }),
+    ).toBeVisible();
   });
 });
 
 test.describe("提示词工作台", () => {
   test("新建提示词 → 列表卡片出现并被选为本轮基础提示词（后端写盘 + 界面刷新）", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("button", { name: "新建" }).click();
+    await page.getByRole("button", { name: "新建提示词" }).click();
 
     await page.getByLabel("名称").fill("e2e-prompt");
     await page.getByLabel("描述").fill("E2E 建的条目");
@@ -44,7 +48,7 @@ test.describe("打标全链路", () => {
   test("发指令打标：假模型回复直达界面（浏览器 → HTTP → 引擎 → 假端点）", async ({ page }) => {
     // 先建一条基础提示词（打标请求要求已选定基础提示词）；保存后自动选中。
     await page.goto("/");
-    await page.getByRole("button", { name: "新建" }).click();
+    await page.getByRole("button", { name: "新建提示词" }).click();
     await page.getByLabel("名称").fill("e2e-label-prompt");
     await page.getByLabel("正文（Markdown）").fill("你是打标助手");
     await page.getByRole("button", { name: "保存" }).click();
@@ -63,7 +67,7 @@ test.describe("打标全链路", () => {
 test.describe("设置页", () => {
   test("端点配置详情：Base URL 与密钥来源正确显示（默认进连接子页）", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("button", { name: "设置" }).click();
+    await page.getByRole("button", { name: "设置", exact: true }).click();
 
     await expect(page.getByLabel("Base URL")).toHaveValue(/fake-llm\/v1$/);
     await expect(page.getByText(/已配置 · 来源：credentials 文件/)).toBeVisible();

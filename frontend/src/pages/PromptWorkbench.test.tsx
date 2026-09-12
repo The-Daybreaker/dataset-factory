@@ -9,6 +9,7 @@ const apiMock = vi.hoisted(() => ({
   listPrompts: vi.fn(),
   getPrompt: vi.fn(),
   savePrompt: vi.fn(),
+  renamePrompt: vi.fn(),
   deletePrompt: vi.fn(),
   listSkills: vi.fn(),
   listEndpoints: vi.fn(),
@@ -86,32 +87,53 @@ beforeEach(() => {
 });
 
 describe("PromptWorkbench", () => {
-  it("进页拉取列表与端点配置；选中卡片回填编辑器并作为本轮基础提示词", async () => {
+  it("进页拉取列表与端点配置；无会话恢复时自动选中首条作为本轮基础提示词", async () => {
     render(<PromptWorkbench onNavigateToSettings={() => {}} />);
-
-    await waitFor(() => {
-      expect(screen.getByText("h3-video")).toBeInTheDocument();
-    });
-    // 端点切换器 chip 显示「名称 · 模型名」。
-    expect(screen.getByText("default · model-a")).toBeInTheDocument();
-
-    await userEvent.click(screen.getByText("h3-video"));
 
     await waitFor(() => {
       expect(apiMock.getPrompt).toHaveBeenCalledWith("h3-video");
     });
+    // 端点切换器 chip 显示「名称 · 模型名」。
+    expect(screen.getByText("default · model-a")).toBeInTheDocument();
     expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
     expect(screen.getByLabelText("描述")).toHaveValue("视频打标");
     expect(screen.getByLabelText("正文（Markdown）")).toHaveValue("你是打标助手。");
     expect(screen.getByText("基础提示词：h3-video")).toBeInTheDocument();
   });
 
+  it("改名保存：先 renamePrompt（改文件名）再按新名 savePrompt", async () => {
+    apiMock.renamePrompt.mockResolvedValue(undefined);
+    apiMock.savePrompt.mockResolvedValue(undefined);
+    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
+    });
+    await userEvent.clear(screen.getByLabelText("名称"));
+    await userEvent.type(screen.getByLabelText("名称"), "h3-renamed");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(apiMock.renamePrompt).toHaveBeenCalledWith("h3-video", {
+        new_name: "h3-renamed",
+      });
+    });
+    await waitFor(() => {
+      expect(apiMock.savePrompt).toHaveBeenCalledWith("h3-renamed", {
+        description: "视频打标",
+        body: "你是打标助手。",
+      });
+    });
+  });
+
   it("保存：调 savePrompt（名称 + 描述 + 正文）并刷新列表", async () => {
     apiMock.savePrompt.mockResolvedValue(undefined);
     render(<PromptWorkbench onNavigateToSettings={() => {}} />);
 
-    await waitFor(() => screen.getByText("h3-video"));
-    await userEvent.click(screen.getByRole("button", { name: "新建" }));
+    await waitFor(() => {
+      expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
+    });
+    await userEvent.click(screen.getByRole("button", { name: "新建提示词" }));
     await userEvent.type(screen.getByLabelText("名称"), "new-prompt");
     await userEvent.type(screen.getByLabelText("描述"), "新条目");
     await userEvent.type(screen.getByLabelText("正文（Markdown）"), "新的正文");
@@ -129,8 +151,9 @@ describe("PromptWorkbench", () => {
   it("发送：label 请求携带选中的基础提示词，回复上屏并显示模型 meta", async () => {
     render(<PromptWorkbench onNavigateToSettings={() => {}} />);
 
-    await waitFor(() => screen.getByText("h3-video"));
-    await userEvent.click(screen.getByText("h3-video"));
+    await waitFor(() => {
+      expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
+    });
     await userEvent.type(screen.getByLabelText("打标指令"), "给这张图打个标");
     await userEvent.click(screen.getByRole("button", { name: "发送" }));
 
@@ -144,13 +167,18 @@ describe("PromptWorkbench", () => {
       );
     });
     expect(await screen.findByText("打标结果 caption")).toBeInTheDocument();
-    expect(screen.getByText(/耗时 \d+s/)).toBeInTheDocument();
+    expect(screen.getByText(/model-a · \d+s/)).toBeInTheDocument();
   });
 
-  it("未选中基础提示词时发送：label 收到 null（后端给可操作错误）", async () => {
+  it("提示词库为空时发送：label 收到 null（后端给可操作错误）", async () => {
+    apiMock.listPrompts.mockResolvedValue([]);
     render(<PromptWorkbench onNavigateToSettings={() => {}} />);
 
-    await waitFor(() => screen.getByText("simple"));
+    await waitFor(() =>
+      expect(
+        screen.getByText("（提示词库为空——点「新建」写一条）"),
+      ).toBeInTheDocument(),
+    );
     await userEvent.type(screen.getByLabelText("打标指令"), "打标");
     await userEvent.click(screen.getByRole("button", { name: "发送" }));
 
@@ -179,9 +207,9 @@ describe("PromptWorkbench", () => {
     apiMock.deletePrompt.mockResolvedValue(undefined);
     render(<PromptWorkbench onNavigateToSettings={() => {}} />);
 
-    await waitFor(() => screen.getByText("h3-video"));
-    await userEvent.click(screen.getByText("h3-video"));
-    await waitFor(() => screen.getByText("本轮基础提示词"));
+    await waitFor(() => {
+      expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
+    });
     // 编辑器列的「删除」打开确认对话框；对话框内的「删除」才真正调接口（危险动作二次确认）。
     await userEvent.click(screen.getByRole("button", { name: "删除" }));
     const dialog = screen.getByRole("dialog");
