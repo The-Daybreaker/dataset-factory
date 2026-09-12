@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import type { ReactElement } from "react";
 import { useState } from "react";
-import { ConfigTab } from "./ConfigTab";
 import { ThemeToggle } from "./components/theme-toggle";
 import { Badge } from "./components/ui/badge";
 import {
@@ -22,7 +21,7 @@ import {
 } from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
 import { PromptWorkbench } from "./pages/PromptWorkbench";
-import { SkillsTab } from "./SkillsTab";
+import { SettingsPage } from "./pages/SettingsPage";
 
 /** 顶级页面：工作区两项 + 流水线六个规划占位（二三期长入，布局不推倒）。 */
 type PageKey =
@@ -100,7 +99,7 @@ function PipelinePlaceholder({ label }: { label: string }): ReactElement {
 /**
  * 应用外壳：可折叠侧栏（展开 250px / 折叠 64px，DF 图标复用折叠钮）+ 满高内容画布。
  *
- * 设置页暂嵌旧配置 / Skill 页签组件过渡（T26 替换）；提示词页已是工作台三栏。
+ * 两页均已按新信息架构实现：提示词工作台三栏 + 设置容器两子页。
  */
 export function App(): ReactElement {
   const [page, setPage] = useState<PageKey>("prompts");
@@ -193,12 +192,7 @@ export function App(): ReactElement {
           {page === "prompts" && (
             <PromptWorkbench onNavigateToSettings={() => setPage("settings")} />
           )}
-          {page === "settings" && (
-            <div className="grid h-full grid-cols-2 gap-3 p-4 max-lg:grid-cols-1">
-              <ConfigTab />
-              <SkillsTab />
-            </div>
-          )}
+          {page === "settings" && <SettingsPage />}
           {PIPELINE_LABEL[page] !== undefined && (
             <PipelinePlaceholder label={PIPELINE_LABEL[page] ?? ""} />
           )}

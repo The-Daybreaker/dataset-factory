@@ -60,12 +60,13 @@ test.describe("打标全链路", () => {
   });
 });
 
-test.describe("配置页", () => {
-  test("加载配置：base_url 与密钥来源正确显示", async ({ page }) => {
+test.describe("设置页", () => {
+  test("端点配置详情：Base URL 与密钥来源正确显示（默认进连接子页）", async ({ page }) => {
     await page.goto("/");
     await page.getByRole("button", { name: "设置" }).click();
 
-    await expect(page.getByLabel("base_url")).toHaveValue(/fake-llm\/v1$/);
-    await expect(page.getByText(/已配置（来源：credentials 文件）/)).toBeVisible();
+    await expect(page.getByLabel("Base URL")).toHaveValue(/fake-llm\/v1$/);
+    await expect(page.getByText(/已配置 · 来源：credentials 文件/)).toBeVisible();
+    await expect(page.getByLabel("名称")).toBeDisabled();
   });
 });
