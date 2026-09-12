@@ -227,7 +227,7 @@ function EndpointConfigPanel(): ReactElement {
                       "size-2 rounded-full " +
                       (item.is_active ? "bg-success" : "bg-muted-foreground/30")
                     }
-                    aria-label={item.is_active ? "当前使用" : ""}
+                    title={item.is_active ? "当前使用" : undefined}
                   />
                   <span
                     className={
@@ -343,7 +343,7 @@ function EndpointConfigPanel(): ReactElement {
                   <span className="size-2 rounded-full bg-success" aria-hidden />
                 )}
                 {(current?.has_api_key ?? false)
-                  ? "已配置" + (current?.is_active ? " · 来源：credentials 文件" : "")
+                  ? `已配置${current?.is_active ? " · 来源：credentials 文件" : ""}`
                   : "未配置——可之后补配，或用环境变量 DSF_API_KEY 兜底"}
               </p>
               <p className="flex items-center gap-1.5 text-[12px] text-muted-foreground">

@@ -148,11 +148,13 @@ function BodyEditor({
         className="w-9 shrink-0 overflow-hidden border-r border-border bg-muted/40 py-2 text-right font-mono text-[11px] leading-[1.7] text-muted-foreground/70 select-none"
       >
         <div style={{ transform: `translateY(-${scrollTop}px)` }}>
-          {Array.from({ length: lineCount }, (_, index) => (
-            <div key={index} className="pr-1.5">
-              {index + 1}
-            </div>
-          ))}
+          {Array.from({ length: lineCount }, (_, index) => index + 1).map(
+            (lineNumber) => (
+              <div key={lineNumber} className="pr-1.5">
+                {lineNumber}
+              </div>
+            ),
+          )}
         </div>
       </div>
       <textarea
@@ -716,8 +718,9 @@ export function PromptWorkbench({
 
           {/* 消息流 */}
           <div
-            className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1"
+            role="log"
             aria-label="消息流"
+            className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1"
           >
             {messages.length === 0 && (
               <p className="mt-8 text-center text-[12px] text-muted-foreground">
