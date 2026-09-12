@@ -88,6 +88,12 @@ class PromptSaveRequest(BaseModel):
     body: str
 
 
+class PromptRenameRequest(BaseModel):
+    """POST /api/prompts/{name}/rename 的请求体。"""
+
+    new_name: str
+
+
 class SkillInfo(BaseModel):
     """skill 条目。"""
 

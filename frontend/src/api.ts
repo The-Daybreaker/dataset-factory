@@ -17,6 +17,7 @@ export type SessionSnapshotResponse = components["schemas"]["SessionSnapshotResp
 export type PromptInfo = components["schemas"]["PromptInfo"];
 export type PromptFull = components["schemas"]["PromptFull"];
 export type PromptSaveRequest = components["schemas"]["PromptSaveRequest"];
+export type PromptRenameRequest = components["schemas"]["PromptRenameRequest"];
 export type SkillInfo = components["schemas"]["SkillInfo"];
 export type SkillImportResponse = components["schemas"]["SkillImportResponse"];
 export type ConfigResponse = components["schemas"]["ConfigResponse"];
@@ -174,6 +175,10 @@ export const api = {
   /** 新建或覆盖提示词（名称即文件名）。 */
   savePrompt: (name: string, payload: PromptSaveRequest) =>
     request<void>("PUT", `/api/prompts/${encodeURIComponent(name)}`, payload),
+
+  /** 重命名提示词（改文件名；历史备份随迁）。 */
+  renamePrompt: (name: string, payload: PromptRenameRequest) =>
+    request<void>("POST", `/api/prompts/${encodeURIComponent(name)}/rename`, payload),
 
   /** 删除提示词。 */
   deletePrompt: (name: string) =>

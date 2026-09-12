@@ -166,6 +166,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/prompts/{name}/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rename
+         * @description 重命名提示词（改文件名）；历史备份随改名迁移。
+         */
+        post: operations["rename_api_prompts__name__rename_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/latest": {
         parameters: {
             query?: never;
@@ -550,6 +570,14 @@ export interface components {
             description: string;
             /** Name */
             name: string;
+        };
+        /**
+         * PromptRenameRequest
+         * @description POST /api/prompts/{name}/rename 的请求体。
+         */
+        PromptRenameRequest: {
+            /** New Name */
+            new_name: string;
         };
         /**
          * PromptSaveRequest
@@ -1163,6 +1191,66 @@ export interface operations {
             };
             /** @description 提示词不存在 */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_api_prompts__name__rename_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PromptRenameRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 新名称不合法（含路径分隔符等） */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description 要改名的提示词不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description 新名称的提示词已存在 */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -31,10 +32,12 @@ from ..llm import (
 )
 from ..prompts import (
     PromptError,
+    PromptExistsError,
     PromptNameError,
     PromptNotFoundError,
     PromptParseError,
     PromptTooLargeError,
+    seed_builtin_presets,
 )
 from ..sessions import (
     SessionError,
@@ -68,6 +71,7 @@ def create_app(frontend_dir: Path | None = None) -> FastAPI:
         title="Dataset Factory",
         summary="AI 打标工具（发图 + 指令产出 caption，支持迭代改写）",
         version="0.1.0",
+        lifespan=_lifespan,
     )
     # 访问日志中间件：放在最外层，它量到的耗时才是整个请求的真实总耗时。
     app.add_middleware(RequestLogMiddleware)
@@ -81,6 +85,13 @@ def create_app(frontend_dir: Path | None = None) -> FastAPI:
     if directory.is_dir():
         app.mount("/", StaticFiles(directory=directory, html=True), name="frontend")
     return app
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """应用启动钩子：播种产品内置预置提示词（标记文件在即 no-op，常态零开销）。"""
+    seed_builtin_presets()
+    yield
 
 
 def _default_frontend_dir() -> Path:
@@ -122,7 +133,7 @@ _ERROR_MAP: list[tuple[int, tuple[type[Exception], ...]]] = [
             ConfigNotFoundError,
         ),
     ),
-    (409, (SkillExistsError, ConfigConflictError)),
+    (409, (SkillExistsError, ConfigConflictError, PromptExistsError)),
     (413, (PromptTooLargeError,)),
     (502, (LLMError,)),
     (

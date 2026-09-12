@@ -1,4 +1,4 @@
-"""提示词库命令：``dsf prompt list / show / save / rm``——直连 prompts 数据域做管理操作。
+"""提示词库命令：``dsf prompt list / show / save / rename / rm``——直连 prompts 数据域做管理操作。
 
 入口层可直连数据域（分层规则的允许例外，管理操作不经打标引擎绕行）。
 """
@@ -11,10 +11,25 @@ from typing import Annotated
 
 import typer
 
-from ..prompts import Prompt, delete_prompt, list_prompts, read_prompt, save_prompt
+from ..prompts import (
+    Prompt,
+    delete_prompt,
+    list_prompts,
+    read_prompt,
+    rename_prompt,
+    save_prompt,
+    seed_builtin_presets,
+)
 from .errors import handle_domain_errors
 
 app = typer.Typer(help="提示词库管理（增删改查）", no_args_is_help=True)
+
+
+@app.callback()
+@handle_domain_errors
+def _seed_builtin() -> None:
+    """任一 prompt 子命令执行前先播种内置预置提示词（标记文件在即 no-op）。"""
+    seed_builtin_presets()
 
 
 @app.command("list")
@@ -79,6 +94,17 @@ def prompt_save(
         body = sys.stdin.read()
     save_prompt(Prompt(name=name, description=description, body=body))
     typer.secho(f"已保存提示词 {name!r}", fg=typer.colors.GREEN)
+
+
+@app.command("rename")
+@handle_domain_errors
+def prompt_rename(
+    old_name: Annotated[str, typer.Argument(help="现有提示词名称")],
+    new_name: Annotated[str, typer.Argument(help="目标名称（文件名即名称）")],
+) -> None:
+    """重命名提示词（改文件名）；历史备份随改名迁移。"""
+    rename_prompt(old_name, new_name)
+    typer.secho(f"已把 {old_name!r} 改名为 {new_name!r}", fg=typer.colors.GREEN)
 
 
 @app.command("rm")

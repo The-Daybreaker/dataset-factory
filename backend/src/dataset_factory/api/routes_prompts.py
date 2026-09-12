@@ -9,9 +9,16 @@ from ..prompts import (
     delete_prompt,
     list_prompts,
     read_prompt,
+    rename_prompt,
     save_prompt,
 )
-from .schemas import ErrorDetail, PromptFull, PromptInfo, PromptSaveRequest
+from .schemas import (
+    ErrorDetail,
+    PromptFull,
+    PromptInfo,
+    PromptRenameRequest,
+    PromptSaveRequest,
+)
 
 router = APIRouter(prefix="/api/prompts", tags=["提示词库"])
 
@@ -52,6 +59,21 @@ def get_one(name: str) -> PromptFull:
 def save(name: str, request: PromptSaveRequest) -> Response:
     """保存提示词（不存在即新建、已存在即覆盖——旧版进 _history 滚动备份）。"""
     save_prompt(Prompt(name=name, description=request.description, body=request.body))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/{name}/rename",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        400: {"model": ErrorDetail, "description": "新名称不合法（含路径分隔符等）"},
+        404: {"model": ErrorDetail, "description": "要改名的提示词不存在"},
+        409: {"model": ErrorDetail, "description": "新名称的提示词已存在"},
+    },
+)
+def rename(name: str, request: PromptRenameRequest) -> Response:
+    """重命名提示词（改文件名）；历史备份随改名迁移。"""
+    rename_prompt(name, request.new_name)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

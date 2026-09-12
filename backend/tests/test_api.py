@@ -223,6 +223,25 @@ def test_prompts_crud(client: TestClient) -> None:
     assert missing.status_code == 404
 
 
+def test_prompts_rename(client: TestClient) -> None:
+    """rename：204 且旧名 404、新名可读；撞名 409；源不存在 404。"""
+    client.put("/api/prompts/old", json={"description": "d", "body": "正文"})
+    client.put("/api/prompts/other", json={"description": "", "body": "x"})
+
+    renamed = client.post("/api/prompts/old/rename", json={"new_name": "new"})
+    old_gone = client.get("/api/prompts/old")
+    new_full = client.get("/api/prompts/new")
+    conflict = client.post("/api/prompts/new/rename", json={"new_name": "other"})
+    missing = client.post("/api/prompts/ghost/rename", json={"new_name": "z"})
+
+    assert renamed.status_code == 204
+    assert old_gone.status_code == 404
+    assert new_full.status_code == 200
+    assert new_full.json()["body"] == "正文"
+    assert conflict.status_code == 409
+    assert missing.status_code == 404
+
+
 def test_prompts_invalid_name_is_400(client: TestClient) -> None:
     """名称含非法字符（Windows 禁字符 :）：400。"""
     response = client.put(

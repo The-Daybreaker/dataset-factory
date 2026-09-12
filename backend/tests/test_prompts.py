@@ -15,6 +15,7 @@ import pytest
 from dataset_factory.prompts import (
     Prompt,
     PromptError,
+    PromptExistsError,
     PromptNameError,
     PromptNotFoundError,
     PromptParseError,
@@ -24,7 +25,9 @@ from dataset_factory.prompts import (
     list_prompts,
     parse_prompt,
     read_prompt,
+    rename_prompt,
     save_prompt,
+    seed_builtin_presets,
 )
 
 
@@ -292,3 +295,71 @@ def test_save_unencodable_body_raises(temp_data_root: Path) -> None:
         save_prompt(Prompt(name="bad", description="", body="x" + chr(0xD800)))
 
     assert not (_prompts_dir(temp_data_root) / "bad.md").exists()
+
+
+def test_rename_moves_entry_and_history(temp_data_root: Path) -> None:
+    """改名 = 改文件名：正文跟到新名、旧名消失、历史备份随迁到新名前缀。"""
+    save_prompt(Prompt(name="old", description="d", body="v1"))
+    save_prompt(Prompt(name="old", description="d", body="v2"))  # v1 进 _history
+    assert len(list((_prompts_dir(temp_data_root) / "_history").iterdir())) == 1
+
+    rename_prompt("old", "new")
+
+    assert [prompt.name for prompt in list_prompts()] == ["new"]
+    assert read_prompt("new").body == "v2"
+    with pytest.raises(PromptNotFoundError):
+        read_prompt("old")
+    history = list((_prompts_dir(temp_data_root) / "_history").iterdir())
+    assert len(history) == 1
+    assert history[0].name.startswith("new.")
+
+
+def test_rename_missing_source_raises(temp_data_root: Path) -> None:
+    """旧名不存在 → PromptNotFoundError，且不产生任何文件。"""
+    with pytest.raises(PromptNotFoundError):
+        rename_prompt("ghost", "new")
+
+    assert list_prompts() == []
+
+
+def test_rename_existing_target_raises(temp_data_root: Path) -> None:
+    """新名已被占用 → PromptExistsError，两条内容都不变。"""
+    save_prompt(Prompt(name="a", description="", body="A"))
+    save_prompt(Prompt(name="b", description="", body="B"))
+
+    with pytest.raises(PromptExistsError):
+        rename_prompt("a", "b")
+
+    assert read_prompt("a").body == "A"
+    assert read_prompt("b").body == "B"
+
+
+def test_rename_same_name_is_noop(temp_data_root: Path) -> None:
+    """新旧同名 = no-op：不报错、不产生历史。"""
+    save_prompt(Prompt(name="a", description="", body="A"))
+
+    rename_prompt("a", "a")
+
+    assert read_prompt("a").body == "A"
+    assert not (_prompts_dir(temp_data_root) / "_history").exists()
+
+
+def test_seed_builtin_presets_writes_once(temp_data_root: Path) -> None:
+    """首次播种写内置条目 + 标记；再调 no-op（不覆盖用户改过的同名条目）。"""
+    seed_builtin_presets()
+    assert [prompt.name for prompt in list_prompts()] == ["详细描述"]
+
+    save_prompt(Prompt(name="详细描述", description="用户改的", body="用户正文"))
+    seed_builtin_presets()
+
+    assert read_prompt("详细描述").body == "用户正文"
+
+
+def test_seed_builtin_presets_keeps_user_deletion(temp_data_root: Path) -> None:
+    """用户删除内置条目后不再复活（标记文件已落盘）。"""
+    seed_builtin_presets()
+    delete_prompt("详细描述")
+
+    seed_builtin_presets()
+
+    assert list_prompts() == []

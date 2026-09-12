@@ -14,8 +14,10 @@ from datetime import datetime
 from pathlib import Path
 
 from .._fs import atomic_write_text, data_root
+from .builtin import BUILTIN_PRESET_VERSION, BUILTIN_PROMPTS
 from .errors import (
     PromptError,
+    PromptExistsError,
     PromptNameError,
     PromptNotFoundError,
     PromptParseError,
@@ -293,3 +295,102 @@ def _evict_old_history(history_dir: Path, name: str) -> None:
     overflow = len(versions) - _HISTORY_KEEP
     for stale in versions[: max(0, overflow)]:
         stale.unlink(missing_ok=True)
+
+
+def rename_prompt(old_name: str, new_name: str) -> None:
+    """重命名提示词条目（= 改文件名），历史备份随改名迁移。
+
+    改名是「同目录 rename」：NTFS 与 POSIX 下同目录改名都是原子操作，外界要么看到旧名、
+    要么看到新名。历史备份（`_history/<旧名>.<时间戳>.md`）随后改前缀跟到新名下——备份是
+    附属数据，个别文件改不动时跳过（不 rollback 已完成的主改名，避免「改名成功却报失败」
+    让用户重试时撞「旧名已不存在」）。
+
+    Args:
+        old_name: 现有条目名称。
+        new_name: 目标名称（校验规则与新建相同）。
+
+    Raises:
+        PromptNameError: 任一名称非法。
+        PromptNotFoundError: 旧名称条目不存在。
+        PromptExistsError: 新名称已被占用。
+        PromptError: 文件系统改名失败。
+    """
+    _validate_name(old_name)
+    _validate_name(new_name)
+    if old_name == new_name:
+        return
+    directory = _prompts_dir()
+    source = directory / f"{old_name}{_SUFFIX}"
+    target = directory / f"{new_name}{_SUFFIX}"
+    if not source.is_file():
+        raise PromptNotFoundError(f"未找到提示词 {old_name!r}；无法改名。")
+    if target.exists():
+        raise PromptExistsError(
+            f"名称 {new_name!r} 的提示词已存在；请换一个名称，或先删除目标条目。"
+        )
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        source.rename(target)
+    except OSError as exc:
+        raise PromptError(
+            f"无法把提示词 {source} 改名为 {target}：{exc.strerror or exc}"
+        ) from exc
+    _rename_history(directory, old_name, new_name)
+
+
+def _rename_history(directory: Path, old_name: str, new_name: str) -> None:
+    """把旧名的全部历史版本改前缀到新名下；撞名加序号、个别改不动跳过（备份不阻塞主操作）。"""
+    history_dir = directory / _HISTORY_DIRNAME
+    if not history_dir.is_dir():
+        return
+    for old in _history_versions(history_dir, old_name):
+        tail = old.name[len(old_name) :]  # 形如 .<时间戳>[-序号].md
+        candidate = history_dir / f"{new_name}{tail}"
+        seq = 1
+        while candidate.exists():
+            stem = tail[: -len(_SUFFIX)]
+            candidate = history_dir / f"{new_name}{stem}-{seq}{_SUFFIX}"
+            seq += 1
+        try:
+            old.rename(candidate)
+        except OSError:
+            continue
+
+
+_SEED_MARKER_NAME = ".builtin-presets-seeded"
+
+
+def seed_builtin_presets() -> None:
+    """一次性播种产品内置预置提示词：首次使用时把内置条目写进提示词库。
+
+    标记文件 `prompts/.builtin-presets-seeded`（内容 = 内置集合版本号）记录「播种过」；
+    标记在即直接返回（常态零开销）。播种只写「同名不存在」的条目（不覆盖用户自建的同名
+    条目），写完落标记——此后用户可自由修改 / 删除内置条目，不会被覆盖或复活。
+
+    Raises:
+        PromptError: 目录创建 / 条目写入 / 标记写入失败。
+    """
+    directory = _prompts_dir()
+    marker = directory / _SEED_MARKER_NAME
+    if marker.is_file():
+        return
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise PromptError(
+            f"无法在 {directory} 准备写入：{exc.strerror or exc}"
+        ) from exc
+    for preset in BUILTIN_PROMPTS:
+        path = directory / f"{preset.name}{_SUFFIX}"
+        if path.exists():
+            continue
+        try:
+            atomic_write_text(path, dump_prompt(preset))
+        except OSError as exc:
+            raise PromptError(
+                f"无法写入内置提示词 {path}：{exc.strerror or exc}"
+            ) from exc
+    try:
+        atomic_write_text(marker, BUILTIN_PRESET_VERSION)
+    except OSError as exc:
+        raise PromptError(f"无法写入播种标记 {marker}：{exc.strerror or exc}") from exc

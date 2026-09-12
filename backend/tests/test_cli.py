@@ -358,7 +358,24 @@ def test_prompt_lifecycle(temp_data_root: Path, tmp_path: Path) -> None:
     assert "你是打标助手。" in show.output
     assert remove.exit_code == 0
     assert after.exit_code == 0
-    assert "为空" in after.output
+    # prompt 子命令会播种内置预置：删光自建条目后库里仍有内置的「详细描述」。
+    assert "h3" not in after.output
+    assert "详细描述" in after.output
+
+
+def test_prompt_rename_roundtrip(temp_data_root: Path) -> None:
+    """prompt rename：改名后 list / show 跟新名、旧名消失。"""
+    _save_prompt("old", "你是打标助手。")
+
+    renamed = runner.invoke(app, ["prompt", "rename", "old", "new"])
+    listing = runner.invoke(app, ["prompt", "list"])
+    show = runner.invoke(app, ["prompt", "show", "new"])
+
+    assert renamed.exit_code == 0
+    assert "new" in listing.output
+    assert "old\t" not in listing.output
+    assert show.exit_code == 0
+    assert "你是打标助手。" in show.output
 
 
 def test_prompt_rm_aborts_without_confirm(temp_data_root: Path) -> None:

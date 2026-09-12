@@ -403,6 +403,20 @@
         "title": "PromptInfo",
         "type": "object"
       },
+      "PromptRenameRequest": {
+        "description": "POST /api/prompts/{name}/rename 的请求体。",
+        "properties": {
+          "new_name": {
+            "title": "New Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "new_name"
+        ],
+        "title": "PromptRenameRequest",
+        "type": "object"
+      },
       "PromptSaveRequest": {
         "description": "PUT /api/prompts/{name} 的请求体。",
         "properties": {
@@ -1260,6 +1274,82 @@
           }
         },
         "summary": "Save",
+        "tags": [
+          "提示词库"
+        ]
+      }
+    },
+    "/api/prompts/{name}/rename": {
+      "post": {
+        "description": "重命名提示词（改文件名）；历史备份随改名迁移。",
+        "operationId": "rename_api_prompts__name__rename_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromptRenameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "新名称不合法（含路径分隔符等）"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "要改名的提示词不存在"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "新名称的提示词已存在"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rename",
         "tags": [
           "提示词库"
         ]

@@ -11,6 +11,10 @@ class PromptNameError(PromptError):
     """提示词名称不合法（空、含路径分隔符 / 控制字符 / 点号、保留名 _history 等）。"""
 
 
+class PromptExistsError(PromptError):
+    """目标名称的提示词已存在（如改名撞名）——HTTP 409。"""
+
+
 class PromptNotFoundError(PromptError):
     """按名称找不到提示词条目（读 / 删不存在的条目）。"""
 
