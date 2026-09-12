@@ -4,8 +4,8 @@
 - 配置与密钥：EndpointConfig / SecretValue / ConfigError / data_root / read_config /
   describe_config；多配置存储（endpoints/ 目录）——EndpointConfigInfo / list_configs /
   create_config / update_config / delete_config / set_active_config / active_config_name /
-  read_config_data / read_stored_api_key / has_config / has_stored_key / ensure_migrated /
-  MIGRATED_CONFIG_NAME / SUPPORTED_API_FORMAT
+  read_config_data / read_stored_api_key / has_config / has_stored_key /
+  DEFAULT_CONFIG_NAME / SUPPORTED_API_FORMAT
 - 补全接口与客户端：Completer / OpenAIChatClient / build_completer
 - 消息模型：Message / Role / TextPart / ImagePart / ContentPart
 - 异常：LLMError 基类 + 分类子类（鉴权 / 限流 / 超时 / 连接 / 请求非法 / 未找到 / 服务端 / 意外）+ UnsupportedImageError / ImageTooLargeError
@@ -15,7 +15,7 @@ from .._fs import data_root
 from .client import Completer, OpenAIChatClient, build_completer
 from .config import EndpointConfig, RequestConfig, describe_config, read_config
 from .endpoints import (
-    MIGRATED_CONFIG_NAME,
+    DEFAULT_CONFIG_NAME,
     SUPPORTED_API_FORMAT,
     ConfigError,
     EndpointConfigInfo,
@@ -23,7 +23,6 @@ from .endpoints import (
     active_config_name,
     create_config,
     delete_config,
-    ensure_migrated,
     has_config,
     has_stored_key,
     list_configs,
@@ -48,7 +47,7 @@ from .errors import (
 from .messages import ContentPart, ImagePart, Message, Role, TextPart
 
 __all__ = [
-    "MIGRATED_CONFIG_NAME",
+    "DEFAULT_CONFIG_NAME",
     "SUPPORTED_API_FORMAT",
     "Completer",
     "ConfigError",
@@ -79,7 +78,6 @@ __all__ = [
     "data_root",
     "delete_config",
     "describe_config",
-    "ensure_migrated",
     "has_config",
     "has_stored_key",
     "list_configs",

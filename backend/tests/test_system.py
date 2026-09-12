@@ -23,7 +23,7 @@ import httpx
 import pytest
 import uvicorn
 
-from dataset_factory.llm import MIGRATED_CONFIG_NAME, SecretValue, create_config
+from dataset_factory.llm import DEFAULT_CONFIG_NAME, SecretValue, create_config
 
 from .fake_llm_endpoint import FakeLLMEndpoint
 
@@ -93,7 +93,7 @@ def system_client(
     请求真正经过完整的 HTTP 协议栈（连接、编码、解码、超时）。
     """
     create_config(
-        MIGRATED_CONFIG_NAME,
+        DEFAULT_CONFIG_NAME,
         base_url=fake_endpoint.base_url,
         model="fake-label-model",
         api_key=SecretValue("sk-fake-for-system-test"),

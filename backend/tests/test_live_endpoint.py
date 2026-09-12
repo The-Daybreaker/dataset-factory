@@ -32,7 +32,7 @@ import pytest
 import uvicorn
 
 from dataset_factory.api import create_app
-from dataset_factory.llm import MIGRATED_CONFIG_NAME, SecretValue, create_config
+from dataset_factory.llm import DEFAULT_CONFIG_NAME, SecretValue, create_config
 
 system_app = create_app()
 
@@ -57,7 +57,7 @@ def live_system_client(
 ) -> Iterator[tuple[httpx.Client, Path]]:
     """真实端点配置 + 线程内真服务的组合（复用 T17 的服务装配方式）。"""
     create_config(
-        MIGRATED_CONFIG_NAME,
+        DEFAULT_CONFIG_NAME,
         base_url=_LIVE_BASE_URL,
         model=_LIVE_MODEL,
         api_key=SecretValue(_LIVE_API_KEY),

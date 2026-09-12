@@ -1,7 +1,7 @@
-"""单元测试：端点多配置存储（endpoints/ 目录、active 指针、旧单配置迁移、名称校验）。
+"""单元测试：端点多配置存储（endpoints/ 目录、active 指针、名称校验）。
 
-全部离线；temp_data_root 把数据根隔离到临时目录。覆盖：CRUD 与设为当前使用、迁移的
-幂等与非破坏性、名称校验边界、密钥只进不出、原子写失败不留脏文件。
+全部离线；temp_data_root 把数据根隔离到临时目录。覆盖：CRUD 与设为当前使用、名称校验
+边界、密钥只进不出、原子写失败不留脏文件。
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from pathlib import Path
 import pytest
 
 from dataset_factory.llm import (
-    MIGRATED_CONFIG_NAME,
     SUPPORTED_API_FORMAT,
     ConfigError,
     SecretValue,
@@ -247,85 +246,6 @@ def test_read_config_data_validates(temp_data_root: Path) -> None:
 
     with pytest.raises(ConfigError, match="model"):
         read_config_data("bad")
-
-
-def test_migration_copies_legacy_and_keeps_originals(temp_data_root: Path) -> None:
-    """旧单配置迁移：字节复制为 default + 写 active；原文件保留（回退旧版本工具仍可用）。"""
-    (temp_data_root / "config.json").write_text(
-        json.dumps(
-            {
-                "base_url": "https://legacy/v1",
-                "model": "legacy-model",
-                "temperature": 0.5,
-            }
-        ),
-        encoding="utf-8",
-    )
-    (temp_data_root / "credentials").write_text("sk-legacy", encoding="utf-8")
-
-    infos = list_configs()
-
-    assert [info.name for info in infos] == [MIGRATED_CONFIG_NAME]
-    legacy = infos[0]
-    assert legacy.is_active
-    # 旧文件没有 api_format 字段：列表按支持格式兜底展示，读取不受影响。
-    assert legacy.api_format == SUPPORTED_API_FORMAT
-    assert active_config_name() == MIGRATED_CONFIG_NAME
-    stored = read_stored_api_key(MIGRATED_CONFIG_NAME)
-    assert stored is not None
-    assert stored.reveal() == "sk-legacy"
-    # 复制而非搬移：原文件原地不动。
-    assert (temp_data_root / "config.json").is_file()
-    assert (temp_data_root / "credentials").is_file()
-
-
-def test_migration_idempotent(temp_data_root: Path) -> None:
-    """迁移幂等：迁移后再触发不会拿旧文件覆盖新数据。"""
-    (temp_data_root / "config.json").write_text(
-        json.dumps({"base_url": "https://legacy/v1", "model": "legacy-model"}),
-        encoding="utf-8",
-    )
-    list_configs()
-
-    update_config(MIGRATED_CONFIG_NAME, base_url="https://changed/v1", model="m")
-    list_configs()
-
-    saved = json.loads(
-        (temp_data_root / "endpoints" / MIGRATED_CONFIG_NAME / "config.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert saved["base_url"] == "https://changed/v1"
-
-
-def test_migration_skipped_when_endpoints_dir_exists(temp_data_root: Path) -> None:
-    """endpoints/ 已存在就不迁移（哪怕还是空的）：迁移只服务「从未多配置」的数据根。"""
-    (temp_data_root / "config.json").write_text(
-        json.dumps({"base_url": "https://legacy/v1", "model": "legacy-model"}),
-        encoding="utf-8",
-    )
-    (temp_data_root / "endpoints").mkdir()
-
-    assert list_configs() == []
-    assert (temp_data_root / "config.json").is_file()
-
-
-def test_migration_error_surfaces_as_config_error(
-    temp_data_root: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """迁移读写盘失败 → 翻译成 ConfigError，不甩 OSError 原始栈。"""
-
-    def _boom(src: Path, dst: Path) -> None:
-        raise OSError(28, "No space left on device")
-
-    monkeypatch.setattr(os, "replace", _boom)
-    (temp_data_root / "config.json").write_text(
-        json.dumps({"base_url": "https://legacy/v1", "model": "legacy-model"}),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ConfigError, match="迁移"):
-        list_configs()
 
 
 def test_write_failure_leaves_no_tmp_files(

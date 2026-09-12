@@ -11,9 +11,6 @@
 设计要点：
 
 - 密钥只进不出：列表与概要只给「是否已配置」，绝不回显内容；SecretValue 字符串化即脱敏；
-- 旧单配置自动迁移：首次访问时若数据根下还有旧版单配置（config.json + credentials）而
-  endpoints/ 尚不存在，整体复制为 default 配置并写 active 指针——原文件保留不删（复制
-  而非搬移，回退旧版本工具仍可用）；
 - 写操作全部原子写（同目录临时文件 + os.replace，见 _fs），credentials 在 Unix 上以
   0600 落盘（mkstemp 默认权限）；
 - 边界 Fail-Fast：名称不合法 / 重名 / 配置不存在 / 删除当前使用中的配置，一律抛
@@ -39,8 +36,8 @@ _CREDENTIALS_FILENAME = (
 )
 _MASK = "**********"
 
-# 旧单配置升级为多配置时的初始配置名（迁移目标，入口层「还没有任何配置」时也用它创建）。
-MIGRATED_CONFIG_NAME = "default"
+# 空数据根上首次创建配置时用的名字（入口层「一套都没有」时也拿它兜底创建）。
+DEFAULT_CONFIG_NAME = "default"
 
 # 一期唯一支持的 API 调用格式：随配置存储、其余格式在界面上灰显预留（未来补适配器即启用）。
 SUPPORTED_API_FORMAT = "openai-chat-completions"
@@ -136,36 +133,6 @@ def validate_config_name(raw: str) -> str:
     return name
 
 
-def ensure_migrated() -> None:
-    """旧单配置到多配置的一次性迁移（幂等；读侧与写侧入口都先调它）。
-
-    迁移条件：数据根下存在旧版 config.json 且 endpoints/ 目录尚不存在。动作：把
-    config.json 与 credentials（若有）字节复制为 default 配置，并写 active 指针——
-    字节复制保真（用户手配的请求参数原样带走），原文件保留不删。
-
-    Raises:
-        ConfigError: 旧文件读不出来 / 迁移落盘失败。
-    """
-    root = data_root()
-    legacy_config = root / _CONFIG_FILENAME
-    endpoints = _endpoints_root()
-    if endpoints.exists() or not legacy_config.is_file():
-        return
-    target = _config_dir(MIGRATED_CONFIG_NAME)
-    try:
-        target.mkdir(parents=True, exist_ok=True)
-        _copy_via_atomic(legacy_config, target / _CONFIG_FILENAME)
-        legacy_credentials = root / _CREDENTIALS_FILENAME
-        if legacy_credentials.is_file():
-            # 经原子写复制而不直接 copyfile：credentials 必须保持 0600（copyfile 会丢权限位）。
-            _copy_via_atomic(legacy_credentials, target / _CREDENTIALS_FILENAME)
-        pointer = endpoints / ACTIVE_FILENAME
-        pointer.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_bytes(pointer, f"{MIGRATED_CONFIG_NAME}\n".encode())
-    except (OSError, UnicodeEncodeError) as exc:
-        raise ConfigError(f"无法完成旧配置迁移：{exc}") from exc
-
-
 def active_config_name() -> str | None:
     """读当前使用的配置名；未设置（无指针文件或内容为空）返回 None。
 
@@ -178,7 +145,6 @@ def active_config_name() -> str | None:
     Raises:
         ConfigError: 指针文件存在但读不出来。
     """
-    ensure_migrated()
     pointer = _endpoints_root() / ACTIVE_FILENAME
     if not pointer.is_file():
         return None
@@ -222,7 +188,6 @@ def list_configs() -> list[EndpointConfigInfo]:
         ConfigError: 任一配置的 config.json 缺失 / 损坏 / 字段不全（fail loud，不静默跳过——
             坏数据不该被列表悄悄藏起来）。
     """
-    ensure_migrated()
     active = active_config_name()
     infos: list[EndpointConfigInfo] = []
     for name in _existing_config_dirs():
@@ -244,8 +209,8 @@ def list_configs() -> list[EndpointConfigInfo]:
 def read_config_data(name: str) -> dict[str, object]:
     """读一套配置的 config.json 并做结构校验（合法 JSON 对象 + base_url / model 非空）。
 
-    api_format 不在此校验：缺失视为支持格式（迁移来的旧文件没有该字段），存了别的值由
-    调用方按用途决定怎么处理（展示原样、构建请求时才真正依赖格式）。
+    api_format 不在此校验：缺失视为支持格式（旧文件没有该字段），存了别的值由调用方按
+    用途决定怎么处理（展示原样、构建请求时才真正依赖格式）。
 
     Args:
         name: 配置名（先过名称校验，杜绝路径穿越）。
@@ -298,7 +263,6 @@ def read_active_files() -> tuple[str, dict[str, object], SecretValue | None]:
     Raises:
         ConfigError: 未配置任何端点 / active 指向不存在的配置 / config.json 损坏或字段不全。
     """
-    ensure_migrated()
     name = active_config_name()
     if name is None:
         raise ConfigError(
@@ -341,7 +305,6 @@ def create_config(
     _require_supported_format(api_format)
     if api_key is not None and not api_key.reveal().strip():
         raise ConfigError("API 密钥不能为空白；请填写有效密钥。")
-    ensure_migrated()
     _require_name_available(clean)
     _write_config_files(
         _config_dir(clean), clean_base_url, clean_model, api_format, api_key
@@ -378,7 +341,6 @@ def update_config(
     _require_supported_format(api_format)
     if api_key is not None and not api_key.reveal().strip():
         raise ConfigError("API 密钥不能为空白；请填写有效密钥。")
-    ensure_migrated()
     dir_path = _require_config_exists(clean)
     _write_config_files(
         dir_path,
@@ -400,7 +362,6 @@ def delete_config(name: str) -> None:
         ConfigError: 名称不合法 / 配置不存在 / 试图删除当前使用中的配置 / 删除失败。
     """
     clean = validate_config_name(name)
-    ensure_migrated()
     dir_path = _require_config_exists(clean)
     active = active_config_name()
     if active is not None and active == clean:
@@ -423,7 +384,6 @@ def set_active_config(name: str) -> None:
         ConfigError: 名称不合法 / 配置不存在 / 指针写入失败。
     """
     clean = validate_config_name(name)
-    ensure_migrated()
     _require_config_exists(clean)
     pointer = _endpoints_root() / ACTIVE_FILENAME
     try:
@@ -608,19 +568,6 @@ def _write_config_files(
             atomic_write_bytes(dir_path / _CREDENTIALS_FILENAME, key_bytes)
     except OSError as exc:
         raise ConfigError(f"无法写入端点配置文件：{exc.strerror or exc}") from exc
-
-
-def _copy_via_atomic(src: Path, dst: Path) -> None:
-    """读出字节再经原子写落盘（迁移用）：内容保真，且 credentials 保持 0600 权限语义。
-
-    Args:
-        src: 源文件（必须存在）。
-        dst: 目标文件（父目录须已建好）。
-
-    Raises:
-        OSError: 源读不了或目标写不进。
-    """
-    atomic_write_bytes(dst, src.read_bytes())
 
 
 def _has_file_key(credentials_path: Path) -> bool:

@@ -13,7 +13,7 @@ from typing import Annotated
 import typer
 
 from ..llm import (
-    MIGRATED_CONFIG_NAME,
+    DEFAULT_CONFIG_NAME,
     ConfigError,
     SecretValue,
     active_config_name,
@@ -50,7 +50,7 @@ def config_set(
         name = active
         update_config(name, base_url=base_url, model=model, api_key=api_key)
     else:
-        name = MIGRATED_CONFIG_NAME
+        name = DEFAULT_CONFIG_NAME
         create_config(name, base_url=base_url, model=model, api_key=api_key)
         # create_config 只在指针缺失时自动激活；指针悬空（指向已被手动删除的配置）时
         # 这里显式补一次，保证 set 完一定可用。

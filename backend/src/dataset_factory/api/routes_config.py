@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from ..llm import (
-    MIGRATED_CONFIG_NAME,
+    DEFAULT_CONFIG_NAME,
     ConfigError,
     SecretValue,
     active_config_name,
@@ -73,12 +73,12 @@ def update_config(request: ConfigUpdateRequest) -> None:
                 detail="未提供 api_key，且当前没有已配置的密钥；请填写 api_key。",
             )
         create_config(
-            MIGRATED_CONFIG_NAME,
+            DEFAULT_CONFIG_NAME,
             base_url=request.base_url,
             model=request.model,
             api_key=SecretValue(provided),
         )
         # create_config 只在指针缺失时自动激活；指针悬空时这里显式补一次。
-        set_active_config(MIGRATED_CONFIG_NAME)
+        set_active_config(DEFAULT_CONFIG_NAME)
     except ConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
