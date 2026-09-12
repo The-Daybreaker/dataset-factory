@@ -8,6 +8,7 @@ repos:
       - id: check-case-conflict
       - id: mixed-line-ending
         args: [--fix=lf]
+        exclude: \.bat$  # 批处理必须保持 CRLF（见 .gitattributes），LF 会让 cmd 解析多行括号块挂掉
       - id: end-of-file-fixer
       - id: trailing-whitespace
 

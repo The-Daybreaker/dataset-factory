@@ -12,3 +12,7 @@
 *.pdf binary
 *.woff binary
 *.woff2 binary
+
+# 例外：Windows 批处理必须 CRLF——cmd 对 LF 的多行括号块解析不可靠（后行规则覆盖上面的全 LF）
+*.bat text eol=crlf
+*.cmd text eol=crlf
