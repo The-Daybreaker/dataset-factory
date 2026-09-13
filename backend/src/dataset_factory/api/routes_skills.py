@@ -32,6 +32,33 @@ from .schemas import (
 
 router = APIRouter(prefix="/api/skills", tags=["Skill 库"])
 
+_SKILL_MD = "SKILL.md"
+
+
+def _strip_picker_root(payload: dict[str, bytes]) -> dict[str, bytes]:
+    """剥掉浏览器文件夹选择器多带的那一层「所选文件夹名」。
+
+    文件夹选择器给的相对路径形如 ``<所选文件夹>/SKILL.md``（``webkitRelativePath`` 的
+    形状），而 skill 包根应是 SKILL.md 所在那层。仅当「根上没有 SKILL.md、所有路径都在
+    同一个顶层目录下、且该目录下确有 SKILL.md」时整体降一级；其余形状原样交给导入校验
+    报错（不猜用户意图）。
+
+    Args:
+        payload: 清洗后的「包内相对路径 → 内容」。
+
+    Returns:
+        降级后的文件集；不需要降级时原样返回。
+    """
+    if _SKILL_MD in payload or not payload:
+        return payload
+    roots = {rel.split("/", 1)[0] for rel in payload}
+    if len(roots) != 1 or any("/" not in rel for rel in payload):
+        return payload
+    prefix = f"{roots.pop()}/"
+    if f"{prefix}{_SKILL_MD}" not in payload:
+        return payload
+    return {rel.removeprefix(prefix): content for rel, content in payload.items()}
+
 
 @router.get("", response_model=list[SkillInfo])
 def list_all() -> list[SkillInfo]:
@@ -90,7 +117,7 @@ async def import_upload(files: list[UploadFile]) -> SkillImportResponse:
                 detail=f"上传内容存在重复路径：{rel}。",
             )
         payload[rel] = await upload.read()
-    result = import_skill_files(payload)
+    result = import_skill_files(_strip_picker_root(payload))
     return SkillImportResponse(
         name=result.skill.name,
         description=result.skill.description,

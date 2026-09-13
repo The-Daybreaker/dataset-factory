@@ -830,6 +830,60 @@ def test_skills_import_upload_rejects_traversal(client: TestClient) -> None:
     assert "evil" not in names
 
 
+def test_skills_import_upload_strips_picker_root_folder(client: TestClient) -> None:
+    """上传导入：浏览器文件夹选择器给的 `<所选文件夹>/SKILL.md` 形状 → 剥掉顶层后正常入库。"""
+    response = client.post(
+        "/api/skills/import-upload",
+        files=[
+            (
+                "files",
+                (
+                    "fresh/SKILL.md",
+                    b"---\nname: picked-skill\ndescription: picked\n---\n\n# P\n",
+                    "text/markdown",
+                ),
+            ),
+            ("files", ("fresh/references/guide.md", b"# guide", "text/markdown")),
+        ],
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "picked-skill"
+    listing = client.get("/api/skills/picked-skill/files").json()
+    assert sorted(item["path"] for item in listing["files"]) == [
+        "SKILL.md",
+        "references/guide.md",
+    ]
+
+
+def test_skills_import_upload_ambiguous_roots_is_400(client: TestClient) -> None:
+    """上传导入：两个顶层目录且根上无 SKILL.md → 400，不猜用户意图。"""
+    response = client.post(
+        "/api/skills/import-upload",
+        files=[
+            (
+                "files",
+                (
+                    "a/SKILL.md",
+                    b"---\nname: a\ndescription: a\n---\n",
+                    "text/markdown",
+                ),
+            ),
+            (
+                "files",
+                (
+                    "b/SKILL.md",
+                    b"---\nname: b\ndescription: b\n---\n",
+                    "text/markdown",
+                ),
+            ),
+        ],
+    )
+
+    assert response.status_code == 400
+    assert "SKILL.md" in response.json()["detail"]
+
+
 def test_label_stream_sse(client: TestClient, fake_engine: FakeCompleter) -> None:
     """流式打标端点：SSE 事件序列 start → delta… → done，帧格式 event + data。"""
     _save_prompt("p1", "你是打标助手。")
