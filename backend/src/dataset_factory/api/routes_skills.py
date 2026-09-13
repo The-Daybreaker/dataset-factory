@@ -64,7 +64,12 @@ def _strip_picker_root(payload: dict[str, bytes]) -> dict[str, bytes]:
 def list_all() -> list[SkillInfo]:
     """列出全部 skill（含启用状态）。"""
     return [
-        SkillInfo(name=item.name, description=item.description, enabled=item.enabled)
+        SkillInfo(
+            name=item.name,
+            description=item.description,
+            enabled=item.enabled,
+            body_chars=item.body_chars,
+        )
         for item in list_skills()
     ]
 

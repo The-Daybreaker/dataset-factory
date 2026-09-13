@@ -71,7 +71,7 @@ const ENDPOINTS: EndpointConfigSummary[] = [
 ];
 
 const SKILLS: SkillInfo[] = [
-  { name: "h3-skill", description: "H3 要求", enabled: true },
+  { name: "h3-skill", description: "H3 要求", enabled: true, body_chars: 860 },
 ];
 
 beforeEach(() => {

@@ -274,6 +274,7 @@ def test_skills_lifecycle(client: TestClient) -> None:
     assert imported.json()["name"] == "example-caption-skill"
     assert imported.json()["enabled"] is True
     assert listing.json()[0]["enabled"] is True
+    assert listing.json()[0]["body_chars"] > 0
     assert disabled.status_code == 204
     assert listing_disabled.json()[0]["enabled"] is False
     assert enabled.status_code == 204

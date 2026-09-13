@@ -25,11 +25,14 @@ class Skill:
         name: skill 名称（取自 SKILL.md frontmatter，也是库里的目录名）。
         description: 用途说明（取自 frontmatter，供选择器展示）。
         enabled: 库级启用状态；停用的 skill 保留在库里、但不供打标注入（停用不删除）。
+        body_chars: SKILL.md 全文字符数——即注入请求的正文量（列表展示用；非列表路径
+            构造时可为 0）。
     """
 
     name: str
     description: str
     enabled: bool
+    body_chars: int = 0
 
 
 @dataclass(frozen=True)

@@ -193,6 +193,12 @@ def test_list_sorted_with_enabled_state(tmp_path: Path, temp_data_root: Path) ->
 
     assert [s.name for s in skills] == ["alpha-skill", _FIXTURE_NAME]
     assert all(s.enabled for s in skills)
+    # body_chars = SKILL.md 全文字符数（即注入请求的正文量）。
+    chars = {s.name: s.body_chars for s in skills}
+    assert chars["alpha-skill"] == len(
+        "---\nname: alpha-skill\ndescription: a\n---\n正文\n"
+    )
+    assert chars[_FIXTURE_NAME] > 0
 
 
 def test_list_skips_state_file_and_non_skill_dirs(temp_data_root: Path) -> None:

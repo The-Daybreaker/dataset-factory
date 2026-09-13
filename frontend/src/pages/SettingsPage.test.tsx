@@ -49,8 +49,8 @@ const ENDPOINTS: EndpointConfigSummary[] = [
 ];
 
 const SKILLS: SkillInfo[] = [
-  { name: "h3-skill", description: "H3 官方要求", enabled: true },
-  { name: "old-skill", description: "", enabled: false },
+  { name: "h3-skill", description: "H3 官方要求", enabled: true, body_chars: 1240 },
+  { name: "old-skill", description: "", enabled: false, body_chars: 320 },
 ];
 
 const SKILL_FILES = {
@@ -298,11 +298,11 @@ describe("SettingsPage · 端点配置·高级参数", () => {
     expect(screen.getByLabelText("Base URL")).toHaveValue("https://t/v1");
     await userEvent.click(screen.getByRole("button", { name: /高级参数（可选）/ }));
     expect(screen.getByLabelText("temperature")).toHaveValue(null);
-    // 无参数 = 空串展示（参数说明以 placeholder 呈现，2026-09-13 用户反馈）。
+    // 无参数 = 空串展示（占位符给 JSON 示例，2026-09-13 用户反馈）。
     expect(screen.getByLabelText("模型通用参数 JSON")).toHaveValue("");
     expect(screen.getByLabelText("模型通用参数 JSON")).toHaveAttribute(
       "placeholder",
-      expect.stringContaining("参数说明"),
+      expect.stringContaining('"extra_body"'),
     );
   });
 
@@ -349,6 +349,16 @@ describe("SettingsPage · 能力·技能", () => {
     await waitFor(() => {
       expect(apiMock.setSkillEnabled).toHaveBeenCalledWith("h3-skill", false);
     });
+  });
+
+  it("列表卡片：名称旁显示注入字数徽标（SKILL.md 字符数）", async () => {
+    await openSkills();
+
+    expect(screen.getByText("1.2k 字")).toBeInTheDocument();
+    expect(screen.getByText("320 字")).toBeInTheDocument();
+    expect(
+      screen.getAllByTitle("SKILL.md 字符数（即注入打标请求的正文量）").length,
+    ).toBe(2);
   });
 
   it("搜索框按名称过滤列表", async () => {

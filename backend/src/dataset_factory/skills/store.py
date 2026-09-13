@@ -312,9 +312,15 @@ def list_skills() -> list[Skill]:
             continue
         if not (entry / _SKILL_MD).is_file():
             continue
-        name, description = parse_skill_frontmatter(_read_text(entry / _SKILL_MD))
+        skill_text = _read_text(entry / _SKILL_MD)
+        name, description = parse_skill_frontmatter(skill_text)
         skills.append(
-            Skill(name=name, description=description, enabled=name not in disabled)
+            Skill(
+                name=name,
+                description=description,
+                enabled=name not in disabled,
+                body_chars=len(skill_text),
+            )
         )
     return sorted(skills, key=lambda skill: skill.name)
 

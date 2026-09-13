@@ -983,6 +983,11 @@ export interface components {
          * @description skill 条目。
          */
         SkillInfo: {
+            /**
+             * Body Chars
+             * @description SKILL.md 全文字符数（即注入打标请求的正文量）
+             */
+            body_chars: number;
             /** Description */
             description: string;
             /** Enabled */

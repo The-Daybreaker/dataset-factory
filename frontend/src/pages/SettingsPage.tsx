@@ -63,6 +63,17 @@ interface Feedback {
   text: string;
 }
 
+/** SKILL.md 字符数 → 列表徽标文案（即注入打标请求的正文量）。 */
+function formatChars(count: number): string {
+  if (count >= 10_000) {
+    return `${(count / 10_000).toFixed(1)} 万字`;
+  }
+  if (count >= 1000) {
+    return `${(count / 1000).toFixed(1)}k 字`;
+  }
+  return `${count} 字`;
+}
+
 /** 一期唯一支持的调用格式；其余选项灰显「暂未支持」，未来补适配器即启用。 */
 const SUPPORTED_API_FORMAT = "openai-chat-completions";
 
@@ -525,9 +536,7 @@ function EndpointConfigPanel(): ReactElement {
                 className={
                   "relative block w-full rounded-md px-3 py-2.5 text-left transition-colors " +
                   // 激活行 hover 保持蓝系（与导航同口径，2026-09-13 用户反馈）。
-                  (active
-                    ? "bg-primary/10 hover:bg-primary/15"
-                    : "hover:bg-accent")
+                  (active ? "bg-primary/10 hover:bg-primary/15" : "hover:bg-accent")
                 }
               >
                 {active && (
@@ -747,9 +756,14 @@ function EndpointConfigPanel(): ReactElement {
                           <Input
                             id={`adv-${key}`}
                             type="number"
-                            step="any"
-                            inputMode="decimal"
+                            step={key === "max_tokens" ? "1" : "any"}
+                            inputMode={key === "max_tokens" ? "numeric" : "decimal"}
                             value={advForm[key]}
+                            placeholder={
+                              key === "max_tokens"
+                                ? "留空使用端点默认，或输入正整数（如 1024）"
+                                : "留空使用端点默认，或输入 0 以上的数值"
+                            }
                             onInput={(event) =>
                               onAdvFormField(key, event.currentTarget.value)
                             }
@@ -762,9 +776,12 @@ function EndpointConfigPanel(): ReactElement {
                       spellCheck={false}
                       className="min-h-[110px] font-mono text-[12.5px]"
                       value={advJson}
-                      placeholder={
-                        "参数说明：temperature = 采样温度（如 0.7）；top_p = 核采样阈值（如 0.9）；max_tokens = 输出 token 上限（如 1024）；extra_body = 原样透传厂商专有参数（如 {\"enable_thinking\": false}）。\n可直接粘贴厂商文档示例风格的 JSON；全部留空 = 使用端点默认值。"
-                      }
+                      placeholder={`{
+  "temperature": 0.7,
+  "top_p": 0.9,
+  "max_tokens": 1024,
+  "extra_body": { "top_k": 50 }
+}`}
                       onInput={(event) => onAdvJsonInput(event.currentTarget.value)}
                     />
                     <p
@@ -778,11 +795,6 @@ function EndpointConfigPanel(): ReactElement {
                       )}
                     >
                       {advState.text}
-                    </p>
-                    <p className="text-[12px] text-muted-foreground">
-                      标准参数（temperature / top_p / max_tokens）与表单双向同步；
-                      extra_body 是 openai SDK
-                      的通用透传字段（厂商文档同款写法），内容原样发给端点；暂不支持的参数提示并忽略，不影响其余参数，也不会覆盖本项目传输配置。
                     </p>
                   </div>
                   <div className="space-y-2">
@@ -803,6 +815,7 @@ function EndpointConfigPanel(): ReactElement {
                           step="any"
                           inputMode="decimal"
                           value={advTransport.timeout_seconds}
+                          placeholder="留空 = 120 秒（内置默认）"
                           onInput={(event) => {
                             // 先取值再进更新函数：React 的事件对象在更新器执行时已失效。
                             const value = event.currentTarget.value;
@@ -826,6 +839,7 @@ function EndpointConfigPanel(): ReactElement {
                           step="1"
                           inputMode="numeric"
                           value={advTransport.max_retries}
+                          placeholder="留空 = 2 次（内置默认）"
                           onInput={(event) => {
                             const value = event.currentTarget.value;
                             setAdvTransport((current) => ({
@@ -836,11 +850,6 @@ function EndpointConfigPanel(): ReactElement {
                         />
                       </div>
                     </div>
-                    <p className="text-[12px] text-muted-foreground">
-                      这两项是工具自身的行为，刻意不设 JSON
-                      入口——防止粘贴厂商配置时被一并覆盖；与上面参数同存于该配置的
-                      config.json。
-                    </p>
                   </div>
                 </div>
               )}
@@ -1135,12 +1144,36 @@ function SkillsPanel(): ReactElement {
                     onClick={() => pick(skill.name)}
                     className="min-w-0 flex-1 text-left"
                   >
-                    <span className="block truncate text-[13px] font-medium">
-                      {skill.name}
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <span className="min-w-0 truncate text-[13px] font-medium">
+                        {skill.name}
+                      </span>
+                      <span
+                        className="shrink-0 rounded-full bg-muted px-1.5 text-[10.5px] leading-[1.6] text-muted-foreground"
+                        title="SKILL.md 字符数（即注入打标请求的正文量）"
+                      >
+                        {formatChars(skill.body_chars)}
+                      </span>
                     </span>
-                    <span className="line-clamp-2 block text-[12px] leading-relaxed text-muted-foreground">
-                      {skill.description === "" ? "（无描述）" : skill.description}
-                    </span>
+                    {skill.description === "" ? (
+                      <span className="line-clamp-2 text-[12px] leading-relaxed text-muted-foreground">
+                        （无描述）
+                      </span>
+                    ) : (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          {/* 去掉 block：line-clamp-2 自带 -webkit-box 显示模式与省略号，
+                              block 会把它覆盖成普通块级导致截断失效（长下划线词把卡片撑破
+                              左栏宽度，2026-09-13 用户反馈）；anywhere 断长词兜底 */}
+                          <span className="line-clamp-2 text-[12px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
+                            {skill.description}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-80 whitespace-normal leading-relaxed">
+                          {skill.description}
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
                   </button>
                   <Badge variant={skill.enabled ? "success" : "muted"}>
                     {skill.enabled ? "已启用" : "已停用"}
@@ -1482,9 +1515,7 @@ export function SettingsPage(): ReactElement {
             )}
             {section === "skills" && (
               <>
-                <h2 className="mt-0.5 mb-3 shrink-0 text-[17px] font-semibold">
-                  技能
-                </h2>
+                <h2 className="mt-0.5 mb-3 shrink-0 text-[17px] font-semibold">技能</h2>
                 <p className="-mt-2 mb-3.5 shrink-0 text-[12.5px] text-muted-foreground">
                   导入 agentskills.io 标准 Skill 包；启用后其 SKILL.md
                   全文注入打标请求。
