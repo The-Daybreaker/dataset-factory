@@ -27,6 +27,7 @@ from .endpoints import (
     has_stored_key,
     read_active_files,
     read_config_data,
+    validated_request_params,
 )
 
 ENV_API_KEY = "DSF_API_KEY"  # pragma: allowlist secret —— 环境变量名常量、非密钥值（辅通道，优先覆盖 credentials 文件）
@@ -168,6 +169,9 @@ def describe_config() -> ConfigDescription:
 def _parse_request_config(name: str, data: Mapping[str, object]) -> RequestConfig:
     """解析 config.json 里可选的请求参数（没配就用内置默认）。
 
+    类型校验复用存储层的 validated_request_params（唯一校验点——界面概要与请求装配
+    看到的是同一份判定）；这里只做「有值就用、没值回默认」与数值收窄。
+
     Args:
         name: 配置名（仅用于报错信息）。
         data: config.json 解析出的顶层对象。
@@ -178,60 +182,34 @@ def _parse_request_config(name: str, data: Mapping[str, object]) -> RequestConfi
     Raises:
         ConfigError: 某个参数字段存在但类型不对。
     """
-    timeout = _opt_float(name, data, "timeout_seconds")
-    retries = _opt_int(name, data, "max_retries")
+    params = validated_request_params(data, name)
+    timeout = params.get("timeout_seconds")
+    retries = params.get("max_retries")
+    extra_body = params.get("extra_body")
     return RequestConfig(
-        temperature=_opt_float(name, data, "temperature"),
-        top_p=_opt_float(name, data, "top_p"),
-        max_tokens=_opt_int(name, data, "max_tokens"),
-        extra_body=_opt_mapping(name, data, "extra_body"),
-        timeout_seconds=timeout if timeout is not None else _DEFAULT_TIMEOUT_SECONDS,
-        max_retries=retries if retries is not None else _DEFAULT_MAX_RETRIES,
+        temperature=_as_opt_float(params.get("temperature")),
+        top_p=_as_opt_float(params.get("top_p")),
+        max_tokens=_as_opt_int(params.get("max_tokens")),
+        extra_body=cast("dict[str, object] | None", extra_body),
+        timeout_seconds=(
+            float(cast(float, timeout))
+            if timeout is not None
+            else _DEFAULT_TIMEOUT_SECONDS
+        ),
+        max_retries=(
+            cast(int, retries) if retries is not None else _DEFAULT_MAX_RETRIES
+        ),
     )
 
 
-def _opt_float(name: str, data: Mapping[str, object], key: str) -> float | None:
-    """取可选数字字段；缺失返回 None。
-
-    Raises:
-        ConfigError: 字段存在但不是数字（bool 不算数字）。
-    """
-    raw = data.get(key)
-    if raw is None:
-        return None
-    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
-        raise ConfigError(f"端点配置「{name}」的 {key} 应是数字；请检查内容。")
-    return float(raw)
+def _as_opt_float(raw: object | None) -> float | None:
+    """已校验的数字值收窄为 float；缺失返回 None。"""
+    return float(cast("int | float", raw)) if raw is not None else None
 
 
-def _opt_int(name: str, data: Mapping[str, object], key: str) -> int | None:
-    """取可选整数字段；缺失返回 None。
-
-    Raises:
-        ConfigError: 字段存在但不是整数（bool 不算整数）。
-    """
-    raw = data.get(key)
-    if raw is None:
-        return None
-    if isinstance(raw, bool) or not isinstance(raw, int):
-        raise ConfigError(f"端点配置「{name}」的 {key} 应是整数；请检查内容。")
-    return raw
-
-
-def _opt_mapping(
-    name: str, data: Mapping[str, object], key: str
-) -> dict[str, object] | None:
-    """取可选对象字段；缺失返回 None。
-
-    Raises:
-        ConfigError: 字段存在但不是 JSON 对象。
-    """
-    raw = data.get(key)
-    if raw is None:
-        return None
-    if not isinstance(raw, dict):
-        raise ConfigError(f"端点配置「{name}」的 {key} 应是 JSON 对象；请检查内容。")
-    return cast(dict[str, object], raw)
+def _as_opt_int(raw: object | None) -> int | None:
+    """已校验的整数值收窄为 int；缺失返回 None。"""
+    return cast(int, raw) if raw is not None else None
 
 
 def _resolve_api_key(file_key: SecretValue | None) -> SecretValue:

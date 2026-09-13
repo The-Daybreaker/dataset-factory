@@ -396,6 +396,14 @@ def test_endpoints_create_and_list(client: TestClient) -> None:
         "api_format": "openai-chat-completions",
         "has_api_key": True,
         "is_active": True,
+        "request_params": {
+            "temperature": None,
+            "top_p": None,
+            "max_tokens": None,
+            "extra_body": None,
+            "timeout_seconds": None,
+            "max_retries": None,
+        },
     }
     assert [item["name"] for item in listing.json()] == ["siliconflow"]
     assert current.json()["name"] == "siliconflow"
@@ -496,6 +504,88 @@ def test_endpoints_update_missing_404(client: TestClient) -> None:
     )
 
     assert response.status_code == 404
+
+
+def test_endpoints_create_with_request_params_echoed(client: TestClient) -> None:
+    """创建带请求参数：响应概要回显（未设置的键为 null）；列表同样带出。"""
+    response = client.post(
+        "/api/endpoints",
+        json={
+            "name": "tuned",
+            "base_url": "https://a/v1",
+            "model": "m",
+            "request_params": {
+                "temperature": 0.7,
+                "max_tokens": 1024,
+                "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+            },
+        },
+    )
+    listing = client.get("/api/endpoints")
+
+    assert response.status_code == 201
+    assert response.json()["request_params"] == {
+        "temperature": 0.7,
+        "top_p": None,
+        "max_tokens": 1024,
+        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+        "timeout_seconds": None,
+        "max_retries": None,
+    }
+    assert listing.json()[0]["request_params"]["temperature"] == 0.7
+
+
+def test_endpoints_update_params_replace_then_preserve(client: TestClient) -> None:
+    """更新参数块：显式给 = 整体替换（未给的旧键清除）；不给 = 沿用已有参数。"""
+    client.post(
+        "/api/endpoints",
+        json={
+            "name": "prod",
+            "base_url": "https://a/v1",
+            "model": "m",
+            "request_params": {"temperature": 0.3, "timeout_seconds": 300},
+        },
+    )
+
+    replaced = client.put(
+        "/api/endpoints/prod",
+        json={
+            "base_url": "https://a/v1",
+            "model": "m",
+            "request_params": {"max_retries": 5},
+        },
+    )
+
+    assert replaced.status_code == 200
+    assert replaced.json()["request_params"]["max_retries"] == 5
+    assert replaced.json()["request_params"]["temperature"] is None
+    assert replaced.json()["request_params"]["timeout_seconds"] is None
+
+    preserved = client.put(
+        "/api/endpoints/prod", json={"base_url": "https://a/v1", "model": "m"}
+    )
+
+    assert preserved.status_code == 200
+    assert preserved.json()["request_params"]["max_retries"] == 5
+
+
+def test_endpoints_request_params_validation_422(client: TestClient) -> None:
+    """参数值越界（负温度 / 零上限 / 零超时）：422，校验错误一次报全。"""
+    response = client.post(
+        "/api/endpoints",
+        json={
+            "name": "bad",
+            "base_url": "https://a/v1",
+            "model": "m",
+            "request_params": {
+                "temperature": -1,
+                "max_tokens": 0,
+                "timeout_seconds": 0,
+            },
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_endpoints_activate_switches_current(client: TestClient) -> None:

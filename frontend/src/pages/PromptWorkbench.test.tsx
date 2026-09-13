@@ -57,6 +57,7 @@ const ENDPOINTS: EndpointConfigSummary[] = [
     api_format: "openai-chat-completions",
     has_api_key: true,
     is_active: true,
+    request_params: {},
   },
   {
     name: "backup",
@@ -65,6 +66,7 @@ const ENDPOINTS: EndpointConfigSummary[] = [
     api_format: "openai-chat-completions",
     has_api_key: false,
     is_active: false,
+    request_params: {},
   },
 ];
 
@@ -211,6 +213,28 @@ describe("PromptWorkbench", () => {
     // done：终稿上屏、生成中状态消失。
     expect(await screen.findByText("打标结果")).toBeInTheDocument();
     expect(screen.queryByText("生成中…")).not.toBeInTheDocument();
+  });
+
+  it("生成结束后思考过程保留在消息上，可展开回看（页面内存态）", async () => {
+    apiMock.labelStream.mockImplementation(async (_payload, handlers) => {
+      handlers.onStart("s1");
+      handlers.onDelta("reasoning", "先想想构图");
+      handlers.onDelta("content", "打标结果");
+      handlers.onDone("s1", "打标结果");
+    });
+    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
+    });
+    await userEvent.type(screen.getByLabelText("打标指令"), "给这张图打个标");
+    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    // done 后：终稿上屏，思考区不再随流式面板一起消失，仍可展开回看。
+    expect(await screen.findByText("打标结果")).toBeInTheDocument();
+    expect(screen.queryByText("生成中…")).not.toBeInTheDocument();
+    expect(screen.getByText("先想想构图")).toBeInTheDocument();
+    expect(screen.getByText("思考过程")).toBeInTheDocument();
   });
 
   it("提示词库为空时发送：labelStream 收到 null（后端给可操作错误）", async () => {

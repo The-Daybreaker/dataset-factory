@@ -88,6 +88,8 @@ interface ChatMessage extends HistoryMessageView {
   model?: string;
   durationSeconds?: number;
   createdAt?: Date;
+  /** 本轮思考过程（仅本轮打标产生、只存页面内存不落盘——历史恢复的消息没有它）。 */
+  reasoning?: string;
 }
 
 /** 一次性反馈（编辑器列的操作结果）；id 让同文案重复出现也能触发重渲染。 */
@@ -427,6 +429,7 @@ export function PromptWorkbench({
       },
     ]);
     setStreaming({ reasoning: "", content: "" });
+    let reasoningText = "";
     try {
       await api.labelStream(
         {
@@ -443,14 +446,19 @@ export function PromptWorkbench({
         },
         {
           onStart: (id) => setSessionId(id),
-          onDelta: (kind, text) =>
+          onDelta: (kind, text) => {
+            // 思考增量另存一份到局部变量：done 时挂到消息上（结束后保留可回看）。
+            if (kind === "reasoning") {
+              reasoningText += text;
+            }
             setStreaming((current) =>
               current === null
                 ? current
                 : kind === "reasoning"
                   ? { ...current, reasoning: current.reasoning + text }
                   : { ...current, content: current.content + text },
-            ),
+            );
+          },
           onDone: (id, caption) => {
             setMessages((current) => [
               ...current,
@@ -462,11 +470,15 @@ export function PromptWorkbench({
                 model: activeModel || undefined,
                 durationSeconds: Math.round((Date.now() - startedAt) / 1000),
                 createdAt: new Date(),
+                ...(reasoningText === "" ? {} : { reasoning: reasoningText }),
               },
             ]);
             setSessionId(id);
             setInstruction("");
             setMedia(null);
+            // 与追加消息同一同步块里清流式面板：合并成一次提交，避免「终稿 + 流式面板」
+            // 短暂同屏一帧（e2e 严格模式抓到过）。finally 的清算是错误路径兜底。
+            setStreaming(null);
           },
           onError: (message) => setChatError(message),
         },
@@ -818,6 +830,17 @@ export function PromptWorkbench({
                     <SparklesIcon className="size-3.5" />
                   </span>
                   <div className="min-w-0 flex-1">
+                    {/* 生成结束后的思考过程保留可回看（本轮内存态，不落盘；历史恢复的消息没有）。 */}
+                    {message.reasoning !== undefined && message.reasoning !== "" && (
+                      <details className="mb-2 max-w-full overflow-hidden rounded-lg border border-border bg-muted/40">
+                        <summary className="cursor-pointer px-3 py-1.5 text-[12px] text-muted-foreground">
+                          思考过程
+                        </summary>
+                        <p className="px-3 pb-2.5 text-[12.5px] leading-[1.65] text-muted-foreground whitespace-pre-wrap">
+                          {message.reasoning}
+                        </p>
+                      </details>
+                    )}
                     <div className="inline-block max-w-full rounded-xl rounded-bl-[4px] bg-muted/55 px-3.5 py-[11px] text-[13.5px] whitespace-pre-wrap">
                       {message.text}
                     </div>

@@ -33,10 +33,12 @@ from ..llm import (
     read_stored_api_key,
     set_active_config,
     update_config,
+    validated_request_params,
 )
 from .schemas import (
     EndpointConfigSummary,
     EndpointCreateRequest,
+    EndpointRequestParams,
     EndpointTestRequest,
     EndpointTestResult,
     EndpointUpdateRequest,
@@ -76,6 +78,7 @@ def create(request: EndpointCreateRequest) -> EndpointConfigSummary:
         model=request.model,
         api_key=api_key,
         api_format=request.api_format,
+        request_params=_params_payload(request.request_params),
     )
     return _summary_of(name)
 
@@ -92,7 +95,7 @@ def create(request: EndpointCreateRequest) -> EndpointConfigSummary:
     },
 )
 def update(name: str, request: EndpointUpdateRequest) -> EndpointConfigSummary:
-    """更新一套配置的端点字段；api_key 缺省沿用已存密钥（不强迫重输）。"""
+    """更新一套配置的端点字段；api_key 缺省沿用已存密钥、参数块缺省沿用已有参数。"""
     api_key = _parse_key(request.api_key)
     clean = update_config(
         name=name,
@@ -100,6 +103,7 @@ def update(name: str, request: EndpointUpdateRequest) -> EndpointConfigSummary:
         model=request.model,
         api_key=api_key,
         api_format=request.api_format,
+        request_params=_params_payload(request.request_params),
     )
     return _summary_of(clean)
 
@@ -184,6 +188,37 @@ def _parse_key(raw: str | None) -> SecretValue | None:
     return SecretValue(raw.strip())
 
 
+def _params_payload(
+    params: EndpointRequestParams | None,
+) -> dict[str, object] | None:
+    """请求参数模型 → 存储键值（只含实际提供的键；None 原样透传 = 沿用语义）。
+
+    刻意不用 model_dump(exclude_none=True)：它的排除是递归的，会把 extra_body 内层的
+    null 值也一并丢掉，破坏透传内容——这里显式搬运，只在外层键上做「null = 不设」。
+    """
+    if params is None:
+        return None
+    payload: dict[str, object] = {}
+    if params.temperature is not None:
+        payload["temperature"] = params.temperature
+    if params.top_p is not None:
+        payload["top_p"] = params.top_p
+    if params.max_tokens is not None:
+        payload["max_tokens"] = params.max_tokens
+    if params.extra_body is not None:
+        payload["extra_body"] = dict(params.extra_body)
+    if params.timeout_seconds is not None:
+        payload["timeout_seconds"] = params.timeout_seconds
+    if params.max_retries is not None:
+        payload["max_retries"] = params.max_retries
+    return payload
+
+
+def _params_view(data: dict[str, object], name: str) -> EndpointRequestParams:
+    """config.json 数据 → 响应里的参数视图（未设置的键保持 null）。"""
+    return EndpointRequestParams.model_validate(validated_request_params(data, name))
+
+
 def _to_summary(info: EndpointConfigInfo) -> EndpointConfigSummary:
     """存储概要 → 响应模型（形状一致，显式搬运以守住响应契约）。"""
     return EndpointConfigSummary(
@@ -193,6 +228,7 @@ def _to_summary(info: EndpointConfigInfo) -> EndpointConfigSummary:
         api_format=info.api_format,
         has_api_key=info.has_api_key,
         is_active=info.is_active,
+        request_params=EndpointRequestParams.model_validate(info.request_params),
     )
 
 
@@ -206,4 +242,5 @@ def _summary_of(name: str) -> EndpointConfigSummary:
         api_format=cast("str | None", data.get("api_format")) or SUPPORTED_API_FORMAT,
         has_api_key=has_stored_key(name),
         is_active=active_config_name() == name,
+        request_params=_params_view(data, name),
     )

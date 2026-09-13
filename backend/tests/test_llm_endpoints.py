@@ -190,6 +190,87 @@ def test_update_changes_fields_and_keeps_key_and_params(temp_data_root: Path) ->
     assert stored.reveal() == "sk-keep-me"
 
 
+def test_create_with_request_params_writes_them(temp_data_root: Path) -> None:
+    """创建时携带请求参数：给的键写入 config.json；键集外的键被存储闸门丢弃。"""
+    name = create_config(
+        "tuned",
+        base_url="https://tuned.example.com/v1",
+        model="m-tuned",
+        api_key=SecretValue("sk-k"),
+        request_params={
+            "temperature": 0.7,
+            "max_tokens": 1024,
+            "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+            "presence_penalty": 0.1,  # 不在参数键集里：丢弃而非报错（透传请放 extra_body）
+        },
+    )
+
+    saved = json.loads(
+        (temp_data_root / "endpoints" / name / "config.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert saved["temperature"] == 0.7
+    assert saved["max_tokens"] == 1024
+    assert saved["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
+    assert "presence_penalty" not in saved
+    assert "timeout_seconds" not in saved  # 没给的键不出现
+
+
+def test_create_request_params_bad_type_raises(temp_data_root: Path) -> None:
+    """请求参数类型不合法：创建即拒绝（落盘前拦下，不留给请求时才炸）。"""
+    with pytest.raises(ConfigError, match="max_tokens 应是整数"):
+        create_config(
+            "bad",
+            base_url="https://bad.example.com/v1",
+            model="m-bad",
+            api_key=None,
+            request_params={"max_tokens": 1.5},
+        )
+
+
+def test_update_with_request_params_replaces_block(temp_data_root: Path) -> None:
+    """更新时显式给参数块 = 整体替换：未提供的旧参数被清除（「给什么存什么」）。"""
+    _create("prod")
+    config_path = temp_data_root / "endpoints" / "prod" / "config.json"
+    data = json.loads(config_path.read_text(encoding="utf-8"))
+    data["temperature"] = 0.3
+    data["timeout_seconds"] = 300
+    config_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    update_config(
+        "prod",
+        base_url="https://prod.example.com/v1",
+        model="m-prod",
+        request_params={"max_retries": 5},
+    )
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["max_retries"] == 5
+    assert "temperature" not in saved
+    assert "timeout_seconds" not in saved
+
+
+def test_list_reports_request_params(temp_data_root: Path) -> None:
+    """列表概要带出已设置的请求参数（已过类型校验）；未设置时为空映射。"""
+    create_config(
+        "a",
+        base_url="https://a.example.com/v1",
+        model="m-a",
+        api_key=None,
+        request_params={"temperature": 0.5, "extra_body": {"top_k": 40}},
+    )
+    _create("b")
+
+    infos = {info.name: info for info in list_configs()}
+
+    assert infos["a"].request_params == {
+        "temperature": 0.5,
+        "extra_body": {"top_k": 40},
+    }
+    assert infos["b"].request_params == {}
+
+
 def test_update_with_new_key_overwrites_credentials(temp_data_root: Path) -> None:
     """更新时给了新密钥：credentials 被替换。"""
     _create("prod", key="sk-old")

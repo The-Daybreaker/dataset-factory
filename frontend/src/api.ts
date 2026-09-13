@@ -22,6 +22,7 @@ export type SkillImportResponse = components["schemas"]["SkillImportResponse"];
 export type ConfigResponse = components["schemas"]["ConfigResponse"];
 export type ConfigUpdateRequest = components["schemas"]["ConfigUpdateRequest"];
 export type EndpointConfigSummary = components["schemas"]["EndpointConfigSummary"];
+export type EndpointRequestParams = components["schemas"]["EndpointRequestParams"];
 export type EndpointCreateRequest = components["schemas"]["EndpointCreateRequest"];
 export type EndpointUpdateRequest = components["schemas"]["EndpointUpdateRequest"];
 export type EndpointTestRequest = components["schemas"]["EndpointTestRequest"];

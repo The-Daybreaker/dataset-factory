@@ -3,6 +3,7 @@
  * 子页切换即导航切换；未来新设置项（生成参数等）加导航项即可，不再新增主导航。
  */
 import {
+  ChevronDownIcon,
   CopyIcon,
   FileTextIcon,
   FolderOpenIcon,
@@ -15,6 +16,7 @@ import type { ReactElement } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   EndpointConfigSummary,
+  EndpointRequestParams,
   EndpointTestResult,
   ServiceLogs,
   ServiceStatus,
@@ -45,6 +47,7 @@ import {
   SelectValue,
 } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
+import { Textarea } from "../components/ui/textarea";
 import {
   Tooltip,
   TooltipContent,
@@ -73,6 +76,185 @@ const API_FORMATS: ReadonlyArray<{ value: string; label: string; enabled: boolea
   },
 ];
 
+/* ---------- 高级参数区（原型稿 ui-draft-05 同构：表单 ⇄ JSON 双向同步） ---------- */
+
+/** 「模型通用参数」的表单键——JSON ⇄ 表单双向同步只发生在这些键上。 */
+const ADV_STANDARD_KEYS: readonly string[] = ["temperature", "top_p", "max_tokens"];
+
+/** JSON 同步状态（原型稿 advJsonState 同款三态）。 */
+interface AdvJsonState {
+  kind: "ok" | "invalid" | "ignored";
+  text: string;
+}
+
+/** 已设置的请求参数 → 展示用 JSON（标准键在前、extra_body 最后；全空 = "{}"）。 */
+function paramsToJson(params: EndpointRequestParams): string {
+  const obj: Record<string, unknown> = {};
+  if (params.temperature !== null && params.temperature !== undefined) {
+    obj.temperature = params.temperature;
+  }
+  if (params.top_p !== null && params.top_p !== undefined) {
+    obj.top_p = params.top_p;
+  }
+  if (params.max_tokens !== null && params.max_tokens !== undefined) {
+    obj.max_tokens = params.max_tokens;
+  }
+  if (params.extra_body !== null && params.extra_body !== undefined) {
+    obj.extra_body = params.extra_body;
+  }
+  return JSON.stringify(obj, null, 2);
+}
+
+/** 数值输入的统一解读：空串 = 不设（null）；非有限数字 = "bad"（保存时拦截）。 */
+function parseNumField(text: string): number | null | "bad" {
+  const trimmed = text.trim();
+  if (trimmed === "") {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : "bad";
+}
+
+/** 表单当前值 + 既有 JSON（携带非标准键）→ 新 JSON（表单 → JSON 方向）。 */
+function formToJson(
+  form: { temperature: string; top_p: string; max_tokens: string },
+  currentJson: string,
+): string {
+  const obj: Record<string, unknown> = {};
+  for (const key of ADV_STANDARD_KEYS) {
+    const parsedNumber = parseNumField(form[key as keyof typeof form]);
+    if (typeof parsedNumber === "number") {
+      obj[key] = parsedNumber;
+    }
+  }
+  // 当前 JSON 里非标准键（extra_body 与厂商专有键）随表单编辑一起带走，不被抹掉；
+  // 当前 JSON 无效时带不走既有内容（与原型稿同口径），保存会被拦下。
+  try {
+    const parsed = JSON.parse(currentJson) as Record<string, unknown>;
+    for (const key of Object.keys(parsed)) {
+      if (!ADV_STANDARD_KEYS.includes(key)) {
+        obj[key] = parsed[key];
+      }
+    }
+  } catch {
+    // 原 JSON 无效：忽略
+  }
+  return JSON.stringify(obj, null, 2);
+}
+
+/** 粘贴 JSON → 表单三键 + 同步状态（JSON → 表单方向；未知键提示已忽略、不报错）。 */
+function syncFormFromJson(text: string): {
+  form: { temperature: string; top_p: string; max_tokens: string };
+  state: AdvJsonState;
+} {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return {
+      form: { temperature: "", top_p: "", max_tokens: "" },
+      state: { kind: "invalid", text: "JSON 无效——修好前不同步到表单" },
+    };
+  }
+  const read = (key: string): string => {
+    const value = parsed[key];
+    return value === undefined || value === null ? "" : String(value);
+  };
+  const ignored = Object.keys(parsed).filter(
+    (key) => !ADV_STANDARD_KEYS.includes(key) && key !== "extra_body",
+  );
+  return {
+    form: {
+      temperature: read("temperature"),
+      top_p: read("top_p"),
+      max_tokens: read("max_tokens"),
+    },
+    state:
+      ignored.length > 0
+        ? {
+            kind: "ignored",
+            text: `已同步已知参数 · 暂不支持、已忽略：${ignored.join("、")}（端点专有参数可放 extra_body 透传）`,
+          }
+        : { kind: "ok", text: "已同步" },
+  };
+}
+
+/** 高级参数表单 → 保存载荷；有问题返回 error（JSON 无效 / 数值字段非数字）。 */
+function collectAdvParams(input: {
+  form: { temperature: string; top_p: string; max_tokens: string };
+  transport: { timeout_seconds: string; max_retries: string };
+  json: string;
+}): { params: EndpointRequestParams; error: string | null } {
+  const badNumber = (label: string): string =>
+    `高级参数「${label}」不是有效数字——请修正后再保存（留空 = 用端点默认）。`;
+  const temperature = parseNumField(input.form.temperature);
+  if (temperature === "bad") {
+    return { params: {}, error: badNumber("temperature") };
+  }
+  const topP = parseNumField(input.form.top_p);
+  if (topP === "bad") {
+    return { params: {}, error: badNumber("top_p") };
+  }
+  const maxTokens = parseNumField(input.form.max_tokens);
+  if (maxTokens === "bad") {
+    return { params: {}, error: badNumber("max_tokens") };
+  }
+  if (maxTokens !== null && !Number.isInteger(maxTokens)) {
+    return { params: {}, error: "高级参数「max_tokens」应是整数——请修正后再保存。" };
+  }
+  const timeoutSeconds = parseNumField(input.transport.timeout_seconds);
+  if (timeoutSeconds === "bad") {
+    return { params: {}, error: badNumber("timeout_seconds") };
+  }
+  const maxRetries = parseNumField(input.transport.max_retries);
+  if (maxRetries === "bad") {
+    return { params: {}, error: badNumber("max_retries") };
+  }
+  if (maxRetries !== null && !Number.isInteger(maxRetries)) {
+    return { params: {}, error: "高级参数「max_retries」应是整数——请修正后再保存。" };
+  }
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(input.json) as Record<string, unknown>;
+  } catch {
+    return {
+      params: {},
+      error: "高级参数的 JSON 写法无效——修好后再保存，或清空该输入框。",
+    };
+  }
+  const extraBody = parsed.extra_body;
+  if (
+    extraBody !== undefined &&
+    extraBody !== null &&
+    (typeof extraBody !== "object" || Array.isArray(extraBody))
+  ) {
+    return {
+      params: {},
+      error: "高级参数「extra_body」应是 JSON 对象（键值对）——请检查写法。",
+    };
+  }
+  const params: EndpointRequestParams = {};
+  if (temperature !== null) {
+    params.temperature = temperature;
+  }
+  if (topP !== null) {
+    params.top_p = topP;
+  }
+  if (maxTokens !== null) {
+    params.max_tokens = maxTokens;
+  }
+  if (extraBody !== undefined && extraBody !== null) {
+    params.extra_body = extraBody as Record<string, unknown>;
+  }
+  if (timeoutSeconds !== null) {
+    params.timeout_seconds = timeoutSeconds;
+  }
+  if (maxRetries !== null) {
+    params.max_retries = maxRetries;
+  }
+  return { params, error: null };
+}
+
 /* ================= 连接 · 端点配置（列表 + 详情双栏） ================= */
 
 function EndpointConfigPanel(): ReactElement {
@@ -88,6 +270,22 @@ function EndpointConfigPanel(): ReactElement {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<EndpointTestResult | null>(null);
+  // 高级参数区（默认折叠）：模型通用参数（表单 ⇄ JSON）+ 本项目传输参数（仅表单）。
+  const [advOpen, setAdvOpen] = useState(false);
+  const [advForm, setAdvForm] = useState({
+    temperature: "",
+    top_p: "",
+    max_tokens: "",
+  });
+  const [advTransport, setAdvTransport] = useState({
+    timeout_seconds: "",
+    max_retries: "",
+  });
+  const [advJson, setAdvJson] = useState("{}");
+  const [advState, setAdvState] = useState<AdvJsonState>({
+    kind: "ok",
+    text: "已同步",
+  });
 
   const reload = useCallback(async (): Promise<EndpointConfigSummary[]> => {
     try {
@@ -121,6 +319,22 @@ function EndpointConfigPanel(): ReactElement {
     setDraftFormat(current.api_format);
     setDraftModel(current.model);
     setDraftKey("");
+    // 高级参数区同样回填落盘值；折叠态复位（换一套配置重新看）。
+    const params = current.request_params;
+    const text = (value: number | null | undefined): string =>
+      value === null || value === undefined ? "" : String(value);
+    setAdvForm({
+      temperature: text(params.temperature),
+      top_p: text(params.top_p),
+      max_tokens: text(params.max_tokens),
+    });
+    setAdvTransport({
+      timeout_seconds: text(params.timeout_seconds),
+      max_retries: text(params.max_retries),
+    });
+    setAdvJson(paramsToJson(params));
+    setAdvState({ kind: "ok", text: "已同步" });
+    setAdvOpen(false);
   }, [
     creating,
     current?.name,
@@ -145,8 +359,34 @@ function EndpointConfigPanel(): ReactElement {
     setDraftFormat(SUPPORTED_API_FORMAT);
     setDraftModel("");
     setDraftKey("");
+    setAdvForm({ temperature: "", top_p: "", max_tokens: "" });
+    setAdvTransport({ timeout_seconds: "", max_retries: "" });
+    setAdvJson("{}");
+    setAdvState({ kind: "ok", text: "已同步" });
+    setAdvOpen(false);
     setFeedback(null);
     setTestResult(null);
+  };
+
+  /** 模型通用参数表单输入 → 同步刷新 JSON（标准键取表单值，非标准键从既有 JSON 带走）。 */
+  const onAdvFormField = (
+    key: "temperature" | "top_p" | "max_tokens",
+    value: string,
+  ): void => {
+    const nextForm = { ...advForm, [key]: value };
+    setAdvForm(nextForm);
+    setAdvJson(formToJson(nextForm, advJson));
+    setAdvState({ kind: "ok", text: "已同步" });
+  };
+
+  /** 粘贴 / 编辑 JSON → 同步回表单三键；无效时只改状态提示（不同步、不报错打断）。 */
+  const onAdvJsonInput = (value: string): void => {
+    setAdvJson(value);
+    const synced = syncFormFromJson(value);
+    if (synced.state.kind !== "invalid") {
+      setAdvForm(synced.form);
+    }
+    setAdvState(synced.state);
   };
 
   const testConnection = async (): Promise<void> => {
@@ -170,6 +410,16 @@ function EndpointConfigPanel(): ReactElement {
 
   const save = async (): Promise<void> => {
     const key = draftKey.trim();
+    // 高级参数先本地校验（JSON 语法 / 数值合法性），不过关就拦下——不给后端扔必错的请求。
+    const adv = collectAdvParams({
+      form: advForm,
+      transport: advTransport,
+      json: advJson,
+    });
+    if (adv.error !== null) {
+      setFeedback({ kind: "error", text: adv.error });
+      return;
+    }
     try {
       if (creating) {
         const created = await api.createEndpoint({
@@ -177,6 +427,7 @@ function EndpointConfigPanel(): ReactElement {
           base_url: draftBaseUrl,
           model: draftModel,
           api_format: draftFormat,
+          request_params: adv.params,
           // 密钥可留空：之后可再编辑补配，或用环境变量 DSF_API_KEY 兜底。
           ...(key === "" ? {} : { api_key: key }),
         });
@@ -188,6 +439,7 @@ function EndpointConfigPanel(): ReactElement {
           base_url: draftBaseUrl,
           model: draftModel,
           api_format: draftFormat,
+          request_params: adv.params,
           // 没填新密钥就整个不传：后端沿用该配置已存密钥，不必重输。
           ...(key === "" ? {} : { api_key: key }),
         });
@@ -428,6 +680,141 @@ function EndpointConfigPanel(): ReactElement {
                   {testResult.message}
                   {testResult.ok ? ` · ${Math.round(testResult.latency_ms)} ms` : ""}
                 </span>
+              )}
+            </div>
+
+            {/* 高级参数（可选）：默认折叠；原型稿 ui-draft-05 为视觉事实源。 */}
+            <div className="rounded-lg border border-border">
+              <button
+                type="button"
+                aria-expanded={advOpen}
+                onClick={() => setAdvOpen((open) => !open)}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-[13px] font-medium transition-colors hover:bg-accent"
+              >
+                <ChevronDownIcon
+                  className={cn(
+                    "size-4 shrink-0 text-muted-foreground transition-transform",
+                    advOpen && "rotate-180",
+                  )}
+                  aria-hidden
+                />
+                高级参数（可选）
+                <span className="text-[11.5px] font-normal text-muted-foreground">
+                  temperature / top_p / max_tokens / 超时 / 重试 / extra_body——留空 =
+                  端点默认值
+                </span>
+              </button>
+              {advOpen && (
+                <div className="space-y-4 border-t border-border px-3 py-3">
+                  <div className="space-y-2">
+                    <p className="text-[12px] font-medium">
+                      模型通用参数（JSON，与表单双向同步——可直接从厂商文档粘贴）
+                    </p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {(["temperature", "top_p", "max_tokens"] as const).map((key) => (
+                        <div key={key} className="space-y-1">
+                          <Label
+                            htmlFor={`adv-${key}`}
+                            className="font-mono text-[11.5px] font-normal text-muted-foreground"
+                          >
+                            {key}
+                          </Label>
+                          <Input
+                            id={`adv-${key}`}
+                            type="number"
+                            step="any"
+                            inputMode="decimal"
+                            value={advForm[key]}
+                            onInput={(event) =>
+                              onAdvFormField(key, event.currentTarget.value)
+                            }
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <Textarea
+                      aria-label="模型通用参数 JSON"
+                      spellCheck={false}
+                      className="min-h-[110px] font-mono text-[12.5px]"
+                      value={advJson}
+                      onInput={(event) => onAdvJsonInput(event.currentTarget.value)}
+                    />
+                    <p
+                      role="status"
+                      className={cn(
+                        "text-[12px]",
+                        advState.kind === "invalid" && "text-destructive",
+                        advState.kind === "ignored" &&
+                          "text-amber-600 dark:text-amber-500",
+                        advState.kind === "ok" && "text-muted-foreground",
+                      )}
+                    >
+                      {advState.text}
+                    </p>
+                    <p className="text-[12px] text-muted-foreground">
+                      标准参数（temperature / top_p / max_tokens）与表单双向同步；
+                      extra_body 是 openai SDK
+                      的通用透传字段（厂商文档同款写法），内容原样发给端点；暂不支持的参数提示并忽略，不影响其余参数，也不会覆盖本项目传输配置。
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-[12px] font-medium">
+                      本项目传输参数（仅表单，不提供 JSON）
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <Label
+                          htmlFor="adv-timeout"
+                          className="font-mono text-[11.5px] font-normal text-muted-foreground"
+                        >
+                          timeout_seconds · 单次请求超时秒数
+                        </Label>
+                        <Input
+                          id="adv-timeout"
+                          type="number"
+                          step="any"
+                          inputMode="decimal"
+                          value={advTransport.timeout_seconds}
+                          onInput={(event) => {
+                            // 先取值再进更新函数：React 的事件对象在更新器执行时已失效。
+                            const value = event.currentTarget.value;
+                            setAdvTransport((current) => ({
+                              ...current,
+                              timeout_seconds: value,
+                            }));
+                          }}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label
+                          htmlFor="adv-retries"
+                          className="font-mono text-[11.5px] font-normal text-muted-foreground"
+                        >
+                          max_retries · 失败自动重试次数
+                        </Label>
+                        <Input
+                          id="adv-retries"
+                          type="number"
+                          step="1"
+                          inputMode="numeric"
+                          value={advTransport.max_retries}
+                          onInput={(event) => {
+                            const value = event.currentTarget.value;
+                            setAdvTransport((current) => ({
+                              ...current,
+                              max_retries: value,
+                            }));
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <p className="text-[12px] text-muted-foreground">
+                      这两项是工具自身的行为，刻意不设 JSON
+                      入口——防止粘贴厂商配置时被一并覆盖；与上面参数同存于该配置的
+                      config.json。
+                    </p>
+                  </div>
+                </div>
               )}
             </div>
 

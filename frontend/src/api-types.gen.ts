@@ -84,7 +84,7 @@ export interface paths {
         get?: never;
         /**
          * Update
-         * @description 更新一套配置的端点字段；api_key 缺省沿用已存密钥（不强迫重输）。
+         * @description 更新一套配置的端点字段；api_key 缺省沿用已存密钥、参数块缺省沿用已有参数。
          */
         put: operations["update_api_endpoints__name__put"];
         post?: never;
@@ -558,6 +558,8 @@ export interface components {
              * @description 配置名（endpoints/ 下的目录名）
              */
             name: string;
+            /** @description 已设置的请求参数（生成 + 传输）；未设置的键为 null */
+            request_params: components["schemas"]["EndpointRequestParams"];
         };
         /**
          * EndpointCreateRequest
@@ -580,6 +582,48 @@ export interface components {
              * @description 配置名（即目录名，1–64 字符、不含路径保留字符）
              */
             name: string;
+            /** @description 请求参数（生成 + 传输）；缺省 = 全不设（用默认值） */
+            request_params?: components["schemas"]["EndpointRequestParams"] | null;
+        };
+        /**
+         * EndpointRequestParams
+         * @description 一套端点配置的请求参数（生成 + 传输），随配置存于其 config.json。
+         *
+         *     所有键都可缺省：null = 不设该参数（请求时用端点自身默认或工具内置默认）。
+         */
+        EndpointRequestParams: {
+            /**
+             * Extra Body
+             * @description 端点专有参数透传（openai SDK 的 extra_body，原样转发不解释）；null = 不传。厂商文档里的专有参数（如开关思考模式）放这里
+             */
+            extra_body?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Max Retries
+             * @description 失败自动重试次数；null = 用内置默认（2）
+             */
+            max_retries?: number | null;
+            /**
+             * Max Tokens
+             * @description 输出 token 上限；null = 不传
+             */
+            max_tokens?: number | null;
+            /**
+             * Temperature
+             * @description 采样温度；null = 不传（用端点默认）
+             */
+            temperature?: number | null;
+            /**
+             * Timeout Seconds
+             * @description 单次请求超时秒数；null = 用内置默认（120）
+             */
+            timeout_seconds?: number | null;
+            /**
+             * Top P
+             * @description 核采样阈值；null = 不传
+             */
+            top_p?: number | null;
         };
         /**
          * EndpointTestRequest
@@ -650,6 +694,8 @@ export interface components {
             base_url: string;
             /** Model */
             model: string;
+            /** @description 请求参数（生成 + 传输）；缺省 = 沿用已有参数不变；提供 = 整体替换（未提供的参数键视为清除） */
+            request_params?: components["schemas"]["EndpointRequestParams"] | null;
         };
         /**
          * ErrorDetail

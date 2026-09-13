@@ -218,6 +218,34 @@ class ConfigUpdateRequest(BaseModel):
     api_key: str | None = None
 
 
+class EndpointRequestParams(BaseModel):
+    """一套端点配置的请求参数（生成 + 传输），随配置存于其 config.json。
+
+    所有键都可缺省：null = 不设该参数（请求时用端点自身默认或工具内置默认）。
+    """
+
+    temperature: float | None = Field(
+        default=None, ge=0, description="采样温度；null = 不传（用端点默认）"
+    )
+    top_p: float | None = Field(
+        default=None, ge=0, description="核采样阈值；null = 不传"
+    )
+    max_tokens: int | None = Field(
+        default=None, ge=1, description="输出 token 上限；null = 不传"
+    )
+    extra_body: dict[str, object] | None = Field(
+        default=None,
+        description="端点专有参数透传（openai SDK 的 extra_body，原样转发不解释）；"
+        "null = 不传。厂商文档里的专有参数（如开关思考模式）放这里",
+    )
+    timeout_seconds: float | None = Field(
+        default=None, gt=0, description="单次请求超时秒数；null = 用内置默认（120）"
+    )
+    max_retries: int | None = Field(
+        default=None, ge=0, description="失败自动重试次数；null = 用内置默认（2）"
+    )
+
+
 class EndpointConfigSummary(BaseModel):
     """端点配置概要——列表 / 创建 / 更新的响应体，密钥只报有无、绝不回内容。"""
 
@@ -229,6 +257,9 @@ class EndpointConfigSummary(BaseModel):
     )
     has_api_key: bool = Field(description="是否已存密钥（只报有无）")
     is_active: bool = Field(description="是否为当前使用的配置")
+    request_params: EndpointRequestParams = Field(
+        description="已设置的请求参数（生成 + 传输）；未设置的键为 null"
+    )
 
 
 class EndpointCreateRequest(BaseModel):
@@ -239,6 +270,10 @@ class EndpointCreateRequest(BaseModel):
     model: str
     api_key: str | None = None
     api_format: str = SUPPORTED_API_FORMAT
+    request_params: EndpointRequestParams | None = Field(
+        default=None,
+        description="请求参数（生成 + 传输）；缺省 = 全不设（用默认值）",
+    )
 
 
 class EndpointUpdateRequest(BaseModel):
@@ -248,3 +283,8 @@ class EndpointUpdateRequest(BaseModel):
     model: str
     api_key: str | None = None
     api_format: str = SUPPORTED_API_FORMAT
+    request_params: EndpointRequestParams | None = Field(
+        default=None,
+        description="请求参数（生成 + 传输）；缺省 = 沿用已有参数不变；"
+        "提供 = 整体替换（未提供的参数键视为清除）",
+    )

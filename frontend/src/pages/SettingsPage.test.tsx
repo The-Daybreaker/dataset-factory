@@ -35,6 +35,7 @@ const ENDPOINTS: EndpointConfigSummary[] = [
     api_format: "openai-chat-completions",
     has_api_key: true,
     is_active: true,
+    request_params: {},
   },
   {
     name: "backup",
@@ -43,6 +44,7 @@ const ENDPOINTS: EndpointConfigSummary[] = [
     api_format: "openai-chat-completions",
     has_api_key: false,
     is_active: false,
+    request_params: {},
   },
 ];
 
@@ -99,6 +101,7 @@ describe("SettingsPage · 连接·端点配置", () => {
         base_url: "https://a/v1",
         model: "model-a2",
         api_format: "openai-chat-completions",
+        request_params: {},
       });
     });
     expect(await screen.findByText("已保存「default」的更改")).toBeInTheDocument();
@@ -112,6 +115,7 @@ describe("SettingsPage · 连接·端点配置", () => {
       api_format: "openai-chat-completions",
       has_api_key: true,
       is_active: false,
+      request_params: {},
     };
     // 真实后端在创建后会把它返回进列表；mock 同样按两次调用给不同结果，
     // 否则创建后 reload 拿到不含新配置的列表，详情区退回占位、反馈条被卸载。
@@ -135,6 +139,7 @@ describe("SettingsPage · 连接·端点配置", () => {
         base_url: "https://n/v1",
         model: "m",
         api_format: "openai-chat-completions",
+        request_params: {},
         api_key: "sk-new-key", // pragma: allowlist secret —— 测试假密钥
       });
     });
@@ -207,6 +212,98 @@ describe("SettingsPage · 端点配置·测试连接", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("status")).toHaveTextContent("鉴权失败");
+    });
+  });
+});
+
+describe("SettingsPage · 端点配置·高级参数", () => {
+  const TUNED: EndpointConfigSummary = {
+    name: "tuned",
+    base_url: "https://t/v1",
+    model: "model-t",
+    api_format: "openai-chat-completions",
+    has_api_key: true,
+    is_active: true,
+    request_params: {
+      temperature: 0.7,
+      extra_body: { top_k: 50 },
+    },
+  };
+
+  async function openAdvanced(): Promise<void> {
+    apiMock.listEndpoints.mockResolvedValue([TUNED]);
+    render(<SettingsPage />);
+    await waitFor(() => screen.getByLabelText("Base URL"));
+    await userEvent.click(screen.getByRole("button", { name: /高级参数（可选）/ }));
+  }
+
+  it("默认折叠；展开后模型通用参数（表单 + JSON）与传输参数两组齐备", async () => {
+    render(<SettingsPage />);
+    await waitFor(() => screen.getByLabelText("Base URL"));
+    expect(screen.queryByLabelText("temperature")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /高级参数（可选）/ }));
+
+    expect(screen.getByLabelText("temperature")).toBeInTheDocument();
+    expect(screen.getByLabelText("top_p")).toBeInTheDocument();
+    expect(screen.getByLabelText("max_tokens")).toBeInTheDocument();
+    expect(screen.getByLabelText("模型通用参数 JSON")).toBeInTheDocument();
+    expect(screen.getByLabelText(/timeout_seconds/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/max_retries/)).toBeInTheDocument();
+  });
+
+  it("落盘参数回填：表单与 JSON 一致显示（extra_body 在 JSON 里）", async () => {
+    await openAdvanced();
+
+    expect(screen.getByLabelText("temperature")).toHaveValue(0.7);
+    expect(screen.getByLabelText("top_p")).toHaveValue(null);
+    expect(screen.getByLabelText("模型通用参数 JSON")).toHaveValue(
+      JSON.stringify({ temperature: 0.7, extra_body: { top_k: 50 } }, null, 2),
+    );
+  });
+
+  it("粘贴厂商风格 JSON：已知键同步进表单，未知键提示已忽略（不报错）", async () => {
+    await openAdvanced();
+    const json = screen.getByLabelText("模型通用参数 JSON");
+
+    // JSON 含 {} 字符（userEvent.type 会误当按键语法）；组件走 onInput，用 fireEvent.input。
+    fireEvent.input(json, { target: { value: '{"temperature":0.2,"top_k":40}' } });
+
+    expect(screen.getByLabelText("temperature")).toHaveValue(0.2);
+    expect(screen.getByRole("status")).toHaveTextContent("已忽略：top_k");
+  });
+
+  it("JSON 无效时保存被拦下（不发请求），提示修好再保存", async () => {
+    await openAdvanced();
+    const json = screen.getByLabelText("模型通用参数 JSON");
+
+    fireEvent.input(json, { target: { value: "{oops" } });
+    await userEvent.click(screen.getByRole("button", { name: "保存更改" }));
+
+    expect(apiMock.updateEndpoint).not.toHaveBeenCalled();
+    expect(await screen.findByText(/JSON 写法无效/)).toBeInTheDocument();
+  });
+
+  it("保存携带高级参数：表单值 + JSON 里的 extra_body 一起进载荷", async () => {
+    apiMock.updateEndpoint.mockResolvedValue(TUNED);
+    await openAdvanced();
+
+    await userEvent.clear(screen.getByLabelText("temperature"));
+    await userEvent.type(screen.getByLabelText("temperature"), "0.8");
+    await userEvent.type(screen.getByLabelText(/timeout_seconds/), "240");
+    await userEvent.click(screen.getByRole("button", { name: "保存更改" }));
+
+    await waitFor(() => {
+      expect(apiMock.updateEndpoint).toHaveBeenCalledWith("tuned", {
+        base_url: "https://t/v1",
+        model: "model-t",
+        api_format: "openai-chat-completions",
+        request_params: {
+          temperature: 0.8,
+          extra_body: { top_k: 50 },
+          timeout_seconds: 240,
+        },
+      });
     });
   });
 });

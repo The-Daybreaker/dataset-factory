@@ -5,7 +5,7 @@
   describe_config；多配置存储（endpoints/ 目录）——EndpointConfigInfo / list_configs /
   create_config / update_config / delete_config / set_active_config / active_config_name /
   read_config_data / read_stored_api_key / has_config / has_stored_key /
-  DEFAULT_CONFIG_NAME / SUPPORTED_API_FORMAT
+  validated_request_params / DEFAULT_CONFIG_NAME / SUPPORTED_API_FORMAT
 - 补全接口与客户端：Completer / OpenAIChatClient / build_completer
 - 消息模型：Message / Role / TextPart / ImagePart / ContentPart
 - 异常：LLMError 基类 + 分类子类（鉴权 / 限流 / 超时 / 连接 / 请求非法 / 未找到 / 服务端 / 意外）+ UnsupportedImageError / ImageTooLargeError
@@ -32,6 +32,7 @@ from .endpoints import (
     read_stored_api_key,
     set_active_config,
     update_config,
+    validated_request_params,
 )
 from .errors import (
     ImageTooLargeError,
@@ -100,4 +101,5 @@ __all__ = [
     "read_stored_api_key",
     "set_active_config",
     "update_config",
+    "validated_request_params",
 ]

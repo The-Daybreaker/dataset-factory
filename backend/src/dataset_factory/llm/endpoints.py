@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -42,8 +43,10 @@ DEFAULT_CONFIG_NAME = "default"
 # 一期唯一支持的 API 调用格式：随配置存储、其余格式在界面上灰显预留（未来补适配器即启用）。
 SUPPORTED_API_FORMAT = "openai-chat-completions"
 
-# config.json 里「请求参数」相关的键：更新端点字段时原样保留，避免把用户手配的生成 /
-# 传输参数抹掉（参数语义见 config.RequestConfig）。
+# config.json 里「请求参数」相关的键：更新端点字段且未显式给参数时原样保留，避免把
+# 用户手配的生成 / 传输参数抹掉（参数语义见 config.RequestConfig）。键集是封闭的——
+# 不在这份清单里的键（如厂商文档里的其他参数）不属于本工具的参数面，经界面/API 写入时
+# 会被丢弃（要透传厂商专有参数请放 extra_body）。
 _REQUEST_PARAM_KEYS = (
     "temperature",
     "top_p",
@@ -52,6 +55,10 @@ _REQUEST_PARAM_KEYS = (
     "timeout_seconds",
     "max_retries",
 )
+
+# 数值型参数键（浮点 / 整数分别校验）；其余参数键是 extra_body（对象型）。
+_FLOAT_PARAM_KEYS = ("temperature", "top_p", "timeout_seconds")
+_INT_PARAM_KEYS = ("max_tokens", "max_retries")
 
 _MAX_NAME_LENGTH = 64
 # Windows 文件名保留字符。数据根可能随 DATASET_FACTORY_HOME 搬到任何平台，统一按最严
@@ -72,6 +79,46 @@ class ConfigNotFoundError(ConfigError):
 
 class ConfigConflictError(ConfigError):
     """配置状态冲突（重名、删除当前使用中的配置等）。"""
+
+
+def validated_request_params(
+    data: Mapping[str, object], name: str
+) -> dict[str, object]:
+    """从配置数据里取出「请求参数」键并校验值类型；只返回实际存在的键。
+
+    这是请求参数的唯一类型校验点：存储读侧（list_configs 的概要展示）与请求装配侧
+    （config 层组装 RequestConfig）共用同一份判定，保证「界面看得到的」与「发请求用的」
+    不会各判各的。写侧也复用（create_config / update_config 的 request_params 入参先过
+    这里），让不合法的参数在落盘前就被拦下。
+
+    Args:
+        data: config.json 解析出的顶层对象（或只含参数键的子集）。
+        name: 配置名（仅用于报错信息）。
+
+    Returns:
+        只含实际存在的参数键的字典（值保持原样，不做数值强转）。
+
+    Raises:
+        ConfigError: 某个参数键存在但类型不对（bool 不算数字 / 整数；extra_body 须为对象）。
+    """
+    params: dict[str, object] = {}
+    for key in _REQUEST_PARAM_KEYS:
+        raw = data.get(key)
+        if raw is None:
+            continue
+        if key in _FLOAT_PARAM_KEYS:
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                raise ConfigError(f"端点配置「{name}」的 {key} 应是数字；请检查内容。")
+        elif key in _INT_PARAM_KEYS:
+            if isinstance(raw, bool) or not isinstance(raw, int):
+                raise ConfigError(f"端点配置「{name}」的 {key} 应是整数；请检查内容。")
+        else:  # extra_body：透传对象
+            if not isinstance(raw, dict):
+                raise ConfigError(
+                    f"端点配置「{name}」的 {key} 应是 JSON 对象；请检查内容。"
+                )
+        params[key] = raw
+    return params
 
 
 @dataclass(frozen=True, repr=False)
@@ -102,6 +149,8 @@ class EndpointConfigInfo:
         api_format: API 调用格式（一期仅 OpenAI Chat Completions）。
         has_api_key: 该配置是否已存密钥（只报有无，绝不回内容）。
         is_active: 是否为当前使用的配置（active 指针指向它）。
+        request_params: 已设置的请求参数（生成 + 传输；只含实际存在的键，值已经过
+            validated_request_params 类型校验）。
     """
 
     name: str
@@ -110,6 +159,7 @@ class EndpointConfigInfo:
     api_format: str
     has_api_key: bool
     is_active: bool
+    request_params: Mapping[str, object]
 
 
 def validate_config_name(raw: str) -> str:
@@ -209,6 +259,7 @@ def list_configs() -> list[EndpointConfigInfo]:
                 or SUPPORTED_API_FORMAT,
                 has_api_key=_has_file_key(_config_dir(name) / _CREDENTIALS_FILENAME),
                 is_active=active is not None and active == name,
+                request_params=validated_request_params(data, name),
             )
         )
     return infos
@@ -291,6 +342,7 @@ def create_config(
     model: str,
     api_key: SecretValue | None,
     api_format: str = SUPPORTED_API_FORMAT,
+    request_params: Mapping[str, object] | None = None,
 ) -> str:
     """新增一套端点配置；当前没有生效的 active 指针时，顺手把它设为当前使用。
 
@@ -303,13 +355,15 @@ def create_config(
         model: 模型名（非空）。
         api_key: 密钥；None = 暂不配置（请求时可用 DSF_API_KEY 环境变量兜底）。
         api_format: API 调用格式；一期仅支持 OpenAI Chat Completions。
+        request_params: 请求参数（生成 + 传输）；None = 全不设（用内置默认）。只认
+            _REQUEST_PARAM_KEYS 里的键，其余键丢弃（厂商专有参数请放 extra_body）。
 
     Returns:
         规整后的配置名（去首尾空白）——落盘目录即此名，入口层组装响应要用它。
 
     Raises:
         ConfigConflictError: 已存在同名（或仅大小写不同）的配置。
-        ConfigError: 名称不合法 / 字段为空 / 格式不支持 / 落盘失败。
+        ConfigError: 名称不合法 / 字段为空 / 格式不支持 / 参数类型不合法 / 落盘失败。
     """
     clean = validate_config_name(name)
     clean_base_url = _require_clean(base_url, "base_url")
@@ -317,9 +371,19 @@ def create_config(
     _require_supported_format(api_format)
     if api_key is not None and not api_key.reveal().strip():
         raise ConfigError("API 密钥不能为空白；请填写有效密钥。")
+    params_payload = (
+        validated_request_params(request_params, clean)
+        if request_params is not None
+        else None
+    )
     _require_name_available(clean)
     _write_config_files(
-        _config_dir(clean), clean_base_url, clean_model, api_format, api_key
+        _config_dir(clean),
+        clean_base_url,
+        clean_model,
+        api_format,
+        api_key,
+        request_params=params_payload,
     )
     if active_config_name() is None:
         set_active_config(clean)
@@ -332,11 +396,14 @@ def update_config(
     model: str,
     api_key: SecretValue | None = None,
     api_format: str = SUPPORTED_API_FORMAT,
+    request_params: Mapping[str, object] | None = None,
 ) -> str:
     """更新一套已存在配置的端点字段；api_key 传 None 表示沿用该配置已存的密钥。
 
     「沿用」= 不动 credentials 文件（而不是把环境变量或其他配置的密钥抄过来）。
-    config.json 里用户手配的请求参数（温度 / 透传参数等）原样保留。
+    请求参数的更新语义：request_params 缺省（None）= 已有参数原样保留（与密钥的沿用
+    同一套心智——调用方没提的就是不改）；显式给出 = **整体替换**该配置的请求参数块
+    （未提供的参数键视为清除——「给什么存什么」，不给清空语义的调用方留歧义）。
 
     Args:
         name: 配置名（必须已存在）。
@@ -344,13 +411,15 @@ def update_config(
         model: 模型名（非空）。
         api_key: 新密钥；None = 沿用已存密钥。
         api_format: API 调用格式；一期仅支持 OpenAI Chat Completions。
+        request_params: 请求参数；None = 沿用已有参数不变。只认 _REQUEST_PARAM_KEYS
+            里的键，其余键丢弃（厂商专有参数请放 extra_body）。
 
     Returns:
         规整后的配置名（去首尾空白）。
 
     Raises:
         ConfigNotFoundError: 配置不存在。
-        ConfigError: 名称不合法 / 字段为空 / 格式不支持 / 落盘失败。
+        ConfigError: 名称不合法 / 字段为空 / 格式不支持 / 参数类型不合法 / 落盘失败。
     """
     clean = validate_config_name(name)
     clean_base_url = _require_clean(base_url, "base_url")
@@ -358,6 +427,11 @@ def update_config(
     _require_supported_format(api_format)
     if api_key is not None and not api_key.reveal().strip():
         raise ConfigError("API 密钥不能为空白；请填写有效密钥。")
+    params_payload = (
+        validated_request_params(request_params, clean)
+        if request_params is not None
+        else None
+    )
     dir_path = _require_config_exists(clean)
     _write_config_files(
         dir_path,
@@ -365,7 +439,8 @@ def update_config(
         clean_model,
         api_format,
         api_key,
-        preserve_params_from=dir_path,
+        request_params=params_payload,
+        preserve_params_from=dir_path if params_payload is None else None,
     )
     return clean
 
@@ -546,6 +621,7 @@ def _write_config_files(
     model: str,
     api_format: str,
     api_key: SecretValue | None,
+    request_params: Mapping[str, object] | None = None,
     preserve_params_from: Path | None = None,
 ) -> None:
     """写一套配置的两个文件（config.json + credentials），各自原子写。
@@ -556,8 +632,10 @@ def _write_config_files(
         model: 已规整的模型名。
         api_format: API 调用格式。
         api_key: 密钥；None = 不写 credentials（更新场景即「沿用已存密钥」）。
-        preserve_params_from: 给出时（更新场景），从该目录的旧 config.json 里把已有的
-            请求参数键原样搬进新 payload，避免改端点抹掉用户手配的参数。
+        request_params: 已校验的请求参数键值（None = 本调用不携带参数）。
+        preserve_params_from: 给出时（更新且未显式给参数的场景），从该目录的旧
+            config.json 里把已有的请求参数键原样搬进新 payload，避免改端点抹掉用户
+            手配的参数。
 
     Raises:
         ConfigError: 旧参数读不了 / 内容无法编码 / 落盘失败。
@@ -567,7 +645,11 @@ def _write_config_files(
         "model": model,
         "api_format": api_format,
     }
-    if preserve_params_from is not None:
+    if request_params is not None:
+        for key in _REQUEST_PARAM_KEYS:
+            if key in request_params:
+                payload[key] = request_params[key]
+    elif preserve_params_from is not None:
         existing = _read_optional_json(preserve_params_from / _CONFIG_FILENAME)
         if existing is not None:
             for key in _REQUEST_PARAM_KEYS:
