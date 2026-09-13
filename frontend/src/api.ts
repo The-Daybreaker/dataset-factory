@@ -25,6 +25,8 @@ export type ConfigUpdateRequest = components["schemas"]["ConfigUpdateRequest"];
 export type EndpointConfigSummary = components["schemas"]["EndpointConfigSummary"];
 export type EndpointCreateRequest = components["schemas"]["EndpointCreateRequest"];
 export type EndpointUpdateRequest = components["schemas"]["EndpointUpdateRequest"];
+export type EndpointTestRequest = components["schemas"]["EndpointTestRequest"];
+export type EndpointTestResult = components["schemas"]["EndpointTestResult"];
 export type SkillFilesResponse = components["schemas"]["SkillFilesResponse"];
 export type SkillFileInfo = components["schemas"]["SkillFileInfo"];
 export type SkillFileContent = components["schemas"]["SkillFileContent"];
@@ -233,6 +235,10 @@ export const api = {
   /** 把一套配置设为当前使用；对新请求立即生效。 */
   activateEndpoint: (name: string) =>
     request<void>("POST", `/api/endpoints/${encodeURIComponent(name)}/activate`),
+
+  /** 测试端点连通性（用表单当前值发极小真实请求；密钥缺省回落该配置已存密钥）。 */
+  testEndpoint: (payload: EndpointTestRequest) =>
+    request<EndpointTestResult>("POST", "/api/endpoints/test", payload),
 
   /** 列出技能包内文件（角色标注：SKILL.md / references 可预览，assets / scripts 不可）。 */
   listSkillFiles: (name: string) =>

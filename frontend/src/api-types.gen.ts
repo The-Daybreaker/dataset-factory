@@ -54,6 +54,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/endpoints/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Connection
+         * @description 测试端点连通性：用表单当前值发一个极小的真实请求（max_tokens=1），不必先保存。
+         */
+        post: operations["test_connection_api_endpoints_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/endpoints/{name}": {
         parameters: {
             query?: never;
@@ -517,6 +537,59 @@ export interface components {
             name: string;
         };
         /**
+         * EndpointTestRequest
+         * @description POST /api/endpoints/test 的请求体：用表单当前值探测连通性（不必先保存）。
+         */
+        EndpointTestRequest: {
+            /**
+             * Api Format
+             * @description API 调用格式（一期仅 OpenAI Chat Completions）
+             * @default openai-chat-completions
+             */
+            api_format: string;
+            /**
+             * Api Key
+             * @description 密钥；缺省回落该配置已存密钥
+             */
+            api_key?: string | null;
+            /**
+             * Base Url
+             * @description 端点根地址
+             */
+            base_url: string;
+            /**
+             * Model
+             * @description 模型名
+             */
+            model: string;
+            /**
+             * Name
+             * @description 配置名（回落已存密钥时用它定位）
+             */
+            name?: string | null;
+        };
+        /**
+         * EndpointTestResult
+         * @description POST /api/endpoints/test 的响应体：探测结果（HTTP 恒 200，成败看 ok）。
+         */
+        EndpointTestResult: {
+            /**
+             * Latency Ms
+             * @description 请求耗时（毫秒；未发出请求时为 0）
+             */
+            latency_ms: number;
+            /**
+             * Message
+             * @description 结果说明（失败时为分类后的可操作提示）
+             */
+            message: string;
+            /**
+             * Ok
+             * @description 是否连通
+             */
+            ok: boolean;
+        };
+        /**
          * EndpointUpdateRequest
          * @description PUT /api/endpoints/{name} 的请求体——api_key 缺省沿用已存密钥（不强迫重输）。
          */
@@ -943,6 +1016,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_connection_api_endpoints_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EndpointTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndpointTestResult"];
                 };
             };
             /** @description Validation Error */

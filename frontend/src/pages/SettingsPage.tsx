@@ -14,6 +14,7 @@ import type { ReactElement } from "react";
 import { useCallback, useEffect, useState } from "react";
 import type {
   EndpointConfigSummary,
+  EndpointTestResult,
   ServiceLogs,
   ServiceStatus,
   SkillFileInfo,
@@ -84,6 +85,8 @@ function EndpointConfigPanel(): ReactElement {
   const [draftKey, setDraftKey] = useState("");
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<EndpointTestResult | null>(null);
 
   const reload = useCallback(async (): Promise<EndpointConfigSummary[]> => {
     try {
@@ -130,6 +133,7 @@ function EndpointConfigPanel(): ReactElement {
     setSelected(name);
     setCreating(false);
     setFeedback(null);
+    setTestResult(null);
   };
 
   const startCreate = (): void => {
@@ -141,6 +145,26 @@ function EndpointConfigPanel(): ReactElement {
     setDraftModel("");
     setDraftKey("");
     setFeedback(null);
+    setTestResult(null);
+  };
+
+  const testConnection = async (): Promise<void> => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await api.testEndpoint({
+        base_url: draftBaseUrl,
+        model: draftModel,
+        api_format: draftFormat,
+        ...(creating ? {} : { name: selected }),
+        ...(draftKey.trim() === "" ? {} : { api_key: draftKey }),
+      });
+      setTestResult(result);
+    } catch (err) {
+      setTestResult({ ok: false, message: errorMessage(err), latency_ms: 0 });
+    } finally {
+      setTesting(false);
+    }
   };
 
   const save = async (): Promise<void> => {
@@ -379,6 +403,32 @@ function EndpointConfigPanel(): ReactElement {
                 <AlertDescription>{feedback.text}</AlertDescription>
               </Alert>
             )}
+
+            <div className="flex items-center gap-2.5">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={
+                  testing || draftBaseUrl.trim() === "" || draftModel.trim() === ""
+                }
+                onClick={() => void testConnection()}
+              >
+                {testing ? "测试中…" : "测试连接"}
+              </Button>
+              {testResult !== null && (
+                <span
+                  className={
+                    "text-[12.5px] " +
+                    (testResult.ok ? "text-success" : "text-destructive")
+                  }
+                  role="status"
+                >
+                  {testResult.message}
+                  {testResult.ok ? ` · ${Math.round(testResult.latency_ms)} ms` : ""}
+                </span>
+              )}
+            </div>
 
             <div className="flex items-center gap-2 border-t border-border pt-4">
               {!creating && (

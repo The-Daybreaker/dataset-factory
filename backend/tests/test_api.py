@@ -13,9 +13,15 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+import dataset_factory.api.routes_endpoints as routes_endpoints
 import dataset_factory.api.routes_labeling as routes_labeling
 from dataset_factory.api import create_app
-from dataset_factory.llm import ImagePart, read_stored_api_key
+from dataset_factory.llm import (
+    EndpointConfig,
+    ImagePart,
+    LLMTimeoutError,
+    read_stored_api_key,
+)
 from dataset_factory.prompts import Prompt, save_prompt
 from dataset_factory.sessions import list_sessions
 
@@ -643,3 +649,121 @@ def test_frontend_served_when_dir_has_index(
     assert page.status_code == 200
     assert "Dataset Factory" in page.text
     assert api.status_code == 200
+
+
+def test_endpoints_test_ok(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """测试连接：配置正确 → ok=true、耗时非负、探测用的是请求里的 base_url。"""
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def complete(self, messages: object) -> str:
+            captured["called"] = True
+            return "ok"
+
+    def fake_build(config: EndpointConfig) -> FakeClient:
+        captured["base_url"] = config.base_url
+        return FakeClient()
+
+    monkeypatch.setattr(routes_endpoints, "build_completer", fake_build)
+
+    response = client.post(
+        "/api/endpoints/test",
+        json={
+            "base_url": "https://example.com/v1",
+            "model": "test-model",
+            "api_key": "sk-test",  # pragma: allowlist secret
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["latency_ms"] >= 0
+    assert captured["called"] is True
+    assert captured["base_url"] == "https://example.com/v1"
+
+
+def test_endpoints_test_llm_error_becomes_result(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """测试连接：模型调用失败 → ok=false + 分类消息（HTTP 仍 200，成败看 ok）。"""
+
+    def fake_build(config: object) -> object:
+        raise LLMTimeoutError("调用模型超时；网络较慢或模型响应久。")
+
+    monkeypatch.setattr(routes_endpoints, "build_completer", fake_build)
+
+    response = client.post(
+        "/api/endpoints/test",
+        json={
+            "base_url": "https://example.com/v1",
+            "model": "test-model",
+            "api_key": "sk-test",  # pragma: allowlist secret
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert "超时" in body["message"]
+
+
+def test_endpoints_test_without_key_reports(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """测试连接：无密钥可回落（表单没填、配置名下也没有）→ ok=false + 可操作提示。"""
+
+    def fake_build(config: EndpointConfig) -> object:
+        raise AssertionError("不应发起请求")
+
+    monkeypatch.setattr(routes_endpoints, "build_completer", fake_build)
+
+    response = client.post(
+        "/api/endpoints/test",
+        json={"base_url": "https://example.com/v1", "model": "test-model"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert "密钥" in body["message"]
+
+
+def test_endpoints_test_falls_back_to_stored_key(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """测试连接：表单密钥留空 → 用该配置名下已存密钥（不强迫重输）。"""
+    created = client.post(
+        "/api/endpoints",
+        json={
+            "name": "stored",
+            "base_url": "https://example.com/v1",
+            "model": "test-model",
+            "api_key": "sk-stored",  # pragma: allowlist secret
+        },
+    )
+    assert created.status_code == 201
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def complete(self, messages: object) -> str:
+            return "ok"
+
+    def fake_build(config: EndpointConfig) -> FakeClient:
+        captured["key"] = config.api_key.reveal()
+        return FakeClient()
+
+    monkeypatch.setattr(routes_endpoints, "build_completer", fake_build)
+
+    response = client.post(
+        "/api/endpoints/test",
+        json={
+            "base_url": "https://example.com/v1",
+            "model": "test-model",
+            "name": "stored",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert captured["key"] == "sk-stored"

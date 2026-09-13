@@ -80,6 +80,31 @@ class ServiceLogs(BaseModel):
     content: str = Field(description="日志尾部内容（最近若干行，换行拼接）")
 
 
+class EndpointTestRequest(BaseModel):
+    """POST /api/endpoints/test 的请求体：用表单当前值探测连通性（不必先保存）。"""
+
+    base_url: str = Field(description="端点根地址")
+    model: str = Field(description="模型名")
+    api_format: str = Field(
+        default=SUPPORTED_API_FORMAT,
+        description="API 调用格式（一期仅 OpenAI Chat Completions）",
+    )
+    api_key: str | None = Field(
+        default=None, description="密钥；缺省回落该配置已存密钥"
+    )
+    name: str | None = Field(
+        default=None, description="配置名（回落已存密钥时用它定位）"
+    )
+
+
+class EndpointTestResult(BaseModel):
+    """POST /api/endpoints/test 的响应体：探测结果（HTTP 恒 200，成败看 ok）。"""
+
+    ok: bool = Field(description="是否连通")
+    message: str = Field(description="结果说明（失败时为分类后的可操作提示）")
+    latency_ms: float = Field(description="请求耗时（毫秒；未发出请求时为 0）")
+
+
 class SessionSnapshotResponse(BaseModel):
     """GET /api/sessions/* 的响应体（恢复会话的完整快照）。"""
 

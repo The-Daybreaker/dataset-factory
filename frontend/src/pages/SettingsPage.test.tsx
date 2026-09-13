@@ -12,6 +12,7 @@ const apiMock = vi.hoisted(() => ({
   updateEndpoint: vi.fn(),
   deleteEndpoint: vi.fn(),
   activateEndpoint: vi.fn(),
+  testEndpoint: vi.fn(),
   listSkills: vi.fn(),
   importSkill: vi.fn(),
   setSkillEnabled: vi.fn(),
@@ -163,6 +164,48 @@ describe("SettingsPage · 连接·端点配置", () => {
 
     await waitFor(() => {
       expect(apiMock.deleteEndpoint).toHaveBeenCalledWith("default");
+    });
+  });
+});
+
+describe("SettingsPage · 端点配置·测试连接", () => {
+  it("测试连接：调 testEndpoint 并显示结果与耗时", async () => {
+    apiMock.testEndpoint.mockResolvedValue({
+      ok: true,
+      message: "连接成功，模型应答正常。",
+      latency_ms: 412,
+    });
+    render(<SettingsPage />);
+    await screen.findByText("model-a");
+
+    await userEvent.click(screen.getByRole("button", { name: "测试连接" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "连接成功，模型应答正常。 · 412 ms",
+      );
+    });
+    expect(apiMock.testEndpoint).toHaveBeenCalledWith({
+      base_url: "https://a/v1",
+      model: "model-a",
+      api_format: "openai-chat-completions",
+      name: "default",
+    });
+  });
+
+  it("测试连接失败：显示后端分类提示", async () => {
+    apiMock.testEndpoint.mockResolvedValue({
+      ok: false,
+      message: "鉴权失败：API 密钥无效或过期。",
+      latency_ms: 120,
+    });
+    render(<SettingsPage />);
+    await screen.findByText("model-a");
+
+    await userEvent.click(screen.getByRole("button", { name: "测试连接" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("鉴权失败");
     });
   });
 });
