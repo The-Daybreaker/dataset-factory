@@ -284,6 +284,23 @@ describe("SettingsPage · 端点配置·高级参数", () => {
     expect(await screen.findByText(/JSON 写法无效/)).toBeInTheDocument();
   });
 
+  it("旧后端响应缺 request_params 字段时详情页不崩（热升级窗口防御）", async () => {
+    // 模拟「旧后端进程 + 新页面」的热升级窗口：响应没有 request_params 键
+    // （新契约里必填；实机白屏事故 2026-09-13 的根因）。缺字段按未设置处理。
+    const legacy = { ...TUNED } as Record<string, unknown>;
+    delete legacy.request_params;
+    apiMock.listEndpoints.mockResolvedValue([
+      legacy as unknown as EndpointConfigSummary,
+    ]);
+    render(<SettingsPage />);
+    await waitFor(() => screen.getByLabelText("Base URL"));
+
+    expect(screen.getByLabelText("Base URL")).toHaveValue("https://t/v1");
+    await userEvent.click(screen.getByRole("button", { name: /高级参数（可选）/ }));
+    expect(screen.getByLabelText("temperature")).toHaveValue(null);
+    expect(screen.getByLabelText("模型通用参数 JSON")).toHaveValue("{}");
+  });
+
   it("保存携带高级参数：表单值 + JSON 里的 extra_body 一起进载荷", async () => {
     apiMock.updateEndpoint.mockResolvedValue(TUNED);
     await openAdvanced();

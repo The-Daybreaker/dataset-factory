@@ -320,7 +320,10 @@ function EndpointConfigPanel(): ReactElement {
     setDraftModel(current.model);
     setDraftKey("");
     // 高级参数区同样回填落盘值；折叠态复位（换一套配置重新看）。
-    const params = current.request_params;
+    // ?? {} 是运行时防御：契约里 request_params 必填，但「旧后端进程 + 新页面」的
+    // 热升级窗口里响应可能没有这个字段（实机白屏事故的根因，2026-09-13）——缺字段
+    // 按未设置处理，绝不让详情页崩树。
+    const params = current.request_params ?? {};
     const text = (value: number | null | undefined): string =>
       value === null || value === undefined ? "" : String(value);
     setAdvForm({
