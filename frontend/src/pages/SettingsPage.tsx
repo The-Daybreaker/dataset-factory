@@ -5,13 +5,14 @@
 import {
   CopyIcon,
   FileTextIcon,
+  FolderOpenIcon,
   ImageIcon,
   LockIcon,
   PlusIcon,
   SearchIcon,
 } from "lucide-react";
 import type { ReactElement } from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   EndpointConfigSummary,
   EndpointTestResult,
@@ -543,9 +544,10 @@ function SkillsPanel(): ReactElement {
   const [files, setFiles] = useState<SkillFileInfo[]>([]);
   const [previewPath, setPreviewPath] = useState("");
   const [previewContent, setPreviewContent] = useState("");
-  const [importPath, setImportPath] = useState("");
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const reload = useCallback(async (): Promise<void> => {
     try {
@@ -624,19 +626,21 @@ function SkillsPanel(): ReactElement {
     }
   };
 
-  const doImport = async (): Promise<void> => {
+  const doImport = async (picked: File[]): Promise<void> => {
+    setImporting(true);
     try {
-      const result = await api.importSkill(importPath);
+      const result = await api.importSkillFiles(picked);
       const sizeKb = (result.total_bytes / 1024).toFixed(1);
       setFeedback({
         kind: "success",
         text: `已导入「${result.name}」（${sizeKb} KiB——skill 全文将注入打标请求，体积偏大时留意 token 消耗）`,
       });
-      setImportPath("");
       setSelected(result.name);
       await reload();
     } catch (err) {
       setFeedback({ kind: "error", text: errorMessage(err) });
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -735,22 +739,32 @@ function SkillsPanel(): ReactElement {
           <p className="mb-2 text-[12px] font-medium">
             导入 skill 包（agentskills.io 标准）
           </p>
-          <div className="flex items-center gap-2">
-            <Input
-              aria-label="Skill 包路径"
-              placeholder="如 D:/skills/h3-prompt-writing"
-              value={importPath}
-              onInput={(event) => setImportPath(event.currentTarget.value)}
-            />
-            <Button
-              type="button"
-              size="sm"
-              disabled={importPath.trim() === ""}
-              onClick={() => void doImport()}
-            >
-              导入
-            </Button>
-          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            hidden
+            aria-label="选择 skill 文件夹"
+            // @ts-expect-error -- webkitdirectory 为浏览器非标准属性，React DOM 类型未收录
+            webkitdirectory=""
+            onChange={(event) => {
+              const picked = Array.from(event.currentTarget.files ?? []);
+              if (picked.length > 0) {
+                void doImport(picked);
+              }
+              event.currentTarget.value = "";
+            }}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            disabled={importing}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <FolderOpenIcon className="size-4" />
+            {importing ? "导入中…" : "选择文件夹…"}
+          </Button>
           {feedback !== null && (
             <Alert
               variant={feedback.kind === "error" ? "destructive" : "success"}

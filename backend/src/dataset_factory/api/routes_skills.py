@@ -1,18 +1,20 @@
-"""Skill 库端点：GET /api/skills、POST /api/skills/import、enable/disable、DELETE。
+"""Skill 库端点：GET /api/skills、POST /api/skills/import、POST /api/skills/import-upload、enable/disable、DELETE。
 
-skill 是本地目录包（agentskills.io 标准），导入按路径复制进库——Web 端跑在本机、
-浏览器与服务端同机，填本地路径即可（一期不做目录上传）。
+skill 是本地目录包（agentskills.io 标准）。两条导入路线：CLI / 脚本走本地路径复制
+（import-upload 之外），浏览器走「文件夹选择器 / 拖拽」上传文件集——浏览器安全模型拿不到
+所选文件夹的本地路径，传的是文件内容；上传路线的相对路径在此清洗（拒绝穿越与空段）。
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, HTTPException, Response, UploadFile, status
 
 from ..skills import (
     delete_skill,
     import_skill,
+    import_skill_files,
     list_skill_files,
     list_skills,
     read_skill_file,
@@ -51,6 +53,44 @@ def list_all() -> list[SkillInfo]:
 def import_one(request: SkillImportRequest) -> SkillImportResponse:
     """从本地路径导入 skill 包（整目录复制进库、默认启用）。"""
     result = import_skill(Path(request.path))
+    return SkillImportResponse(
+        name=result.skill.name,
+        description=result.skill.description,
+        enabled=result.skill.enabled,
+        total_bytes=result.total_bytes,
+    )
+
+
+@router.post(
+    "/import-upload",
+    response_model=SkillImportResponse,
+    responses={
+        400: {
+            "model": ErrorDetail,
+            "description": "上传内容不合法（缺 SKILL.md / 文件名穿越 / 格式非法）",
+        },
+        409: {"model": ErrorDetail, "description": "同名 skill 已存在（重名不合并）"},
+    },
+)
+async def import_upload(files: list[UploadFile]) -> SkillImportResponse:
+    """从浏览器上传的文件集导入 skill 包（文件夹选择器 / 拖拽；传内容不传路径）。"""
+    payload: dict[str, bytes] = {}
+    for upload in files:
+        raw = (upload.filename or "").replace("\\", "/")
+        parts = [part for part in raw.split("/") if part != ""]
+        if not parts or any(part in (".", "..") for part in parts):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"上传文件名不合法：{raw!r}。",
+            )
+        rel = "/".join(parts)
+        if rel in payload:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"上传内容存在重复路径：{rel}。",
+            )
+        payload[rel] = await upload.read()
+    result = import_skill_files(payload)
     return SkillImportResponse(
         name=result.skill.name,
         description=result.skill.description,

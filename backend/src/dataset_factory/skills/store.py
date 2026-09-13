@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shutil
+from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 from typing import cast
 
@@ -228,6 +229,63 @@ def import_skill(source: Path) -> SkillImport:
     return SkillImport(
         skill=Skill(name=name, description=description, enabled=True),
         total_bytes=_dir_bytes(dest),
+    )
+
+
+def import_skill_files(files: Mapping[str, bytes]) -> SkillImport:
+    """从「相对路径 → 内容」的文件集导入 skill 包（浏览器文件夹选择上传路线）。
+
+    与 import_skill 共用同一套校验与原子落库：包根必须有 SKILL.md、frontmatter 的 name
+    合法、重名不合并；写库走「临时名 + os.replace」，崩溃不留半个包。相对路径的卫生
+    （拒绝绝对路径与 .. 穿越）由 HTTP 入口层在收包时清洗，本函数按可信输入对待。
+
+    Args:
+        files: 包内相对路径（POSIX 风格，如 SKILL.md、references/x.md）→ 文件字节内容。
+
+    Returns:
+        SkillImport：导入的 skill（enabled=True）+ 整包字节数（供体积提示）。
+
+    Raises:
+        SkillFormatError: 文件集缺 SKILL.md / SKILL.md 不是合法 UTF-8 / frontmatter 非法。
+        SkillNameError: name 不是合法目录名。
+        SkillExistsError: 库里已有同名 skill。
+        SkillError: 库目录准备 / 写入失败。
+    """
+    skill_md_bytes = files.get(_SKILL_MD)
+    if skill_md_bytes is None:
+        raise SkillFormatError(
+            f"上传内容缺少 {_SKILL_MD}；请选择包含 {_SKILL_MD} 的 skill 文件夹导入。"
+        )
+    try:
+        skill_md_text = skill_md_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SkillFormatError(
+            f"{_SKILL_MD} 不是合法 UTF-8 文本；文件可能已损坏。"
+        ) from exc
+    name, description = parse_skill_frontmatter(skill_md_text)
+    _validate_name(name)
+    skills_root = _skills_dir()
+    dest = skills_root / name
+    if dest.exists():
+        raise SkillExistsError(
+            f"skill {name!r} 已在库中；重名不合并——请先删除旧的，或改 SKILL.md 的 name 再导入。"
+        )
+    tmp = dest.parent / f".{dest.name}.tmp{os.urandom(4).hex()}"
+    try:
+        skills_root.mkdir(parents=True, exist_ok=True)
+        tmp.mkdir()
+        for rel, content in files.items():
+            target = tmp.joinpath(*[p for p in rel.split("/") if p])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+        os.replace(tmp, dest)
+    except OSError as exc:
+        raise SkillError(f"无法把上传的 skill 包写入库：{exc.strerror or exc}") from exc
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return SkillImport(
+        skill=Skill(name=name, description=description, enabled=True),
+        total_bytes=sum(len(content) for content in files.values()),
     )
 
 

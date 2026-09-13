@@ -112,12 +112,20 @@ async function request<T>(
   // 超时用 AbortController 实现：到点放弃等待，而不是无限期挂着。
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // FormData（multipart 上传）由浏览器自动带边界头，不能手动设 Content-Type。
+  const isFormData = body instanceof FormData;
   let response: Response;
   try {
     response = await fetch(path, {
       method,
-      headers: body === undefined ? {} : { "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      headers:
+        body === undefined || isFormData ? {} : { "Content-Type": "application/json" },
+      body:
+        body === undefined
+          ? undefined
+          : isFormData
+            ? (body as FormData)
+            : JSON.stringify(body),
       signal: controller.signal,
     });
   } catch {
@@ -191,9 +199,19 @@ export const api = {
   /** 列出 skill（含启用状态）。 */
   listSkills: () => request<SkillInfo[]>("GET", "/api/skills"),
 
-  /** 从本机目录导入 skill 包（服务端可访问的路径）。 */
+  /** 从本机目录导入 skill 包（服务端可访问的路径；CLI / 脚本路线）。 */
   importSkill: (path: string) =>
     request<SkillImportResponse>("POST", "/api/skills/import", { path }),
+
+  /** 上传导入 skill 包（文件夹选择器 / 拖拽选中的文件集；传内容不传路径）。 */
+  importSkillFiles: (files: File[]) => {
+    const form = new FormData();
+    for (const file of files) {
+      const relative = file.webkitRelativePath || file.name;
+      form.append("files", file, relative);
+    }
+    return request<SkillImportResponse>("POST", "/api/skills/import-upload", form);
+  },
 
   /** 启用 / 停用 skill（停用不删除）。 */
   setSkillEnabled: (name: string, enabled: boolean) =>

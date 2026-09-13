@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EndpointConfigSummary, SkillInfo } from "../api";
@@ -15,6 +15,7 @@ const apiMock = vi.hoisted(() => ({
   testEndpoint: vi.fn(),
   listSkills: vi.fn(),
   importSkill: vi.fn(),
+  importSkillFiles: vi.fn(),
   setSkillEnabled: vi.fn(),
   deleteSkill: vi.fn(),
   listSkillFiles: vi.fn(),
@@ -240,8 +241,8 @@ describe("SettingsPage · 能力·技能", () => {
     expect(screen.queryByLabelText("启用 h3-skill")).not.toBeInTheDocument();
   });
 
-  it("导入成功：调 importSkill 并给出体积与 token 提醒反馈条", async () => {
-    apiMock.importSkill.mockResolvedValue({
+  it("导入成功：选择文件夹调 importSkillFiles 并给出体积与 token 提醒反馈条", async () => {
+    apiMock.importSkillFiles.mockResolvedValue({
       name: "fresh",
       description: "",
       enabled: true,
@@ -249,11 +250,16 @@ describe("SettingsPage · 能力·技能", () => {
     });
     await openSkills();
 
-    await userEvent.type(screen.getByLabelText("Skill 包路径"), "D:/skills/fresh");
-    await userEvent.click(screen.getByRole("button", { name: "导入" }));
+    const input = document.body.querySelector('input[type="file"]');
+    expect(input).not.toBeNull();
+    const folderFile = new File(["# U"], "SKILL.md", { type: "text/markdown" });
+    Object.defineProperty(folderFile, "webkitRelativePath", {
+      value: "fresh/SKILL.md",
+    });
+    fireEvent.change(input as HTMLInputElement, { target: { files: [folderFile] } });
 
     await waitFor(() => {
-      expect(apiMock.importSkill).toHaveBeenCalledWith("D:/skills/fresh");
+      expect(apiMock.importSkillFiles).toHaveBeenCalledTimes(1);
     });
     expect(
       await screen.findByText(/41\.0 KiB——skill 全文将注入打标请求/),

@@ -1,6 +1,23 @@
 {
   "components": {
     "schemas": {
+      "Body_import_upload_api_skills_import_upload_post": {
+        "properties": {
+          "files": {
+            "items": {
+              "contentMediaType": "application/octet-stream",
+              "type": "string"
+            },
+            "title": "Files",
+            "type": "array"
+          }
+        },
+        "required": [
+          "files"
+        ],
+        "title": "Body_import_upload_api_skills_import_upload_post",
+        "type": "object"
+      },
       "ConfigResponse": {
         "description": "GET /api/config 的响应体——密钥只报来源、绝不回内容。",
         "properties": {
@@ -1817,6 +1834,68 @@
           }
         },
         "summary": "Import One",
+        "tags": [
+          "Skill 库"
+        ]
+      }
+    },
+    "/api/skills/import-upload": {
+      "post": {
+        "description": "从浏览器上传的文件集导入 skill 包（文件夹选择器 / 拖拽；传内容不传路径）。",
+        "operationId": "import_upload_api_skills_import_upload_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_upload_api_skills_import_upload_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillImportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "上传内容不合法（缺 SKILL.md / 文件名穿越 / 格式非法）"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "同名 skill 已存在（重名不合并）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Upload",
         "tags": [
           "Skill 库"
         ]

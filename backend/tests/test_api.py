@@ -767,3 +767,70 @@ def test_endpoints_test_falls_back_to_stored_key(
     assert response.status_code == 200
     assert response.json()["ok"] is True
     assert captured["key"] == "sk-stored"
+
+
+_SKILL_UPLOAD_FILES = [
+    (
+        "files",
+        (
+            "SKILL.md",
+            b"---\nname: upload-skill\ndescription: uploaded\n---\n\n# U\n",
+            "text/markdown",
+        ),
+    ),
+    ("files", ("references/guide.md", b"# guide", "text/markdown")),
+]
+
+
+def test_skills_import_upload_ok(client: TestClient) -> None:
+    """上传导入：文件集含 SKILL.md → 入库默认启用、可在列表中看到。"""
+    response = client.post("/api/skills/import-upload", files=_SKILL_UPLOAD_FILES)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["name"] == "upload-skill"
+    assert body["enabled"] is True
+    names = [item["name"] for item in client.get("/api/skills").json()]
+    assert "upload-skill" in names
+
+
+def test_skills_import_upload_missing_skill_md_is_400(client: TestClient) -> None:
+    """上传导入：缺 SKILL.md → 400、提示选含 SKILL.md 的文件夹。"""
+    response = client.post(
+        "/api/skills/import-upload",
+        files=[("files", ("references/x.md", b"x", "text/markdown"))],
+    )
+
+    assert response.status_code == 400
+    assert "SKILL.md" in response.json()["detail"]
+
+
+def test_skills_import_upload_rejects_traversal(client: TestClient) -> None:
+    """上传导入：文件名含 .. 穿越 → 400 拒绝，不入库。"""
+    response = client.post(
+        "/api/skills/import-upload",
+        files=[
+            (
+                "files",
+                (
+                    "SKILL.md",
+                    b"---\nname: evil\ndescription: e\n---\n",
+                    "text/markdown",
+                ),
+            ),
+            ("files", ("../evil.md", b"x", "text/markdown")),
+        ],
+    )
+
+    assert response.status_code == 400
+    names = [item["name"] for item in client.get("/api/skills").json()]
+    assert "evil" not in names
+
+
+def test_skills_import_upload_conflict_409(client: TestClient) -> None:
+    """上传导入：重名不合并 → 第二次 409。"""
+    first = client.post("/api/skills/import-upload", files=_SKILL_UPLOAD_FILES)
+    second = client.post("/api/skills/import-upload", files=_SKILL_UPLOAD_FILES)
+
+    assert first.status_code == 200
+    assert second.status_code == 409

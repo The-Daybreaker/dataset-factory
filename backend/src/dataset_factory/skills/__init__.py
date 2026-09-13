@@ -28,6 +28,7 @@ from .model import (
 from .store import (
     delete_skill,
     import_skill,
+    import_skill_files,
     list_skill_files,
     list_skills,
     read_skill,
@@ -50,6 +51,7 @@ __all__ = [
     "SkillSourceError",
     "delete_skill",
     "import_skill",
+    "import_skill_files",
     "list_skill_files",
     "list_skills",
     "parse_skill_frontmatter",
