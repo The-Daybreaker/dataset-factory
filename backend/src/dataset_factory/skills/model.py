@@ -82,12 +82,16 @@ def parse_skill_frontmatter(text: str) -> tuple[str, str]:
     Raises:
         SkillFormatError: 缺 frontmatter / 未闭合 / 非法 YAML / 顶层非映射 / 缺 name 或 description。
     """
-    if not text.startswith(f"{_DELIMITER}\n"):
+    # 入口先归一化两处 Windows 常见形状（实锤：WorkBuddy 生态的包是 CRLF——2026-09-13
+    # 用户实机导入被误报「缺少 frontmatter」）：UTF-8 BOM 与 \r\n / \r 行尾。frontmatter
+    # 是否存在的判定与分隔符比较只在归一化后的文本上做。
+    normalized = text.lstrip(chr(0xFEFF)).replace("\r\n", "\n").replace("\r", "\n")
+    if not normalized.startswith(f"{_DELIMITER}\n"):
         raise SkillFormatError(
             f"SKILL.md 缺少 YAML frontmatter（应以单独一行 {_DELIMITER} 开头）；"
             "不是合法的 agentskills.io skill 包。"
         )
-    lines = text.split("\n")
+    lines = normalized.split("\n")
     end = next((i for i in range(1, len(lines)) if lines[i] == _DELIMITER), None)
     if end is None:
         raise SkillFormatError(

@@ -60,6 +60,20 @@ def test_parse_tolerates_extra_fields() -> None:
     assert parse_skill_frontmatter(text) == ("s", "d")
 
 
+def test_parse_tolerates_crlf_line_endings() -> None:
+    """CRLF 行尾不误报（实锤 2026-09-13：WorkBuddy 生态的包是 CRLF，被误判「缺少 frontmatter」）。"""
+    text = "---\r\nname: h3-prompt-writing\r\ndescription: d\r\n---\r\n正文\r\n"
+
+    assert parse_skill_frontmatter(text) == ("h3-prompt-writing", "d")
+
+
+def test_parse_tolerates_bom() -> None:
+    """UTF-8 BOM 开头的文件不误报（Windows 编辑器常见形状）。"""
+    text = chr(0xFEFF) + "---\nname: s\ndescription: d\n---\n正文\n"
+
+    assert parse_skill_frontmatter(text) == ("s", "d")
+
+
 def test_parse_missing_frontmatter_raises() -> None:
     """没有 frontmatter（不以 --- 开头）→ SkillFormatError（agentskills.io 要求必须有）。"""
     with pytest.raises(SkillFormatError, match="frontmatter"):

@@ -887,6 +887,29 @@ def test_skills_import_upload_ok(client: TestClient) -> None:
     assert "upload-skill" in names
 
 
+def test_skills_import_upload_tolerates_crlf_skill_md(client: TestClient) -> None:
+    """上传导入：CRLF 行尾的 SKILL.md 不被误判缺 frontmatter。
+
+    实锤 2026-09-13：真实浏览器场景导入 WorkBuddy 生态的 CRLF 包报 400，而包本身合法。
+    """
+    crlf_files = [
+        (
+            "files",
+            (
+                "SKILL.md",
+                b"---\r\nname: crlf-skill\r\ndescription: windows line endings\r\n---\r\n\r\n# CRLF\r\n",
+                "text/markdown",
+            ),
+        ),
+        ("files", ("references/guide.md", b"# guide\r\n", "text/markdown")),
+    ]
+
+    response = client.post("/api/skills/import-upload", files=crlf_files)
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "crlf-skill"
+
+
 def test_skills_import_upload_missing_skill_md_is_400(client: TestClient) -> None:
     """上传导入：缺 SKILL.md → 400、提示选含 SKILL.md 的文件夹。"""
     response = client.post(

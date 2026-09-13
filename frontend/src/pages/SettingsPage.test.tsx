@@ -298,7 +298,12 @@ describe("SettingsPage · 端点配置·高级参数", () => {
     expect(screen.getByLabelText("Base URL")).toHaveValue("https://t/v1");
     await userEvent.click(screen.getByRole("button", { name: /高级参数（可选）/ }));
     expect(screen.getByLabelText("temperature")).toHaveValue(null);
-    expect(screen.getByLabelText("模型通用参数 JSON")).toHaveValue("{}");
+    // 无参数 = 空串展示（参数说明以 placeholder 呈现，2026-09-13 用户反馈）。
+    expect(screen.getByLabelText("模型通用参数 JSON")).toHaveValue("");
+    expect(screen.getByLabelText("模型通用参数 JSON")).toHaveAttribute(
+      "placeholder",
+      expect.stringContaining("参数说明"),
+    );
   });
 
   it("保存携带高级参数：表单值 + JSON 里的 extra_body 一起进载荷", async () => {

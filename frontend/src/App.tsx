@@ -102,10 +102,11 @@ export function App(): ReactElement {
                         onClick={() => setPage(item.key)}
                         className={cn(
                           "flex h-[34px] w-full items-center gap-2.5 rounded-md px-2.5 transition-colors",
-                          "hover:bg-accent hover:text-accent-foreground",
+                          // 激活项 hover 保持蓝系（2026-09-13 用户反馈：hover 变白不符预期）；
+                          // 非激活项才用中性灰 hover。
                           active
-                            ? "bg-primary/10 font-medium text-primary"
-                            : "text-foreground/78",
+                            ? "bg-primary/10 font-medium text-primary hover:bg-primary/15"
+                            : "text-foreground/78 hover:bg-accent hover:text-accent-foreground",
                         )}
                       >
                         <item.icon className="size-4 shrink-0" />

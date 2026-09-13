@@ -87,7 +87,7 @@ interface AdvJsonState {
   text: string;
 }
 
-/** 已设置的请求参数 → 展示用 JSON（标准键在前、extra_body 最后；全空 = "{}"）。 */
+/** 已设置的请求参数 → 展示用 JSON（标准键在前、extra_body 最后；全空 = 空串，让输入框显示参数说明）。 */
 function paramsToJson(params: EndpointRequestParams): string {
   const obj: Record<string, unknown> = {};
   if (params.temperature !== null && params.temperature !== undefined) {
@@ -101,6 +101,9 @@ function paramsToJson(params: EndpointRequestParams): string {
   }
   if (params.extra_body !== null && params.extra_body !== undefined) {
     obj.extra_body = params.extra_body;
+  }
+  if (Object.keys(obj).length === 0) {
+    return "";
   }
   return JSON.stringify(obj, null, 2);
 }
@@ -139,6 +142,10 @@ function formToJson(
   } catch {
     // 原 JSON 无效：忽略
   }
+  // 全空 = 未设置任何参数：显示空串（输入框的参数说明 placeholder 可见，2026-09-13 用户反馈）。
+  if (Object.keys(obj).length === 0) {
+    return "";
+  }
   return JSON.stringify(obj, null, 2);
 }
 
@@ -147,6 +154,13 @@ function syncFormFromJson(text: string): {
   form: { temperature: string; top_p: string; max_tokens: string };
   state: AdvJsonState;
 } {
+  // 清空输入框 = 未填写，不是语法错误：表单同步清空、状态回到「已同步」。
+  if (text.trim() === "") {
+    return {
+      form: { temperature: "", top_p: "", max_tokens: "" },
+      state: { kind: "ok", text: "已同步（留空 = 全部用端点默认值）" },
+    };
+  }
   let parsed: Record<string, unknown>;
   try {
     parsed = JSON.parse(text) as Record<string, unknown>;
@@ -214,13 +228,18 @@ function collectAdvParams(input: {
     return { params: {}, error: "高级参数「max_retries」应是整数——请修正后再保存。" };
   }
   let parsed: Record<string, unknown>;
-  try {
-    parsed = JSON.parse(input.json) as Record<string, unknown>;
-  } catch {
-    return {
-      params: {},
-      error: "高级参数的 JSON 写法无效——修好后再保存，或清空该输入框。",
-    };
+  if (input.json.trim() === "") {
+    // 清空 = 全部不设（与「表单全空 + 无 extra_body」同义），不是语法错误。
+    parsed = {};
+  } else {
+    try {
+      parsed = JSON.parse(input.json) as Record<string, unknown>;
+    } catch {
+      return {
+        params: {},
+        error: "高级参数的 JSON 写法无效——修好后再保存，或清空该输入框。",
+      };
+    }
   }
   const extraBody = parsed.extra_body;
   if (
@@ -485,7 +504,7 @@ function EndpointConfigPanel(): ReactElement {
     draftName.trim() !== "" && draftBaseUrl.trim() !== "" && draftModel.trim() !== "";
 
   return (
-    <div className="grid min-h-0 grid-cols-[340px_1fr] overflow-hidden rounded-lg border border-border bg-card shadow-sm">
+    <div className="grid h-full min-h-0 grid-cols-[340px_1fr] overflow-hidden rounded-lg border border-border bg-card shadow-sm">
       {/* 左：配置列表 */}
       <div className="flex min-h-0 flex-col p-2">
         <div className="flex items-baseline gap-2 px-3 pt-2.5 pb-1.5">
@@ -504,8 +523,11 @@ function EndpointConfigPanel(): ReactElement {
                 onClick={() => pick(item.name)}
                 aria-current={active ? "true" : undefined}
                 className={
-                  "relative block w-full rounded-md px-3 py-2.5 text-left transition-colors hover:bg-accent " +
-                  (active ? "bg-primary/10" : "")
+                  "relative block w-full rounded-md px-3 py-2.5 text-left transition-colors " +
+                  // 激活行 hover 保持蓝系（与导航同口径，2026-09-13 用户反馈）。
+                  (active
+                    ? "bg-primary/10 hover:bg-primary/15"
+                    : "hover:bg-accent")
                 }
               >
                 {active && (
@@ -740,6 +762,9 @@ function EndpointConfigPanel(): ReactElement {
                       spellCheck={false}
                       className="min-h-[110px] font-mono text-[12.5px]"
                       value={advJson}
+                      placeholder={
+                        "参数说明：temperature = 采样温度（如 0.7）；top_p = 核采样阈值（如 0.9）；max_tokens = 输出 token 上限（如 1024）；extra_body = 原样透传厂商专有参数（如 {\"enable_thinking\": false}）。\n可直接粘贴厂商文档示例风格的 JSON；全部留空 = 使用端点默认值。"
+                      }
                       onInput={(event) => onAdvJsonInput(event.currentTarget.value)}
                     />
                     <p
@@ -1064,7 +1089,7 @@ function SkillsPanel(): ReactElement {
   };
 
   return (
-    <div className="grid min-h-0 grid-cols-[340px_1fr] overflow-hidden rounded-lg border border-border bg-card shadow-sm">
+    <div className="grid h-full min-h-0 grid-cols-[340px_1fr] overflow-hidden rounded-lg border border-border bg-card shadow-sm">
       {/* 左：列表 + 导入 */}
       <div className="flex min-h-0 flex-col p-2">
         <div className="flex items-baseline gap-2 px-3 pt-2.5 pb-1.5">
@@ -1396,7 +1421,7 @@ export function SettingsPage(): ReactElement {
             <ThemeToggle />
           </div>
         </header>
-        <div className="grid min-h-0 flex-1 grid-cols-[200px_1fr] gap-4 px-7 pb-6">
+        <div className="grid min-h-0 flex-1 grid-cols-[200px_1fr] grid-rows-[minmax(0,1fr)] gap-4 px-7 pb-6">
           <nav className="pt-1" aria-label="设置二级导航">
             {(["连接", "能力", "服务"] as const).map((group) => (
               <div key={group}>
@@ -1413,10 +1438,11 @@ export function SettingsPage(): ReactElement {
                           aria-current={active ? "true" : undefined}
                           onClick={() => setSection(item.key)}
                           className={
-                            "flex h-[34px] w-full items-center gap-2 rounded-md px-2.5 text-[13.5px] transition-colors hover:bg-accent hover:text-accent-foreground " +
+                            "flex h-[34px] w-full items-center gap-2 rounded-md px-2.5 text-[13.5px] transition-colors " +
+                            // 激活项 hover 保持蓝系（与侧栏同口径，2026-09-13 用户反馈）。
                             (active
-                              ? "bg-primary/10 font-medium text-primary"
-                              : "text-muted-foreground")
+                              ? "bg-primary/10 font-medium text-primary hover:bg-primary/15"
+                              : "text-muted-foreground hover:bg-accent hover:text-accent-foreground")
                           }
                         >
                           {item.label}
@@ -1429,25 +1455,43 @@ export function SettingsPage(): ReactElement {
             ))}
           </nav>
 
-          <section className="min-w-0 overflow-y-auto" aria-label="设置内容区">
+          {/* 端点 / 技能子页：面板吃满剩余高度、左右两栏各自内部滚动（2026-09-13 用户反馈
+              ——此前右侧滚动会带动左侧列表一起滚）；服务子页是内容流，保持整区滚动。 */}
+          <section
+            className={cn(
+              "min-w-0",
+              section === "service"
+                ? "overflow-y-auto"
+                : "flex min-h-0 flex-col overflow-hidden",
+            )}
+            aria-label="设置内容区"
+          >
             {section === "endpoints" && (
               <>
-                <h2 className="mt-0.5 mb-3 text-[17px] font-semibold">端点配置</h2>
-                <p className="-mt-2 mb-3.5 text-[12.5px] text-muted-foreground">
+                <h2 className="mt-0.5 mb-3 shrink-0 text-[17px] font-semibold">
+                  端点配置
+                </h2>
+                <p className="-mt-2 mb-3.5 shrink-0 text-[12.5px] text-muted-foreground">
                   OpenAI
                   兼容端点——可保存多套配置，随时切换当前使用；切换立即对新请求生效。
                 </p>
-                <EndpointConfigPanel />
+                <div className="min-h-0 flex-1">
+                  <EndpointConfigPanel />
+                </div>
               </>
             )}
             {section === "skills" && (
               <>
-                <h2 className="mt-0.5 mb-3 text-[17px] font-semibold">技能</h2>
-                <p className="-mt-2 mb-3.5 text-[12.5px] text-muted-foreground">
+                <h2 className="mt-0.5 mb-3 shrink-0 text-[17px] font-semibold">
+                  技能
+                </h2>
+                <p className="-mt-2 mb-3.5 shrink-0 text-[12.5px] text-muted-foreground">
                   导入 agentskills.io 标准 Skill 包；启用后其 SKILL.md
                   全文注入打标请求。
                 </p>
-                <SkillsPanel />
+                <div className="min-h-0 flex-1">
+                  <SkillsPanel />
+                </div>
               </>
             )}
             {section === "service" && (
