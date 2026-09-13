@@ -26,6 +26,7 @@ from dataset_factory.llm import (
     Message,
     StreamDelta,
     TextPart,
+    VideoPart,
 )
 from dataset_factory.prompts import Prompt, save_prompt
 from dataset_factory.sessions import list_sessions
@@ -150,6 +151,59 @@ def test_label_with_image_and_skill(
         isinstance(part, TextPart) and part.text.startswith("<skill>")
         for part in user.parts
     )
+
+
+def test_label_with_video_passes_frame_params(
+    temp_data_root: Path, tmp_path: Path, fake_engine: FakeCompleter
+) -> None:
+    """label 带视频：视频块与抽帧参数按 CLI 选项传到引擎。"""
+    _save_prompt("h3", "你是打标助手。")
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"mp4!")
+
+    result = runner.invoke(
+        app,
+        [
+            "label",
+            "-p",
+            "h3",
+            "-v",
+            str(video),
+            "--video-fps",
+            "4",
+            "--video-max-frames",
+            "8",
+            "-m",
+            "描述",
+        ],
+    )
+
+    assert result.exit_code == 0
+    user = fake_engine.calls[0][1]
+    videos = [part for part in user.parts if isinstance(part, VideoPart)]
+    assert len(videos) == 1
+    assert videos[0].fps == 4.0
+    assert videos[0].max_frames == 8
+
+
+def test_label_image_and_video_together_is_usage_error(
+    temp_data_root: Path, tmp_path: Path, fake_engine: FakeCompleter
+) -> None:
+    """同时给 --image 与 --video：退出码 2（用法错误）、不调模型。"""
+    _save_prompt("h3", "你是打标助手。")
+    image = tmp_path / "cat.jpg"
+    image.write_bytes(b"png!")
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"mp4!")
+
+    result = runner.invoke(
+        app,
+        ["label", "-p", "h3", "-i", str(image), "-v", str(video), "-m", "描述"],
+    )
+
+    assert result.exit_code == 2
+    assert "互斥" in result.output
+    assert fake_engine.calls == []
 
 
 def test_label_missing_prompt_exits_user_error(

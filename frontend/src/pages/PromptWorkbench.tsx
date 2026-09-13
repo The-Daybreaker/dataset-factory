@@ -65,6 +65,14 @@ import {
 /** 基础提示词的字节护栏（对齐 Codex project_doc_max_bytes，后端同值校验）。 */
 const PROMPT_BYTE_BUDGET = 32 * 1024;
 
+/** 视频扩展名清单（与后端 MIME 映射同一份）：历史消息只带文件名，靠它认素材类型。 */
+const VIDEO_EXTENSIONS = [".mp4", ".mov", ".webm", ".m4v"];
+
+function isVideoAttachment(name: string): boolean {
+  const lowered = name.toLowerCase();
+  return VIDEO_EXTENSIONS.some((extension) => lowered.endsWith(extension));
+}
+
 /** 待发送的附件（图片或视频，一期单素材/次）：原始文件名 + data URL + 视频抽帧参数。 */
 interface PendingMedia {
   name: string;
@@ -781,7 +789,7 @@ export function PromptWorkbench({
           >
             {messages.length === 0 && (
               <p className="mt-8 text-center text-[12px] text-muted-foreground">
-                （还没有消息——发一张图 + 指令开始打标）
+                （还没有消息——发图片或视频 + 指令开始打标）
               </p>
             )}
             {messages.map((message) =>
@@ -791,7 +799,11 @@ export function PromptWorkbench({
                     {message.text}
                     {message.attachment !== null && (
                       <span className="mt-2.5 flex items-center gap-2.5 rounded-lg bg-card py-2 pr-3.5 pl-2 text-[12px] text-muted-foreground shadow-sm">
-                        <ImageIcon className="size-7 shrink-0 rounded-md bg-muted p-1.5" />
+                        {isVideoAttachment(message.attachment) ? (
+                          <FilmIcon className="size-7 shrink-0 rounded-md bg-muted p-1.5" />
+                        ) : (
+                          <ImageIcon className="size-7 shrink-0 rounded-md bg-muted p-1.5" />
+                        )}
                         <span className="truncate">{message.attachment}</span>
                       </span>
                     )}

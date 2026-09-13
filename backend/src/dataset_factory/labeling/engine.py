@@ -184,7 +184,7 @@ class LabelingEngine:
             PromptNotFoundError: 基础提示词在提示词库中不存在。
             SkillNotFoundError: 勾选的 skill 名不在 skill 库中（拼写错误或已被删除）。
             LLMError: 模型调用失败（此时信封已落盘，「当时喂了什么」有据可查）。
-            ValueError: image 与 image_bytes 同时提供。
+            ValueError: image 与 image_bytes 同时提供；或图片与视频同时提供（一期单素材/次）。
         """
         start = perf_counter()
         (

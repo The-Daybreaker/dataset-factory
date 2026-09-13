@@ -155,6 +155,7 @@ def test_connection(request: EndpointTestRequest) -> EndpointTestResult:
         request=RequestConfig(
             timeout_seconds=_TEST_TIMEOUT_SECONDS,
             max_retries=0,
+            max_tokens=1,
         ),
     )
     return _probe(config)

@@ -49,7 +49,7 @@ export function App(): ReactElement {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
-    <div className="flex h-full min-w-128 overflow-hidden">
+    <div className="flex h-full min-w-[1280px] overflow-hidden">
       <aside
         data-testid="sidebar"
         className={cn(

@@ -75,6 +75,8 @@ def label(
     ] = False,
 ) -> None:
     """单发打标：发图片或视频 + 指令，输出 caption；带 --session 续接即迭代改写。"""
+    if image is not None and video is not None:
+        raise typer.BadParameter("图片与视频只能带一个（--image 与 --video 互斥）。")
     engine = build_engine()
     video_bytes = video.read_bytes() if video is not None else None
     result = engine.label(

@@ -1,8 +1,8 @@
 """provider 中立的补全接口 + OpenAI 兼容实现（当前唯一 provider）。
 
 - Completer：中立契约（一组消息进、模型产出文本出），加新 provider = 新增一个实现；
-- OpenAIChatClient：走官方 openai SDK 的 /v1/chat/completions（非流式），改 base_url
-  即接任意兼容端点；
+- OpenAIChatClient：走官方 openai SDK 的 /v1/chat/completions（非流式 complete 与流式
+  stream 两条路径），改 base_url 即接任意兼容端点；
 - build_completer：从 EndpointConfig 装配客户端，显式设 timeout / max_retries。
 """
 
@@ -231,8 +231,8 @@ def _given_or_omit[T](value: T | None) -> T | openai.Omit:
 def _to_openai_message(message: Message) -> ChatCompletionMessageParam:
     """把中立 Message 转成 openai SDK 的消息参数：按角色分派。
 
-    system / assistant 只承载文本（拼成正文字符串）；user 可含图片，逐块转成
-    OpenAI 内容块列表（文本块 + image_url data URL）。
+    system / assistant 只承载文本（拼成正文字符串）；user 可含图片与视频，逐块转成
+    OpenAI 内容块列表（文本块 + image_url / video_url data URL）。
     """
     if message.role == "system":
         return ChatCompletionSystemMessageParam(
