@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
@@ -20,6 +21,14 @@ from .schemas import (
 )
 
 router = APIRouter(prefix="/api", tags=["打标与会话"])
+
+# 视频扩展名 → MIME（进 video_url 的 data URL 前缀）；未识别的扩展名回落 mp4。
+_VIDEO_MIME = {
+    ".mp4": "video/mp4",
+    ".m4v": "video/x-m4v",
+    ".mov": "video/quicktime",
+    ".webm": "video/webm",
+}
 
 
 def build_engine() -> LabelingEngine:
@@ -65,6 +74,7 @@ def label(request: LabelRequest) -> LabelResponse:
     video_bytes = (
         _decode_media(request.video_base64, "视频") if request.video_base64 else None
     )
+    video_mime = _VIDEO_MIME.get(Path(request.video_name).suffix.lower(), "video/mp4")
     result = build_engine().label(
         session_id=request.session_id,
         prompt_name=request.prompt_name,
@@ -74,6 +84,7 @@ def label(request: LabelRequest) -> LabelResponse:
         image_name=request.image_name,
         video_bytes=video_bytes,
         video_name=request.video_name,
+        video_mime=video_mime,
         video_fps=request.video_fps,
         video_max_frames=request.video_max_frames,
     )

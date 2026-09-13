@@ -139,6 +139,7 @@ class LabelingEngine:
         image_name: str = "image.png",
         video_bytes: bytes | None = None,
         video_name: str = "video.mp4",
+        video_mime: str = "video/mp4",
         video_fps: float = 2.0,
         video_max_frames: int = 16,
     ) -> LabelResult:
@@ -242,6 +243,7 @@ class LabelingEngine:
             instruction=instruction,
             image_bytes=sent_image_bytes,
             video_bytes=sent_video_bytes,
+            video_mime=video_mime,
             video_fps=video_fps,
             video_max_frames=video_max_frames,
             attachment=attachment,
@@ -410,6 +412,7 @@ def _assemble(
     instruction: str,
     image_bytes: bytes | None,
     video_bytes: bytes | None,
+    video_mime: str,
     video_fps: float,
     video_max_frames: int,
     attachment: str | None,
@@ -449,7 +452,9 @@ def _assemble(
     elif video_bytes is not None:
         placeholder = f"[视频: {attachment}]"
         current_parts.append(
-            VideoPart(video_bytes, fps=video_fps, max_frames=video_max_frames)
+            VideoPart(
+                video_bytes, mime=video_mime, fps=video_fps, max_frames=video_max_frames
+            )
         )
         current_text_parts.append(placeholder)
 
