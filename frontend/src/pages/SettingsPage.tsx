@@ -12,8 +12,15 @@ import {
 } from "lucide-react";
 import type { ReactElement } from "react";
 import { useCallback, useEffect, useState } from "react";
-import type { EndpointConfigSummary, SkillFileInfo, SkillInfo } from "../api";
+import type {
+  EndpointConfigSummary,
+  ServiceLogs,
+  ServiceStatus,
+  SkillFileInfo,
+  SkillInfo,
+} from "../api";
 import { api, errorMessage } from "../api";
+import { ShutdownButton } from "../components/shutdown-button";
 import { ThemeToggle } from "../components/theme-toggle";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import { Badge } from "../components/ui/badge";
@@ -44,7 +51,7 @@ import {
 } from "../components/ui/tooltip";
 import { cn } from "../lib/utils";
 
-type SettingsSection = "endpoints" | "skills";
+type SettingsSection = "endpoints" | "skills" | "service";
 
 interface Feedback {
   kind: "success" | "error";
@@ -793,6 +800,83 @@ function SkillsPanel(): ReactElement {
   );
 }
 
+/* ================= 服务 · 服务运行（状态 + 日志） ================= */
+
+function ServicePanel(): ReactElement {
+  const [status, setStatus] = useState<ServiceStatus | null>(null);
+  const [logs, setLogs] = useState<ServiceLogs | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const reload = useCallback(async (): Promise<void> => {
+    setLoading(true);
+    try {
+      const [nextStatus, nextLogs] = await Promise.all([
+        api.getService(),
+        api.getServiceLogs(),
+      ]);
+      setStatus(nextStatus);
+      setLogs(nextLogs);
+      setError(null);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+        {status !== null ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="flex items-center gap-2 text-[13.5px] font-medium">
+              <span className="size-2 rounded-full bg-success" aria-hidden />
+              服务运行中 · {status.version}
+            </span>
+            <span className="text-[12.5px] text-muted-foreground">
+              监听 {status.host}:{status.port}
+            </span>
+            <span className="flex-1" />
+            <ShutdownButton expanded />
+          </div>
+        ) : (
+          <p className="text-[13px] text-muted-foreground">{error ?? "读取中…"}</p>
+        )}
+      </div>
+      <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+        <div className="mb-2 flex items-center gap-2">
+          <h3 className="text-[13px] font-semibold">运行日志</h3>
+          <span className="text-[11px] text-muted-foreground">最近 200 行</span>
+          <span className="flex-1" />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={loading}
+            onClick={() => void reload()}
+          >
+            刷新
+          </Button>
+        </div>
+        {logs?.exists ? (
+          <pre className="max-h-80 overflow-auto rounded-md bg-muted/40 p-3 font-mono text-[11.5px] leading-[1.75]">
+            {logs.content}
+          </pre>
+        ) : (
+          <p className="text-[12.5px] text-muted-foreground">
+            {error ?? "（暂无日志）"}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** 页头状态 chip：当前激活的端点配置（只读展示；切换在工作台切换器 / 本子页详情）。 */
 function ActiveEndpointChip(): ReactElement {
   const [active, setActive] = useState<EndpointConfigSummary | null>(null);
@@ -836,6 +920,7 @@ const SECTIONS: ReadonlyArray<{ key: SettingsSection; group: string; label: stri
   [
     { key: "endpoints", group: "连接", label: "端点配置" },
     { key: "skills", group: "能力", label: "技能" },
+    { key: "service", group: "服务", label: "服务运行" },
   ];
 
 export function SettingsPage(): ReactElement {
@@ -853,12 +938,13 @@ export function SettingsPage(): ReactElement {
           </div>
           <div className="flex items-center gap-3">
             <ActiveEndpointChip />
+            <ShutdownButton />
             <ThemeToggle />
           </div>
         </header>
         <div className="grid min-h-0 flex-1 grid-cols-[200px_1fr] gap-4 px-7 pb-6">
           <nav className="pt-1" aria-label="设置二级导航">
-            {(["连接", "能力"] as const).map((group) => (
+            {(["连接", "能力", "服务"] as const).map((group) => (
               <div key={group}>
                 <p className="px-2.5 pt-2.5 pb-1 text-[11.5px] font-semibold text-muted-foreground">
                   {group}
@@ -908,6 +994,12 @@ export function SettingsPage(): ReactElement {
                   全文注入打标请求。
                 </p>
                 <SkillsPanel />
+              </>
+            )}
+            {section === "service" && (
+              <>
+                <h2 className="mt-0.5 mb-3 text-[17px] font-semibold">服务运行</h2>
+                <ServicePanel />
               </>
             )}
           </section>

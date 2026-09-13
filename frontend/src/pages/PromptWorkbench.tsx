@@ -30,6 +30,7 @@ import type {
   SkillInfo,
 } from "../api";
 import { ApiError, api, errorMessage } from "../api";
+import { ShutdownButton } from "../components/shutdown-button";
 import { ThemeToggle } from "../components/theme-toggle";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import { Button } from "../components/ui/button";
@@ -642,6 +643,7 @@ export function PromptWorkbench({
               onActivate={(name) => void activateEndpoint(name)}
               onManage={onNavigateToSettings}
             />
+            <ShutdownButton />
             <ThemeToggle />
           </div>
 

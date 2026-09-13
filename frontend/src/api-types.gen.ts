@@ -186,6 +186,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/service": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Service Status
+         * @description 报告服务运行状态（serve 启动时注入；信息缺位视为非 serve 场景，409）。
+         */
+        get: operations["service_status_api_service_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/service/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Service Logs
+         * @description 运行日志尾部（最近 N 行）；日志文件尚未创建时 exists=false、内容为空。
+         */
+        get: operations["service_logs_api_service_logs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/service/shutdown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Shutdown
+         * @description 请求停止服务：置位退出开关，进行中的请求处理完后服务自行退出。
+         */
+        post: operations["shutdown_api_service_shutdown_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/latest": {
         parameters: {
             query?: never;
@@ -591,6 +651,58 @@ export interface components {
              * @default
              */
             description: string;
+        };
+        /**
+         * ServiceLogs
+         * @description GET /api/service/logs 的响应体：运行日志尾部。
+         */
+        ServiceLogs: {
+            /**
+             * Content
+             * @description 日志尾部内容（最近若干行，换行拼接）
+             */
+            content: string;
+            /**
+             * Exists
+             * @description 日志文件是否已存在（服务启动后首次写日志前为 false）
+             */
+            exists: boolean;
+            /**
+             * Path
+             * @description 日志文件路径
+             */
+            path: string;
+        };
+        /**
+         * ServiceStatus
+         * @description GET /api/service 的响应体：服务运行状态（serve 启动时注入）。
+         */
+        ServiceStatus: {
+            /**
+             * Host
+             * @description 监听地址
+             */
+            host: string;
+            /**
+             * Log File
+             * @description 运行日志文件路径
+             */
+            log_file: string;
+            /**
+             * Port
+             * @description 监听端口
+             */
+            port: number;
+            /**
+             * Started At
+             * @description 启动时间（UTC ISO 8601）
+             */
+            started_at: string;
+            /**
+             * Version
+             * @description 服务版本
+             */
+            version: string;
         };
         /**
          * SessionSnapshotResponse
@@ -1265,6 +1377,95 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    service_status_api_service_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceStatus"];
+                };
+            };
+        };
+    };
+    service_logs_api_service_logs_get: {
+        parameters: {
+            query?: {
+                lines?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceLogs"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    shutdown_api_service_shutdown_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description 服务不是由 dsf serve 拉起 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description Content-Type 不是 application/json */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
                 };
             };
         };

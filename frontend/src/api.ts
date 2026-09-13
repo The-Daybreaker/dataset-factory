@@ -28,6 +28,8 @@ export type EndpointUpdateRequest = components["schemas"]["EndpointUpdateRequest
 export type SkillFilesResponse = components["schemas"]["SkillFilesResponse"];
 export type SkillFileInfo = components["schemas"]["SkillFileInfo"];
 export type SkillFileContent = components["schemas"]["SkillFileContent"];
+export type ServiceStatus = components["schemas"]["ServiceStatus"];
+export type ServiceLogs = components["schemas"]["ServiceLogs"];
 /** 错误体的契约形状（{"detail": string}）——错误路径也在契约里，不再有盲区。 */
 export type ErrorDetail = components["schemas"]["ErrorDetail"];
 
@@ -245,4 +247,14 @@ export const api = {
         .map(encodeURIComponent)
         .join("/")}`,
     ),
+
+  /** 服务运行状态（serve 启动时注入；非 serve 场景后端返回 409）。 */
+  getService: () => request<ServiceStatus>("GET", "/api/service"),
+
+  /** 运行日志尾部（最近 lines 行，1–1000；文件未创建时 exists=false）。 */
+  getServiceLogs: (lines = 200) =>
+    request<ServiceLogs>("GET", `/api/service/logs?lines=${lines}`),
+
+  /** 请求停止服务（服务把手头请求做完再退出；成功即 202）。 */
+  shutdownService: () => request<void>("POST", "/api/service/shutdown", {}),
 };
