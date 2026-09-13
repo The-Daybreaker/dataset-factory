@@ -696,6 +696,29 @@ export interface components {
              * @description 启用的 skill 清单；缺省沿用会话设置
              */
             skill_names?: string[] | null;
+            /**
+             * Video Base64
+             * @description 视频（data URL 或纯 base64）；与图片互斥（一期单素材/次）
+             */
+            video_base64?: string | null;
+            /**
+             * Video Fps
+             * @description 视频抽帧 fps（请求值，端点把关上限）
+             * @default 2
+             */
+            video_fps: number;
+            /**
+             * Video Max Frames
+             * @description 视频抽帧帧数上限
+             * @default 16
+             */
+            video_max_frames: number;
+            /**
+             * Video Name
+             * @description 视频原始文件名
+             * @default video.mp4
+             */
+            video_name: string;
         };
         /**
          * LabelResponse
@@ -1247,7 +1270,7 @@ export interface operations {
                     "application/json": components["schemas"]["LabelResponse"];
                 };
             };
-            /** @description 输入不合法（图片 base64 / 提示词未选 / 空轮 / 端点配置缺失） */
+            /** @description 输入不合法（图片 / 视频不合法或互斥、提示词未选、空轮、端点配置缺失） */
             400: {
                 headers: {
                     [name: string]: unknown;

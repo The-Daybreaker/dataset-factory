@@ -8,6 +8,7 @@
 import {
   ChevronDownIcon,
   FileTextIcon,
+  FilmIcon,
   ImageIcon,
   PaperclipIcon,
   PlusIcon,
@@ -64,10 +65,13 @@ import {
 /** 基础提示词的字节护栏（对齐 Codex project_doc_max_bytes，后端同值校验）。 */
 const PROMPT_BYTE_BUDGET = 32 * 1024;
 
-/** 待发送的图片：原始文件名 + data URL（后端接受 data URL 或纯 base64）。 */
-interface PendingImage {
+/** 待发送的附件（图片或视频，一期单素材/次）：原始文件名 + data URL + 视频抽帧参数。 */
+interface PendingMedia {
   name: string;
   dataUrl: string;
+  kind: "image" | "video";
+  fps: number;
+  maxFrames: number;
 }
 
 /** 界面里的消息 = 后端历史消息 + 渲染用稳定 id + 新增消息才有的 meta。 */
@@ -193,7 +197,7 @@ export function PromptWorkbench({
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [instruction, setInstruction] = useState("");
-  const [image, setImage] = useState<PendingImage | null>(null);
+  const [media, setMedia] = useState<PendingMedia | null>(null);
   const [sending, setSending] = useState(false);
   const [waitSeconds, setWaitSeconds] = useState(0);
   const [chatError, setChatError] = useState("");
@@ -372,20 +376,28 @@ export function PromptWorkbench({
     );
   };
 
-  const pickImage = (event: ChangeEvent<HTMLInputElement>): void => {
+  const pickMedia = (event: ChangeEvent<HTMLInputElement>): void => {
     const file = event.target.files?.[0];
+    event.target.value = "";
     if (file === undefined) {
       return;
     }
+    const isVideo = file.type.startsWith("video/");
     const reader = new FileReader();
     reader.onload = () => {
-      setImage({ name: file.name, dataUrl: String(reader.result) });
+      setMedia({
+        name: file.name,
+        dataUrl: String(reader.result),
+        kind: isVideo ? "video" : "image",
+        fps: 2.0,
+        maxFrames: 16,
+      });
     };
     reader.readAsDataURL(file);
   };
 
   const send = async (): Promise<void> => {
-    if (sending || (instruction.trim() === "" && image === null)) {
+    if (sending || (instruction.trim() === "" && media === null)) {
       return;
     }
     setSending(true);
@@ -397,8 +409,12 @@ export function PromptWorkbench({
         prompt_name: selectedName === "" ? null : selectedName,
         skill_names: skillNames,
         instruction,
-        image_base64: image?.dataUrl ?? null,
-        image_name: image?.name ?? "image.png",
+        image_base64: media?.kind === "image" ? media.dataUrl : null,
+        image_name: media?.kind === "image" ? media.name : "image.png",
+        video_base64: media?.kind === "video" ? media.dataUrl : null,
+        video_name: media?.kind === "video" ? media.name : "video.mp4",
+        video_fps: media?.kind === "video" ? media.fps : 2.0,
+        video_max_frames: media?.kind === "video" ? media.maxFrames : 16,
       });
       setMessages((current) => [
         ...current,
@@ -406,7 +422,7 @@ export function PromptWorkbench({
           id: current.length,
           role: "user",
           text: instruction,
-          attachment: image?.name ?? null,
+          attachment: media?.name ?? null,
         },
         {
           id: current.length + 1,
@@ -420,7 +436,7 @@ export function PromptWorkbench({
       ]);
       setSessionId(result.session_id);
       setInstruction("");
-      setImage(null);
+      setMedia(null);
     } catch (err) {
       setChatError(errorMessage(err));
     } finally {
@@ -451,7 +467,7 @@ export function PromptWorkbench({
 
   const bodyBytes = new TextEncoder().encode(draftBody).length;
   const byteOver = bodyBytes > PROMPT_BYTE_BUDGET;
-  const canSend = !sending && (instruction.trim() !== "" || image !== null);
+  const canSend = !sending && (instruction.trim() !== "" || media !== null);
   const bodyKiB = (bodyBytes / 1024).toFixed(1);
 
   return (
@@ -825,24 +841,78 @@ export function PromptWorkbench({
                   <label className="inline-flex h-[30px] cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-[12px] hover:bg-accent">
                     <PaperclipIcon className="size-3.5" />
                     附件
-                    <span className="sr-only">附图（一期单张 / 次）</span>
+                    <span className="sr-only">附图片或视频（一期单素材 / 次）</span>
                     <input
                       type="file"
-                      accept="image/*"
+                      accept="image/*,video/mp4,video/quicktime,video/webm"
                       className="sr-only"
-                      aria-label="附图"
-                      onChange={pickImage}
+                      aria-label="附图或视频"
+                      onChange={pickMedia}
                     />
                   </label>
                 </TooltipTrigger>
-                <TooltipContent>附图（一期单张 / 次）</TooltipContent>
+                <TooltipContent>附图片或视频（一期单素材 / 次）</TooltipContent>
               </Tooltip>
-              {image !== null && (
+              {media !== null && media.kind === "image" && (
                 <img
                   className="size-9 rounded-md border border-border object-cover"
-                  src={image.dataUrl}
-                  alt={`待打标图片 ${image.name}`}
+                  src={media.dataUrl}
+                  alt={`待打标图片 ${media.name}`}
                 />
+              )}
+              {media !== null && media.kind === "video" && (
+                <span className="inline-flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2 py-1 text-[11.5px] text-muted-foreground">
+                  <FilmIcon className="size-4" />
+                  <span className="max-w-40 truncate">{media.name}</span>
+                  <label className="flex items-center gap-1">
+                    fps
+                    <input
+                      type="number"
+                      min={0.1}
+                      max={10}
+                      step={0.1}
+                      value={media.fps}
+                      onChange={(event) =>
+                        setMedia((current) =>
+                          current === null
+                            ? current
+                            : { ...current, fps: Number(event.currentTarget.value) },
+                        )
+                      }
+                      className="h-6 w-14 rounded-md border border-input bg-background px-1.5 text-[12px]"
+                      aria-label="视频抽帧 fps"
+                    />
+                  </label>
+                  <label className="flex items-center gap-1">
+                    帧上限
+                    <input
+                      type="number"
+                      min={1}
+                      max={256}
+                      value={media.maxFrames}
+                      onChange={(event) =>
+                        setMedia((current) =>
+                          current === null
+                            ? current
+                            : {
+                                ...current,
+                                maxFrames: Number(event.currentTarget.value),
+                              },
+                        )
+                      }
+                      className="h-6 w-14 rounded-md border border-input bg-background px-1.5 text-[12px]"
+                      aria-label="视频抽帧帧数上限"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    aria-label="移除附件"
+                    className="text-muted-foreground hover:text-foreground"
+                    onClick={() => setMedia(null)}
+                  >
+                    ×
+                  </button>
+                </span>
               )}
               <span className="ml-auto text-[11.5px] text-muted-foreground">
                 Enter 发送 · Shift+Enter 换行
