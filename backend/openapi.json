@@ -436,6 +436,72 @@
         "title": "PromptSaveRequest",
         "type": "object"
       },
+      "ServiceLogs": {
+        "description": "GET /api/service/logs 的响应体：运行日志尾部。",
+        "properties": {
+          "content": {
+            "description": "日志尾部内容（最近若干行，换行拼接）",
+            "title": "Content",
+            "type": "string"
+          },
+          "exists": {
+            "description": "日志文件是否已存在（服务启动后首次写日志前为 false）",
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "日志文件路径",
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "exists",
+          "content"
+        ],
+        "title": "ServiceLogs",
+        "type": "object"
+      },
+      "ServiceStatus": {
+        "description": "GET /api/service 的响应体：服务运行状态（serve 启动时注入）。",
+        "properties": {
+          "host": {
+            "description": "监听地址",
+            "title": "Host",
+            "type": "string"
+          },
+          "log_file": {
+            "description": "运行日志文件路径",
+            "title": "Log File",
+            "type": "string"
+          },
+          "port": {
+            "description": "监听端口",
+            "title": "Port",
+            "type": "integer"
+          },
+          "started_at": {
+            "description": "启动时间（UTC ISO 8601）",
+            "title": "Started At",
+            "type": "string"
+          },
+          "version": {
+            "description": "服务版本",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "host",
+          "port",
+          "started_at",
+          "log_file"
+        ],
+        "title": "ServiceStatus",
+        "type": "object"
+      },
       "SessionSnapshotResponse": {
         "description": "GET /api/sessions/* 的响应体（恢复会话的完整快照）。",
         "properties": {
@@ -1352,6 +1418,114 @@
         "summary": "Rename",
         "tags": [
           "提示词库"
+        ]
+      }
+    },
+    "/api/service": {
+      "get": {
+        "description": "报告服务运行状态（serve 启动时注入；信息缺位视为非 serve 场景，409）。",
+        "operationId": "service_status_api_service_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Service Status",
+        "tags": [
+          "服务运行"
+        ]
+      }
+    },
+    "/api/service/logs": {
+      "get": {
+        "description": "运行日志尾部（最近 N 行）；日志文件尚未创建时 exists=false、内容为空。",
+        "operationId": "service_logs_api_service_logs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "lines",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Lines",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceLogs"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Service Logs",
+        "tags": [
+          "服务运行"
+        ]
+      }
+    },
+    "/api/service/shutdown": {
+      "post": {
+        "description": "请求停止服务：置位退出开关，进行中的请求处理完后服务自行退出。",
+        "operationId": "shutdown_api_service_shutdown_post",
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "服务不是由 dsf serve 拉起"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Content-Type 不是 application/json"
+          }
+        },
+        "summary": "Shutdown",
+        "tags": [
+          "服务运行"
         ]
       }
     },

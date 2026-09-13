@@ -60,6 +60,26 @@ class HistoryMessageView(BaseModel):
     attachment: str | None
 
 
+class ServiceStatus(BaseModel):
+    """GET /api/service 的响应体：服务运行状态（serve 启动时注入）。"""
+
+    version: str = Field(description="服务版本")
+    host: str = Field(description="监听地址")
+    port: int = Field(description="监听端口")
+    started_at: str = Field(description="启动时间（UTC ISO 8601）")
+    log_file: str = Field(description="运行日志文件路径")
+
+
+class ServiceLogs(BaseModel):
+    """GET /api/service/logs 的响应体：运行日志尾部。"""
+
+    path: str = Field(description="日志文件路径")
+    exists: bool = Field(
+        description="日志文件是否已存在（服务启动后首次写日志前为 false）"
+    )
+    content: str = Field(description="日志尾部内容（最近若干行，换行拼接）")
+
+
 class SessionSnapshotResponse(BaseModel):
     """GET /api/sessions/* 的响应体（恢复会话的完整快照）。"""
 

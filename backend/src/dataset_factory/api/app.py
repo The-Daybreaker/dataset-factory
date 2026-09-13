@@ -60,6 +60,7 @@ from . import (
     routes_endpoints,
     routes_labeling,
     routes_prompts,
+    routes_service,
     routes_skills,
 )
 from .middleware import RequestLogMiddleware
@@ -81,6 +82,7 @@ def create_app(frontend_dir: Path | None = None) -> FastAPI:
     app.include_router(routes_skills.router)
     app.include_router(routes_endpoints.router)
     app.include_router(routes_config.router)
+    app.include_router(routes_service.router)
     directory = frontend_dir if frontend_dir is not None else _default_frontend_dir()
     if directory.is_dir():
         app.mount("/", StaticFiles(directory=directory, html=True), name="frontend")

@@ -19,8 +19,11 @@
 from __future__ import annotations
 
 import logging
+import logging.handlers
 import os
 import sys
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -70,6 +73,29 @@ app.command(name="label")(label.label)
 app.command(name="chat")(label.chat)
 
 
+def add_server_file_handler(path: Path) -> logging.handlers.RotatingFileHandler:
+    """把日志同时写入指定文件（serve 专用：数据根 logs/server.log，滚动 5 MiB × 3 份）。
+
+    无窗口后台运行时终端看不到输出，文件是唯一的完整日志来源；CLI 单发命令不挂
+    （它们的输出就在终端，不留文件）。挂在 root logger 上，与 stderr handler 并行，
+    请求 id 过滤器与格式同 stderr 侧一致。
+
+    Args:
+        path: 日志文件路径（父目录不存在则创建）。
+
+    Returns:
+        挂上的 handler（serve 生命周期内保留；测试用完移除）。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.handlers.RotatingFileHandler(
+        path, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    handler.addFilter(RequestIdFilter())
+    handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+    logging.getLogger().addHandler(handler)
+    return handler
+
+
 @app.command("serve")
 def serve(
     host: Annotated[str, typer.Option("--host", help="监听地址")] = "127.0.0.1",
@@ -85,19 +111,40 @@ def serve(
         ),
     ] = None,
 ) -> None:
-    """启动本地 Web 服务（HTTP API + 前端界面），Ctrl+C 停止。"""
+    """启动本地 Web 服务（HTTP API + 前端界面）。
+
+    前台运行 Ctrl+C 停止；无窗口后台运行（start 脚本默认）用界面电源按钮或 stop 脚本。
+    """
     import uvicorn
 
     from ..api import create_app
+    from ..api.routes_service import server_log_path
 
     if log_level is not None:
         _configure_logging(log_level)
+    app = create_app()
+    log_file = server_log_path()
+    app.state.service_info = {
+        "version": app.version,
+        "host": host,
+        "port": port,
+        "started_at": datetime.now(UTC).isoformat(),
+        "log_file": str(log_file),
+    }
+    add_server_file_handler(log_file)
     typer.secho(
-        f"Web 服务启动：http://{host}:{port}（Ctrl+C 停止）", fg=typer.colors.YELLOW
+        f"Web 服务启动：http://{host}:{port}（前台 Ctrl+C 停止；后台用界面电源按钮或 stop 脚本）",
+        fg=typer.colors.YELLOW,
     )
     # log_config=None：不让 uvicorn 覆盖应用刚配好的日志（否则级别与格式会被打回它的默认）。
     # access_log=False：访问日志由 RequestLogMiddleware 接管——uvicorn 自带那条不含耗时。
-    uvicorn.run(create_app(), host=host, port=port, log_config=None, access_log=False)
+    config = uvicorn.Config(
+        app, host=host, port=port, log_config=None, access_log=False
+    )
+    server = uvicorn.Server(config)
+    # 把 uvicorn 实例交给应用：/api/service/shutdown 置 should_exit 即「手头请求做完再退出」。
+    app.state.uvicorn_server = server
+    server.run()
 
 
 # 应用层在最早期配置日志（stdout 留给结果正文，退出码约定见模块 docstring）。

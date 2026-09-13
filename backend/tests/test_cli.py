@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import json
 import logging
+import logging.handlers
 from collections.abc import Sequence
 from pathlib import Path
+from typing import cast
 
 import pytest
+import uvicorn
 from fastapi import FastAPI
 from typer.testing import CliRunner
 
@@ -473,23 +476,41 @@ def test_chat_turn_failure_keeps_session_alive(
 def test_serve_wires_uvicorn_without_access_log(
     temp_data_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """serve：uvicorn 以「不覆盖应用日志、访问日志交中间件」方式装配（T10 的关键修复不被回退）。"""
+    """serve：显式构造 uvicorn.Server（不覆盖应用日志、访问日志交中间件；实例挂 app.state）。"""
     captured: dict[str, object] = {}
 
-    def fake_run(app_obj: object, **kwargs: object) -> None:
-        captured["app"] = app_obj
-        captured.update(kwargs)
+    class FakeServer:
+        def __init__(self, config: uvicorn.Config) -> None:
+            captured["config"] = config
 
-    monkeypatch.setattr("uvicorn.run", fake_run)
+        def run(self) -> None:
+            captured["ran"] = True
 
-    result = runner.invoke(app, ["serve", "--host", "127.0.0.1", "--port", "8123"])
+    monkeypatch.setattr("uvicorn.Server", FakeServer)
+    root = logging.getLogger()
+    saved_handlers = root.handlers[:]
+
+    try:
+        result = runner.invoke(app, ["serve", "--host", "127.0.0.1", "--port", "8123"])
+        file_handlers = [
+            h
+            for h in logging.getLogger().handlers
+            if isinstance(h, logging.handlers.RotatingFileHandler)
+        ]
+    finally:
+        # serve 会往 root 挂文件日志 handler（指向临时数据根），测试后还原避免遗留。
+        root.handlers[:] = saved_handlers
 
     assert result.exit_code == 0
-    assert isinstance(captured["app"], FastAPI)
-    assert captured["host"] == "127.0.0.1"
-    assert captured["port"] == 8123
-    assert captured["log_config"] is None
-    assert captured["access_log"] is False
+    config = cast(uvicorn.Config, captured["config"])
+    assert isinstance(config.app, FastAPI)
+    assert config.host == "127.0.0.1"
+    assert config.port == 8123
+    assert config.log_config is None
+    assert config.access_log is False
+    assert captured["ran"] is True
+    assert len(file_handlers) == 1
+    assert file_handlers[0].baseFilename.endswith("server.log")
 
 
 def test_serve_log_level_reconfigures_logging(
@@ -500,10 +521,14 @@ def test_serve_log_level_reconfigures_logging(
     saved_handlers = root.handlers[:]
     saved_level = root.level
 
-    def fake_run(app_obj: object, **kwargs: object) -> None:
-        return None
+    class FakeServer:
+        def __init__(self, config: uvicorn.Config) -> None:
+            return None
 
-    monkeypatch.setattr("uvicorn.run", fake_run)
+        def run(self) -> None:
+            return None
+
+    monkeypatch.setattr("uvicorn.Server", FakeServer)
 
     try:
         result = runner.invoke(app, ["serve", "--log-level", "warning"])
