@@ -19,7 +19,7 @@ from time import perf_counter
 from typing import cast
 
 from .._obs import ms_since
-from ..llm import Completer, ImagePart, Message, Role, TextPart
+from ..llm import Completer, ImagePart, Message, Role, TextPart, VideoPart
 from ..prompts import read_prompt
 from ..sessions import (
     JsonValue,
@@ -137,6 +137,10 @@ class LabelingEngine:
         image: Path | None = None,
         image_bytes: bytes | None = None,
         image_name: str = "image.png",
+        video_bytes: bytes | None = None,
+        video_name: str = "video.mp4",
+        video_fps: float = 2.0,
+        video_max_frames: int = 16,
     ) -> LabelResult:
         """跑一轮打标：组装请求 → 先落信封 → 调模型 → 落回复，返回 caption 与会话 id。
 
@@ -176,8 +180,17 @@ class LabelingEngine:
         start = perf_counter()
         if image is not None and image_bytes is not None:
             raise ValueError("image 与 image_bytes 只能二选一。")
-        if not instruction.strip() and image is None and image_bytes is None:
-            raise EmptyTurnError("本轮没有任何可打标的内容：请输入指令或附一张图片。")
+        if video_bytes is not None and (image is not None or image_bytes is not None):
+            raise ValueError("视频与图片只能二选一（一期单素材/次）。")
+        if (
+            not instruction.strip()
+            and image is None
+            and image_bytes is None
+            and video_bytes is None
+        ):
+            raise EmptyTurnError(
+                "本轮没有任何可打标的内容：请输入指令或附一张图片 / 一段视频。"
+            )
         if session_id is None:
             events: list[SessionEvent] = []
         else:
@@ -210,12 +223,16 @@ class LabelingEngine:
 
         attachment: str | None = None
         sent_image_bytes: bytes | None = None
+        sent_video_bytes: bytes | None = None
         if image is not None:
             attachment = save_attachment(session_id, image)
             sent_image_bytes = _read_attachment(session_id, attachment)
         elif image_bytes is not None:
             attachment = save_attachment_bytes(session_id, image_name, image_bytes)
             sent_image_bytes = image_bytes
+        elif video_bytes is not None:
+            attachment = save_attachment_bytes(session_id, video_name, video_bytes)
+            sent_video_bytes = video_bytes
         append_message(session_id, "user", instruction, attachment)
 
         messages, envelope_messages = _assemble(
@@ -224,6 +241,9 @@ class LabelingEngine:
             history=history,
             instruction=instruction,
             image_bytes=sent_image_bytes,
+            video_bytes=sent_video_bytes,
+            video_fps=video_fps,
+            video_max_frames=video_max_frames,
             attachment=attachment,
         )
         append_envelope(
@@ -348,9 +368,19 @@ def _replay_history(events: Sequence[SessionEvent]) -> tuple[Message, ...]:
         if event.text:
             parts.append(TextPart(event.text))
         if event.attachment is not None:
-            parts.append(TextPart(f"[图片: {event.attachment}]"))
+            parts.append(TextPart(f"[{_attachment_label(event.attachment)}]"))
         history.append(Message(role=cast(Role, event.role), parts=tuple(parts)))
     return tuple(history)
+
+
+_VIDEO_EXTENSIONS = frozenset({".mp4", ".mov", ".webm", ".avi", ".mkv", ".m4v"})
+
+
+def _attachment_label(attachment: str) -> str:
+    """历史附件的占位标签：按扩展名区分图片 / 视频（视频字节同样不随历史重发）。"""
+    suffix = Path(attachment).suffix.lower()
+    kind = "视频" if suffix in _VIDEO_EXTENSIONS else "图片"
+    return f"{kind}: {attachment}"
 
 
 def _load_enabled_skill_texts(names: Sequence[str]) -> list[str]:
@@ -379,12 +409,15 @@ def _assemble(
     history: Sequence[Message],
     instruction: str,
     image_bytes: bytes | None,
+    video_bytes: bytes | None,
+    video_fps: float,
+    video_max_frames: int,
     attachment: str | None,
 ) -> tuple[list[Message], list[JsonValue]]:
     """组装一轮打标，同时产出两个视图。
 
-    同一处逻辑生成、两个视图不会漂移：llm 消息（真实请求，图片是真字节）与信封消息
-    （人类复盘快照，图片渲染为占位文本——base64 无人能读且撑爆事件流）。
+    同一处逻辑生成、两个视图不会漂移：llm 消息（真实请求，图片 / 视频是真字节）与信封消息
+    （人类复盘快照，媒体渲染为占位文本——base64 无人能读且撑爆事件流）。
 
     Args:
         prompt_body: 基础提示词正文（进 system 消息）。
@@ -392,12 +425,15 @@ def _assemble(
         history: 回放出的历史消息。
         instruction: 本轮用户指令。
         image_bytes: 本轮图片字节；None 表示无图。
-        attachment: 本轮附件名（进信封占位文本）；None 表示无图。
+        video_bytes: 本轮视频字节；None 表示无视频（与图片互斥，调用方已校验）。
+        video_fps: 视频抽帧 fps（随附件可调）。
+        video_max_frames: 视频抽帧帧数上限（随附件可调）。
+        attachment: 本轮附件名（进信封占位文本）；None 表示无附件。
 
     Returns:
         (llm 消息列表, 信封消息视图列表)。
     """
-    current_parts: list[TextPart | ImagePart] = []
+    current_parts: list[TextPart | ImagePart | VideoPart] = []
     current_text_parts: list[str] = []
     for text in skill_texts:
         wrapped = f"{_SKILL_OPEN}\n{text}\n{_SKILL_CLOSE}"
@@ -409,6 +445,12 @@ def _assemble(
     if image_bytes is not None:
         placeholder = f"[图片: {attachment}]"
         current_parts.append(ImagePart(image_bytes))
+        current_text_parts.append(placeholder)
+    elif video_bytes is not None:
+        placeholder = f"[视频: {attachment}]"
+        current_parts.append(
+            VideoPart(video_bytes, fps=video_fps, max_frames=video_max_frames)
+        )
         current_text_parts.append(placeholder)
 
     messages: list[Message] = [

@@ -36,6 +36,17 @@ class LabelRequest(BaseModel):
         default=None, description="图片（data URL 或纯 base64）；缺省纯文本轮"
     )
     image_name: str = Field(default="image.png", description="图片原始文件名")
+    video_base64: str | None = Field(
+        default=None,
+        description="视频（data URL 或纯 base64）；与图片互斥（一期单素材/次）",
+    )
+    video_name: str = Field(default="video.mp4", description="视频原始文件名")
+    video_fps: float = Field(
+        default=2.0, ge=0.1, le=10.0, description="视频抽帧 fps（请求值，端点把关上限）"
+    )
+    video_max_frames: int = Field(
+        default=16, ge=1, le=256, description="视频抽帧帧数上限"
+    )
 
 
 class LabelResponse(BaseModel):

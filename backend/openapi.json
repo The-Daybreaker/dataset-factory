@@ -431,6 +431,40 @@
             ],
             "description": "启用的 skill 清单；缺省沿用会话设置",
             "title": "Skill Names"
+          },
+          "video_base64": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "视频（data URL 或纯 base64）；与图片互斥（一期单素材/次）",
+            "title": "Video Base64"
+          },
+          "video_fps": {
+            "default": 2.0,
+            "description": "视频抽帧 fps（请求值，端点把关上限）",
+            "maximum": 10.0,
+            "minimum": 0.1,
+            "title": "Video Fps",
+            "type": "number"
+          },
+          "video_max_frames": {
+            "default": 16,
+            "description": "视频抽帧帧数上限",
+            "maximum": 256.0,
+            "minimum": 1.0,
+            "title": "Video Max Frames",
+            "type": "integer"
+          },
+          "video_name": {
+            "default": "video.mp4",
+            "description": "视频原始文件名",
+            "title": "Video Name",
+            "type": "string"
           }
         },
         "title": "LabelRequest",
@@ -1236,7 +1270,7 @@
                 }
               }
             },
-            "description": "输入不合法（图片 base64 / 提示词未选 / 空轮 / 端点配置缺失）"
+            "description": "输入不合法（图片 / 视频不合法或互斥、提示词未选、空轮、端点配置缺失）"
           },
           "404": {
             "content": {

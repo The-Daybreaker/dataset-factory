@@ -20,7 +20,7 @@ from dataset_factory.labeling import (
     SessionSettings,
     SettingsFormatError,
 )
-from dataset_factory.llm import ImagePart, LLMError, Message, TextPart
+from dataset_factory.llm import ImagePart, LLMError, Message, TextPart, VideoPart
 from dataset_factory.prompts import Prompt, PromptNotFoundError, save_prompt
 from dataset_factory.sessions import (
     EnvelopeEvent,
@@ -126,6 +126,45 @@ def test_image_only_turn_allows_empty_instruction(
     engine.label(prompt_name="h3", instruction="", image=image)
 
     assert fake_completer.calls[0][1].parts == (ImagePart(b"fake-png-bytes"),)
+
+
+def test_video_turn_sends_video_part(
+    temp_data_root: Path, fake_completer: FakeCompleter
+) -> None:
+    """视频轮：VideoPart 进当轮 user 消息（fps / 帧上限随附件一并下发）。"""
+    _save_prompt("h3", "你是打标助手。")
+    engine = LabelingEngine(fake_completer, _MODEL)
+
+    engine.label(
+        prompt_name="h3",
+        instruction="描述这个动作",
+        video_bytes=b"fake-mp4-bytes",
+        video_name="clip.mp4",
+        video_fps=3.0,
+        video_max_frames=8,
+    )
+
+    assert fake_completer.calls[0][1].parts == (
+        TextPart("描述这个动作"),
+        VideoPart(b"fake-mp4-bytes", fps=3.0, max_frames=8),
+    )
+
+
+def test_video_and_image_together_raises(
+    temp_data_root: Path, tmp_path: Path, fake_completer: FakeCompleter
+) -> None:
+    """视频与图片同轮提供 → ValueError（一期单素材/次）。"""
+    _save_prompt("h3", "你是打标助手。")
+    engine = LabelingEngine(fake_completer, _MODEL)
+    image = _make_image(tmp_path / "cat.jpg")
+
+    with pytest.raises(ValueError, match="二选一"):
+        engine.label(
+            prompt_name="h3",
+            instruction="x",
+            image=image,
+            video_bytes=b"mp4",
+        )
 
 
 def test_events_recorded_in_order(

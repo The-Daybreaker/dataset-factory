@@ -28,6 +28,7 @@ from dataset_factory.llm import (
     RequestConfig,
     SecretValue,
     TextPart,
+    VideoPart,
     build_completer,
 )
 
@@ -142,6 +143,31 @@ def test_complete_converts_user_message_with_image() -> None:
     assert user_content[0] == {"type": "text", "text": "describe"}
     assert user_content[1]["type"] == "image_url"
     assert user_content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_complete_converts_user_message_with_video() -> None:
+    """user 消息含视频块：转成端点扩展 video_url 内容块（data URL + fps / max_frames）。"""
+    sdk = MagicMock()
+    sdk.chat.completions.create.return_value = _response_with_content("caption")
+    client = OpenAIChatClient(cast(openai.OpenAI, sdk), "gpt-test")
+    mp4 = b"\x00\x00\x00 ftypisomfake"
+    messages = [
+        Message(
+            role="user",
+            parts=(TextPart("describe"), VideoPart(mp4, fps=3.0, max_frames=24)),
+        )
+    ]
+
+    client.complete(messages)
+
+    sent = sdk.chat.completions.create.call_args.kwargs["messages"]
+    user_content = sent[0]["content"]
+    assert user_content[0] == {"type": "text", "text": "describe"}
+    assert user_content[1]["type"] == "video_url"
+    video_url = user_content[1]["video_url"]
+    assert video_url["url"].startswith("data:video/mp4;base64,")
+    assert video_url["fps"] == 3.0
+    assert video_url["max_frames"] == 24
 
 
 def test_complete_raises_on_empty_choices() -> None:

@@ -8,10 +8,11 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 from collections.abc import Sequence
 from time import perf_counter
-from typing import Protocol
+from typing import Protocol, cast
 
 import openai
 from openai.types.chat import (
@@ -39,7 +40,7 @@ from .errors import (
     LLMUnexpectedError,
 )
 from .images import encode_image_data_url
-from .messages import ImagePart, Message, TextPart
+from .messages import ImagePart, Message, TextPart, VideoPart
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +185,7 @@ def _joined_text(message: Message) -> str:
 
 
 def _user_content(message: Message) -> list[ChatCompletionContentPartParam]:
-    """把 user 消息的内容块逐个转成 OpenAI 内容块：文本块 → text，图片块 → image_url。"""
+    """把 user 消息的内容块逐个转成 OpenAI 内容块：文本 → text、图片 → image_url、视频 → video_url（端点扩展）。"""
     content: list[ChatCompletionContentPartParam] = []
     for part in message.parts:
         if isinstance(part, ImagePart):
@@ -192,6 +193,23 @@ def _user_content(message: Message) -> list[ChatCompletionContentPartParam]:
                 ChatCompletionContentPartImageParam(
                     type="image_url",
                     image_url={"url": encode_image_data_url(part.data)},
+                )
+            )
+        elif isinstance(part, VideoPart):
+            # video_url 是 OpenAI SDK 类型化参数之外的端点扩展（如 SiliconFlow）：
+            # 按端点文档构造原始 dict，SDK 序列化时原样透传。
+            content.append(
+                cast(
+                    "ChatCompletionContentPartParam",
+                    {
+                        "type": "video_url",
+                        "video_url": {
+                            "url": f"data:{part.mime};base64,"
+                            + base64.b64encode(part.data).decode("ascii"),
+                            "fps": part.fps,
+                            "max_frames": part.max_frames,
+                        },
+                    },
                 )
             )
         else:

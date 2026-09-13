@@ -46,7 +46,7 @@ from .errors import (
     LLMUnexpectedError,
     UnsupportedImageError,
 )
-from .messages import ContentPart, ImagePart, Message, Role, TextPart
+from .messages import ContentPart, ImagePart, Message, Role, TextPart, VideoPart
 
 __all__ = [
     "DEFAULT_CONFIG_NAME",
@@ -76,6 +76,7 @@ __all__ = [
     "SecretValue",
     "TextPart",
     "UnsupportedImageError",
+    "VideoPart",
     "active_config_name",
     "build_completer",
     "create_config",

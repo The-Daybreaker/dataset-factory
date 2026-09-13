@@ -28,18 +28,15 @@ def build_engine() -> LabelingEngine:
     return LabelingEngine(build_completer(config), config.model)
 
 
-def _decode_image(image_base64: str) -> bytes:
-    """把 data URL 或纯 base64 解码成图片字节；不合法即 400（输入翻译在入口层做）。"""
-    payload = (
-        image_base64.split(",", 1)[-1]
-        if image_base64.startswith("data:")
-        else image_base64
-    )
+def _decode_media(payload: str, kind: str) -> bytes:
+    """把 data URL 或纯 base64 解码成媒体字节；不合法即 400（输入翻译在入口层做）。"""
+    raw = payload.split(",", 1)[-1] if payload.startswith("data:") else payload
     try:
-        return base64.b64decode(payload, validate=True)
+        return base64.b64decode(raw, validate=True)
     except (binascii.Error, ValueError) as exc:
         raise HTTPException(
-            status_code=400, detail="图片 base64 内容不合法；请确认上传的是有效图片。"
+            status_code=400,
+            detail=f"{kind} base64 内容不合法；请确认上传的是有效文件。",
         ) from exc
 
 
@@ -49,7 +46,7 @@ def _decode_image(image_base64: str) -> bytes:
     responses={
         400: {
             "model": ErrorDetail,
-            "description": "输入不合法（图片 base64 / 提示词未选 / 空轮 / 端点配置缺失）",
+            "description": "输入不合法（图片 / 视频不合法或互斥、提示词未选、空轮、端点配置缺失）",
         },
         404: {"model": ErrorDetail, "description": "会话或提示词不存在"},
         502: {"model": ErrorDetail, "description": "模型端点调用失败"},
@@ -58,7 +55,16 @@ def _decode_image(image_base64: str) -> bytes:
 )
 def label(request: LabelRequest) -> LabelResponse:
     """跑一轮打标（带 session_id 即续接迭代改写）。"""
-    image_bytes = _decode_image(request.image_base64) if request.image_base64 else None
+    if request.image_base64 and request.video_base64:
+        raise HTTPException(
+            status_code=400, detail="图片与视频只能带一个（一期单素材/次）。"
+        )
+    image_bytes = (
+        _decode_media(request.image_base64, "图片") if request.image_base64 else None
+    )
+    video_bytes = (
+        _decode_media(request.video_base64, "视频") if request.video_base64 else None
+    )
     result = build_engine().label(
         session_id=request.session_id,
         prompt_name=request.prompt_name,
@@ -66,6 +72,10 @@ def label(request: LabelRequest) -> LabelResponse:
         instruction=request.instruction,
         image_bytes=image_bytes,
         image_name=request.image_name,
+        video_bytes=video_bytes,
+        video_name=request.video_name,
+        video_fps=request.video_fps,
+        video_max_frames=request.video_max_frames,
     )
     return LabelResponse(session_id=result.session_id, caption=result.caption)
 

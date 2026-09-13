@@ -53,6 +53,17 @@ def label(
     image: Annotated[
         Path | None, typer.Option("--image", "-i", help="图片文件路径")
     ] = None,
+    video: Annotated[
+        Path | None,
+        typer.Option("--video", "-v", help="视频文件路径（与 --image 互斥）"),
+    ] = None,
+    video_fps: Annotated[
+        float, typer.Option("--video-fps", help="视频抽帧 fps（0.1–10，默认 2.0）")
+    ] = 2.0,
+    video_max_frames: Annotated[
+        int,
+        typer.Option("--video-max-frames", help="视频抽帧帧数上限（默认 16）"),
+    ] = 16,
     session_id: Annotated[
         str | None, typer.Option("--session", help="续接的会话 id；缺省新建会话")
     ] = None,
@@ -63,14 +74,19 @@ def label(
         ),
     ] = False,
 ) -> None:
-    """单发打标：发图 + 指令，输出 caption；带 --session 续接即迭代改写。"""
+    """单发打标：发图片或视频 + 指令，输出 caption；带 --session 续接即迭代改写。"""
     engine = build_engine()
+    video_bytes = video.read_bytes() if video is not None else None
     result = engine.label(
         session_id=session_id,
         prompt_name=prompt_name,
         skill_names=skill_names,
         instruction=message,
         image=image,
+        video_bytes=video_bytes,
+        video_name=video.name if video is not None else "video.mp4",
+        video_fps=video_fps,
+        video_max_frames=video_max_frames,
     )
     if as_json:
         typer.echo(

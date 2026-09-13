@@ -20,6 +20,8 @@ from dataset_factory.llm import (
     EndpointConfig,
     ImagePart,
     LLMTimeoutError,
+    TextPart,
+    VideoPart,
     read_stored_api_key,
 )
 from dataset_factory.prompts import Prompt, save_prompt
@@ -834,3 +836,49 @@ def test_skills_import_upload_conflict_409(client: TestClient) -> None:
 
     assert first.status_code == 200
     assert second.status_code == 409
+
+
+def test_label_with_video_uses_video_params(
+    client: TestClient, fake_engine: FakeCompleter
+) -> None:
+    """视频打标：video_base64 → VideoPart（fps / 帧上限随请求），走同一打标核心。"""
+    _save_prompt("p1", "你是打标助手。")
+    payload = base64.b64encode(b"fake-mp4").decode("ascii")
+
+    response = client.post(
+        "/api/label",
+        json={
+            "prompt_name": "p1",
+            "instruction": "描述动作",
+            "video_base64": payload,
+            "video_name": "clip.mp4",
+            "video_fps": 3.0,
+            "video_max_frames": 8,
+        },
+    )
+
+    assert response.status_code == 200
+    user = fake_engine.calls[0][-1]
+    assert user.parts == (
+        TextPart("描述动作"),
+        VideoPart(b"fake-mp4", fps=3.0, max_frames=8),
+    )
+
+
+def test_label_image_and_video_together_is_400(
+    client: TestClient, fake_engine: FakeCompleter
+) -> None:
+    """同轮同时带图片与视频 → 400（一期单素材/次）。"""
+    payload = base64.b64encode(b"x").decode("ascii")
+
+    response = client.post(
+        "/api/label",
+        json={
+            "prompt_name": "p1",
+            "instruction": "x",
+            "image_base64": payload,
+            "video_base64": payload,
+        },
+    )
+
+    assert response.status_code == 400

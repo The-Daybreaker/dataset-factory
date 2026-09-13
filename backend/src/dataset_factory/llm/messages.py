@@ -23,8 +23,22 @@ class ImagePart:
     data: bytes
 
 
-# 消息内容块类型：文本块或图片块。
-ContentPart = TextPart | ImagePart
+@dataclass(frozen=True)
+class VideoPart:
+    """一段视频内容块：持原始字节与抽帧参数（随素材可调），编码转换在发送前统一做。
+
+    fps / max_frames 是请求侧的抽帧参数（端点服务端按 min(fps × 时长, max_frames) 抽帧）；
+    帧上限只是请求值，端点能力上限由服务端把关、超限以端点报错呈现。
+    """
+
+    data: bytes
+    mime: str = "video/mp4"
+    fps: float = 2.0
+    max_frames: int = 16
+
+
+# 消息内容块类型：文本块或图片块或视频块。
+ContentPart = TextPart | ImagePart | VideoPart
 
 
 @dataclass(frozen=True)
