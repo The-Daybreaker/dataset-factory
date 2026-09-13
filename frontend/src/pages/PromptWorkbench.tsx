@@ -202,6 +202,10 @@ export function PromptWorkbench({
   const [waitSeconds, setWaitSeconds] = useState(0);
   const [chatError, setChatError] = useState("");
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [streaming, setStreaming] = useState<{
+    reasoning: string;
+    content: string;
+  } | null>(null);
   const bodyInputRef = useRef<HTMLTextAreaElement>(null);
   // 会话恢复是否带回了基础提示词：带回了就不做「自动选中首条」（恢复优先于默认）。
   const restoredPromptRef = useRef(false);
@@ -403,44 +407,67 @@ export function PromptWorkbench({
     setSending(true);
     setChatError("");
     const startedAt = Date.now();
+    const sentAttachment = media?.name ?? null;
+    // 用户消息先上屏（乐观更新）；回复走流式增量，done 后再落终稿消息。
+    setMessages((current) => [
+      ...current,
+      {
+        id: current.length,
+        role: "user",
+        text: instruction,
+        attachment: sentAttachment,
+      },
+    ]);
+    setStreaming({ reasoning: "", content: "" });
     try {
-      const result = await api.label({
-        session_id: sessionId,
-        prompt_name: selectedName === "" ? null : selectedName,
-        skill_names: skillNames,
-        instruction,
-        image_base64: media?.kind === "image" ? media.dataUrl : null,
-        image_name: media?.kind === "image" ? media.name : "image.png",
-        video_base64: media?.kind === "video" ? media.dataUrl : null,
-        video_name: media?.kind === "video" ? media.name : "video.mp4",
-        video_fps: media?.kind === "video" ? media.fps : 2.0,
-        video_max_frames: media?.kind === "video" ? media.maxFrames : 16,
-      });
-      setMessages((current) => [
-        ...current,
+      await api.labelStream(
         {
-          id: current.length,
-          role: "user",
-          text: instruction,
-          attachment: media?.name ?? null,
+          session_id: sessionId,
+          prompt_name: selectedName === "" ? null : selectedName,
+          skill_names: skillNames,
+          instruction,
+          image_base64: media?.kind === "image" ? media.dataUrl : null,
+          image_name: media?.kind === "image" ? media.name : "image.png",
+          video_base64: media?.kind === "video" ? media.dataUrl : null,
+          video_name: media?.kind === "video" ? media.name : "video.mp4",
+          video_fps: media?.kind === "video" ? media.fps : 2.0,
+          video_max_frames: media?.kind === "video" ? media.maxFrames : 16,
         },
         {
-          id: current.length + 1,
-          role: "assistant",
-          text: result.caption,
-          attachment: null,
-          model: activeModel || undefined,
-          durationSeconds: Math.round((Date.now() - startedAt) / 1000),
-          createdAt: new Date(),
+          onStart: (id) => setSessionId(id),
+          onDelta: (kind, text) =>
+            setStreaming((current) =>
+              current === null
+                ? current
+                : kind === "reasoning"
+                  ? { ...current, reasoning: current.reasoning + text }
+                  : { ...current, content: current.content + text },
+            ),
+          onDone: (id, caption) => {
+            setMessages((current) => [
+              ...current,
+              {
+                id: current.length,
+                role: "assistant",
+                text: caption,
+                attachment: null,
+                model: activeModel || undefined,
+                durationSeconds: Math.round((Date.now() - startedAt) / 1000),
+                createdAt: new Date(),
+              },
+            ]);
+            setSessionId(id);
+            setInstruction("");
+            setMedia(null);
+          },
+          onError: (message) => setChatError(message),
         },
-      ]);
-      setSessionId(result.session_id);
-      setInstruction("");
-      setMedia(null);
+      );
     } catch (err) {
       setChatError(errorMessage(err));
     } finally {
       setSending(false);
+      setStreaming(null);
     }
   };
 
@@ -816,6 +843,38 @@ export function PromptWorkbench({
                   </div>
                 </div>
               ),
+            )}
+            {streaming !== null && (
+              <div className="flex items-start">
+                <span
+                  className="mt-0.5 mr-2.5 flex size-[26px] shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground"
+                  aria-hidden
+                >
+                  <SparklesIcon className="size-3.5" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  {streaming.reasoning !== "" && (
+                    <details className="mb-2 max-w-full overflow-hidden rounded-lg border border-border bg-muted/40">
+                      <summary className="cursor-pointer px-3 py-1.5 text-[12px] text-muted-foreground">
+                        思考过程
+                      </summary>
+                      <p className="px-3 pb-2.5 text-[12.5px] leading-[1.65] text-muted-foreground whitespace-pre-wrap">
+                        {streaming.reasoning}
+                      </p>
+                    </details>
+                  )}
+                  <div className="inline-block max-w-full rounded-xl rounded-bl-[4px] bg-muted/55 px-3.5 py-[11px] text-[13.5px] whitespace-pre-wrap">
+                    {streaming.content}
+                    <span
+                      className="ml-0.5 inline-block h-[14px] w-[7px] animate-pulse bg-primary align-[-2px]"
+                      aria-hidden
+                    />
+                  </div>
+                  <div className="mt-2 text-[11.5px] text-muted-foreground">
+                    生成中…
+                  </div>
+                </div>
+              </div>
             )}
           </div>
 

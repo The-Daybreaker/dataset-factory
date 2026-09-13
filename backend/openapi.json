@@ -1319,6 +1319,66 @@
         ]
       }
     },
+    "/api/label/stream": {
+      "post": {
+        "description": "流式打标（SSE）：事件 = start → delta(kind=reasoning|content)… → done；失败发 error。",
+        "operationId": "label_stream_api_label_stream_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "输入不合法（同 /api/label；预备段失败走正常状态码，流中失败发 error 事件）"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "会话或提示词不存在"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Label Stream",
+        "tags": [
+          "打标与会话"
+        ]
+      }
+    },
     "/api/prompts": {
       "get": {
         "description": "列出全部提示词。",

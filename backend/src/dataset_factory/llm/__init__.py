@@ -46,7 +46,15 @@ from .errors import (
     LLMUnexpectedError,
     UnsupportedImageError,
 )
-from .messages import ContentPart, ImagePart, Message, Role, TextPart, VideoPart
+from .messages import (
+    ContentPart,
+    ImagePart,
+    Message,
+    Role,
+    StreamDelta,
+    TextPart,
+    VideoPart,
+)
 
 __all__ = [
     "DEFAULT_CONFIG_NAME",
@@ -74,6 +82,7 @@ __all__ = [
     "RequestConfig",
     "Role",
     "SecretValue",
+    "StreamDelta",
     "TextPart",
     "UnsupportedImageError",
     "VideoPart",

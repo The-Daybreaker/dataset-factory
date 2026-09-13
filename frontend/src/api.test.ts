@@ -80,3 +80,78 @@ describe("request 错误分类", () => {
     });
   });
 });
+
+describe("labelStream SSE 解析", () => {
+  it("SSE 帧按事件分发到回调（start / delta / done）", async () => {
+    const encoder = new TextEncoder();
+    const sse =
+      'event: start\ndata: {"session_id":"s1"}\n\n' +
+      'event: delta\ndata: {"kind":"reasoning","text":"想一想"}\n\n' +
+      'event: delta\ndata: {"kind":"content","text":"你好"}\n\n' +
+      'event: done\ndata: {"session_id":"s1","caption":"你好"}\n\n';
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(sse));
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(body, { status: 200 })),
+    );
+    const calls: string[] = [];
+
+    await api.labelStream(
+      {
+        prompt_name: "p",
+        instruction: "写",
+        image_name: "image.png",
+        video_name: "video.mp4",
+        video_fps: 2.0,
+        video_max_frames: 16,
+      },
+      {
+        onStart: (id) => calls.push(`start:${id}`),
+        onDelta: (kind, text) => calls.push(`delta:${kind}:${text}`),
+        onDone: (id, caption) => calls.push(`done:${id}:${caption}`),
+        onError: (message) => calls.push(`error:${message}`),
+      },
+    );
+
+    expect(calls).toEqual([
+      "start:s1",
+      "delta:reasoning:想一想",
+      "delta:content:你好",
+      "done:s1:你好",
+    ]);
+  });
+
+  it("HTTP 层错误（预备段 4xx）→ 抛 ApiError，不走事件回调", async () => {
+    const response = new Response(JSON.stringify({ detail: "提示词不存在" }), {
+      status: 404,
+      headers: { "Content-Type": "application/json" },
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+    const onError = vi.fn();
+
+    await expect(
+      api.labelStream(
+        {
+          prompt_name: "缺失",
+          instruction: "x",
+          image_name: "image.png",
+          video_name: "video.mp4",
+          video_fps: 2.0,
+          video_max_frames: 16,
+        },
+        {
+          onStart: vi.fn(),
+          onDelta: vi.fn(),
+          onDone: vi.fn(),
+          onError,
+        },
+      ),
+    ).rejects.toMatchObject({ kind: "http", status: 404 });
+    expect(onError).not.toHaveBeenCalled();
+  });
+});

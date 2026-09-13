@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import logging.handlers
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import cast
 
@@ -20,7 +20,13 @@ from typer.testing import CliRunner
 
 import dataset_factory.cli.label as label_module
 from dataset_factory.cli import app
-from dataset_factory.llm import ImagePart, LLMTimeoutError, Message, TextPart
+from dataset_factory.llm import (
+    ImagePart,
+    LLMTimeoutError,
+    Message,
+    StreamDelta,
+    TextPart,
+)
 from dataset_factory.prompts import Prompt, save_prompt
 from dataset_factory.sessions import list_sessions
 from dataset_factory.skills import import_skill
@@ -61,6 +67,12 @@ class _FlakyCompleter:
         if self.calls == 1:
             raise LLMTimeoutError("模型调用超时；可重试或调大 timeout。")
         return "第二轮回复"
+
+    def stream(self, messages: Sequence[Message]) -> Iterator[StreamDelta]:
+        self.calls += 1
+        if self.calls == 1:
+            raise LLMTimeoutError("模型调用超时；可重试或调大 timeout。")
+        yield StreamDelta(kind="content", text="第二轮回复")
 
 
 def test_label_outputs_caption_and_session_hint(

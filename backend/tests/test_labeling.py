@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 import pytest
@@ -19,8 +19,17 @@ from dataset_factory.labeling import (
     PromptNotSelectedError,
     SessionSettings,
     SettingsFormatError,
+    StreamFinished,
+    StreamStarted,
 )
-from dataset_factory.llm import ImagePart, LLMError, Message, TextPart, VideoPart
+from dataset_factory.llm import (
+    ImagePart,
+    LLMError,
+    Message,
+    StreamDelta,
+    TextPart,
+    VideoPart,
+)
 from dataset_factory.prompts import Prompt, PromptNotFoundError, save_prompt
 from dataset_factory.sessions import (
     EnvelopeEvent,
@@ -165,6 +174,26 @@ def test_video_and_image_together_raises(
             image=image,
             video_bytes=b"mp4",
         )
+
+
+def test_label_stream_yields_events_and_persists(
+    temp_data_root: Path, fake_completer: FakeCompleter
+) -> None:
+    """流式打标：事件 = Started → 增量… → Finished；终稿落盘、可恢复。"""
+    _save_prompt("h3", "你是打标助手。")
+    engine = LabelingEngine(fake_completer, _MODEL)
+
+    events = list(engine.label_stream(prompt_name="h3", instruction="描述它"))
+
+    assert isinstance(events[0], StreamStarted)
+    deltas = [event for event in events if isinstance(event, StreamDelta)]
+    assert "".join(delta.text for delta in deltas) == "打标结果"
+    finished = events[-1]
+    assert isinstance(finished, StreamFinished)
+    assert finished.result.caption == "打标结果"
+    snapshot = engine.restore(finished.result.session_id)
+    assert snapshot.messages[-1].role == "assistant"
+    assert snapshot.messages[-1].text == "打标结果"
 
 
 def test_events_recorded_in_order(
@@ -384,6 +413,9 @@ def test_llm_failure_keeps_envelope_for_review(
 
     class _FailingCompleter:
         def complete(self, messages: Sequence[Message]) -> str:
+            raise LLMError("模型不可用")
+
+        def stream(self, messages: Sequence[Message]) -> Iterator[StreamDelta]:
             raise LLMError("模型不可用")
 
     _save_prompt("h3", "你是打标助手。")

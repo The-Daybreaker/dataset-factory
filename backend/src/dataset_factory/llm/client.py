@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import base64
 import logging
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from time import perf_counter
 from typing import Protocol, cast
 
@@ -40,7 +40,7 @@ from .errors import (
     LLMUnexpectedError,
 )
 from .images import encode_image_data_url
-from .messages import ImagePart, Message, TextPart, VideoPart
+from .messages import ImagePart, Message, StreamDelta, TextPart, VideoPart
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +62,23 @@ class Completer(Protocol):
         """
         ...
 
+    def stream(self, messages: Sequence[Message]) -> Iterator[StreamDelta]:
+        """流式发送一轮消息，逐段产出思考 / 正文增量。
+
+        Args:
+            messages: provider 中立消息序列（角色 + 有序内容块）。
+
+        Yields:
+            StreamDelta：思考或正文增量（顺序即模型产出顺序）。
+
+        Raises:
+            LLMError: 模型调用失败（含流中途失败）。
+        """
+        ...
+
 
 class OpenAIChatClient:
-    """OpenAI 兼容 /v1/chat/completions 的 Completer 实现（非流式）。"""
+    """OpenAI 兼容 /v1/chat/completions 的 Completer 实现（非流式 + 流式增量）。"""
 
     def __init__(
         self,
@@ -124,6 +138,58 @@ class OpenAIChatClient:
             raise _translate_sdk_error(exc) from exc
         logger.info("模型调用完成（%.0fms，模型 %s）", ms_since(start), self._model)
         return _extract_text(response)
+
+    def stream(self, messages: Sequence[Message]) -> Iterator[StreamDelta]:
+        """流式发送一轮消息：逐段产出思考增量（端点扩展 reasoning_content）与正文增量。
+
+        增量之外的请求装配与非流式 complete 完全一致（生成参数 / 透传口同一通道）；
+        流中途失败同样翻译成分类异常——调用方此时多半已把部分增量发给了界面，
+        由调用方决定如何呈现「生成中断」。
+
+        Args:
+            messages: provider 中立消息序列。
+
+        Yields:
+            StreamDelta：按模型产出顺序的思考 / 正文增量。
+
+        Raises:
+            LLMError: SDK 调用失败（建流或流中途），翻译成对应分类异常。
+        """
+        payload = [_to_openai_message(message) for message in messages]
+        start = perf_counter()
+        try:
+            stream = self._client.chat.completions.create(
+                model=self._model,
+                messages=payload,
+                # 未配置的项传 SDK 的 omit 哨兵（语义同非流式）：「这个参数别发」。
+                temperature=_given_or_omit(self._request.temperature),
+                top_p=_given_or_omit(self._request.top_p),
+                max_tokens=_given_or_omit(self._request.max_tokens),
+                extra_body=(
+                    dict(self._request.extra_body)
+                    if self._request.extra_body is not None
+                    else None
+                ),
+                stream=True,
+            )
+            for chunk in stream:
+                choice = chunk.choices[0] if chunk.choices else None
+                delta = choice.delta if choice is not None else None
+                # reasoning_content 是思考型模型的端点扩展，SDK 类型未收录 → getattr 读取。
+                reasoning = getattr(delta, "reasoning_content", None)
+                if reasoning:
+                    yield StreamDelta(kind="reasoning", text=str(reasoning))
+                if delta is not None and delta.content:
+                    yield StreamDelta(kind="content", text=delta.content)
+        except openai.APIError as exc:
+            logger.warning(
+                "模型流式调用失败（%.0fms，模型 %s，%s）",
+                ms_since(start),
+                self._model,
+                type(exc).__name__,
+            )
+            raise _translate_sdk_error(exc) from exc
+        logger.info("模型流式调用完成（%.0fms，模型 %s）", ms_since(start), self._model)
 
 
 def build_completer(config: EndpointConfig) -> Completer:

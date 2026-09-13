@@ -14,7 +14,7 @@ const apiMock = vi.hoisted(() => ({
   listSkills: vi.fn(),
   listEndpoints: vi.fn(),
   activateEndpoint: vi.fn(),
-  label: vi.fn(),
+  labelStream: vi.fn(),
   latestSession: vi.fn(),
 }));
 
@@ -83,7 +83,11 @@ beforeEach(() => {
     })("no session"),
   );
   apiMock.getPrompt.mockResolvedValue(FULL_PROMPT);
-  apiMock.label.mockResolvedValue({ caption: "打标结果 caption", session_id: "s-1" });
+  apiMock.labelStream.mockImplementation(async (_payload, handlers) => {
+    handlers.onStart("s-1");
+    handlers.onDelta("content", "打标结果 caption");
+    handlers.onDone("s-1", "打标结果 caption");
+  });
 });
 
 describe("PromptWorkbench", () => {
@@ -148,7 +152,7 @@ describe("PromptWorkbench", () => {
     expect(await screen.findByText("已保存提示词「new-prompt」")).toBeInTheDocument();
   });
 
-  it("发送：label 请求携带选中的基础提示词，回复上屏并显示模型 meta", async () => {
+  it("发送：labelStream 请求携带选中的基础提示词，流式渲染后上屏终稿与模型 meta", async () => {
     render(<PromptWorkbench onNavigateToSettings={() => {}} />);
 
     await waitFor(() => {
@@ -158,11 +162,17 @@ describe("PromptWorkbench", () => {
     await userEvent.click(screen.getByRole("button", { name: "发送" }));
 
     await waitFor(() => {
-      expect(apiMock.label).toHaveBeenCalledWith(
+      expect(apiMock.labelStream).toHaveBeenCalledWith(
         expect.objectContaining({
           prompt_name: "h3-video",
           instruction: "给这张图打个标",
           skill_names: [],
+        }),
+        expect.objectContaining({
+          onStart: expect.any(Function),
+          onDelta: expect.any(Function),
+          onDone: expect.any(Function),
+          onError: expect.any(Function),
         }),
       );
     });
@@ -170,7 +180,40 @@ describe("PromptWorkbench", () => {
     expect(screen.getByText(/model-a · \d+s/)).toBeInTheDocument();
   });
 
-  it("提示词库为空时发送：label 收到 null（后端给可操作错误）", async () => {
+  it("发送：流式增量在思考过程区与正文区逐段渲染，done 后上屏终稿", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    apiMock.labelStream.mockImplementation(async (_payload, handlers) => {
+      handlers.onStart("s1");
+      handlers.onDelta("reasoning", "先想想");
+      handlers.onDelta("content", "打标结");
+      await gate;
+      handlers.onDelta("content", "果");
+      handlers.onDone("s1", "打标结果");
+    });
+    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
+    });
+    await userEvent.type(screen.getByLabelText("打标指令"), "给这张图打个标");
+    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    // 流中：思考增量可见（details 内容在 DOM 中即算找到）、正文只到增量为止。
+    await waitFor(() => {
+      expect(screen.getByText("先想想")).toBeInTheDocument();
+      expect(screen.getByText("打标结")).toBeInTheDocument();
+    });
+
+    release();
+    // done：终稿上屏、生成中状态消失。
+    expect(await screen.findByText("打标结果")).toBeInTheDocument();
+    expect(screen.queryByText("生成中…")).not.toBeInTheDocument();
+  });
+
+  it("提示词库为空时发送：labelStream 收到 null（后端给可操作错误）", async () => {
     apiMock.listPrompts.mockResolvedValue([]);
     render(<PromptWorkbench onNavigateToSettings={() => {}} />);
 
@@ -183,8 +226,9 @@ describe("PromptWorkbench", () => {
     await userEvent.click(screen.getByRole("button", { name: "发送" }));
 
     await waitFor(() => {
-      expect(apiMock.label).toHaveBeenCalledWith(
+      expect(apiMock.labelStream).toHaveBeenCalledWith(
         expect.objectContaining({ prompt_name: null }),
+        expect.anything(),
       );
     });
   });

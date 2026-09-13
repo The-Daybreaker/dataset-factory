@@ -51,3 +51,15 @@ class Message:
 
     role: Role
     parts: tuple[ContentPart, ...]
+
+
+@dataclass(frozen=True)
+class StreamDelta:
+    """流式输出的一个增量：思考（reasoning）或正文（content）的一小段文本。
+
+    reasoning_content 是思考型模型（如 Qwen3.5 thinking）的端点扩展字段，OpenAI 标准
+    增量只有 content；不支持思考的端点自然只产 content 增量。
+    """
+
+    kind: Literal["reasoning", "content"]
+    text: str

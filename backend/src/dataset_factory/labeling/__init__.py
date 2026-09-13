@@ -13,6 +13,8 @@ from .engine import (
     LabelResult,
     SessionSettings,
     SessionSnapshot,
+    StreamFinished,
+    StreamStarted,
 )
 from .errors import (
     AttachmentReadError,
@@ -33,4 +35,6 @@ __all__ = [
     "SessionSettings",
     "SessionSnapshot",
     "SettingsFormatError",
+    "StreamFinished",
+    "StreamStarted",
 ]

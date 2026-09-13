@@ -12,15 +12,23 @@ JSON 的来回转换收敛在本模块（sessions 只把
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
 from typing import cast
 
 from .._obs import ms_since
-from ..llm import Completer, ImagePart, Message, Role, TextPart, VideoPart
-from ..prompts import read_prompt
+from ..llm import (
+    Completer,
+    ImagePart,
+    Message,
+    Role,
+    StreamDelta,
+    TextPart,
+    VideoPart,
+)
+from ..prompts import Prompt, read_prompt
 from ..sessions import (
     JsonValue,
     MessageEvent,
@@ -179,62 +187,25 @@ class LabelingEngine:
             ValueError: image 与 image_bytes 同时提供。
         """
         start = perf_counter()
-        if image is not None and image_bytes is not None:
-            raise ValueError("image 与 image_bytes 只能二选一。")
-        if video_bytes is not None and (image is not None or image_bytes is not None):
-            raise ValueError("视频与图片只能二选一（一期单素材/次）。")
-        if (
-            not instruction.strip()
-            and image is None
-            and image_bytes is None
-            and video_bytes is None
-        ):
-            raise EmptyTurnError(
-                "本轮没有任何可打标的内容：请输入指令或附一张图片 / 一段视频。"
-            )
-        if session_id is None:
-            events: list[SessionEvent] = []
-        else:
-            events = read_events(session_id)
-        settings = _fold_settings(events)
-        history = _replay_history(events)
-
-        wanted_prompt = prompt_name if prompt_name is not None else settings.prompt_name
-        wanted_skills = (
-            tuple(skill_names) if skill_names is not None else settings.skill_names
+        (
+            session_id,
+            prompt,
+            skill_texts,
+            history,
+            sent_image_bytes,
+            sent_video_bytes,
+            attachment,
+        ) = _begin_turn(
+            session_id=session_id,
+            prompt_name=prompt_name,
+            skill_names=skill_names,
+            instruction=instruction,
+            image=image,
+            image_bytes=image_bytes,
+            image_name=image_name,
+            video_bytes=video_bytes,
+            video_name=video_name,
         )
-        if wanted_prompt is None:
-            raise PromptNotSelectedError(
-                "尚未选定基础提示词（一轮打标必须有一个作 system 底座）；请传入 prompt_name。"
-            )
-        # 先校验、后落盘：提示词与 skill 是本轮的两个用户输入，在任何写盘（含新会话建目录）
-        # 之前全部验证完——失败轮零痕迹（不留坏设置、不留孤儿消息、也不留空壳会话）。
-        prompt = read_prompt(wanted_prompt)
-        skill_texts = _load_enabled_skill_texts(wanted_skills)
-        if session_id is None:
-            session_id = create_session()
-        if (wanted_prompt, wanted_skills) != (
-            settings.prompt_name,
-            settings.skill_names,
-        ):
-            append_settings(
-                session_id,
-                {_KEY_PROMPT: wanted_prompt, _KEY_SKILLS: list(wanted_skills)},
-            )
-
-        attachment: str | None = None
-        sent_image_bytes: bytes | None = None
-        sent_video_bytes: bytes | None = None
-        if image is not None:
-            attachment = save_attachment(session_id, image)
-            sent_image_bytes = _read_attachment(session_id, attachment)
-        elif image_bytes is not None:
-            attachment = save_attachment_bytes(session_id, image_name, image_bytes)
-            sent_image_bytes = image_bytes
-        elif video_bytes is not None:
-            attachment = save_attachment_bytes(session_id, video_name, video_bytes)
-            sent_video_bytes = video_bytes
-        append_message(session_id, "user", instruction, attachment)
 
         messages, envelope_messages = _assemble(
             prompt_body=prompt.body,
@@ -275,6 +246,85 @@ class LabelingEngine:
         )
         return LabelResult(session_id=session_id, caption=caption)
 
+    def label_stream(
+        self,
+        session_id: str | None = None,
+        *,
+        prompt_name: str | None = None,
+        skill_names: Sequence[str] | None = None,
+        instruction: str = "",
+        image: Path | None = None,
+        image_bytes: bytes | None = None,
+        image_name: str = "image.png",
+        video_bytes: bytes | None = None,
+        video_name: str = "video.mp4",
+        video_mime: str = "video/mp4",
+        video_fps: float = 2.0,
+        video_max_frames: int = 16,
+    ) -> Iterator[StreamStarted | StreamDelta | StreamFinished]:
+        """流式跑一轮打标：先落信封 → 逐段产出增量 → 终稿落盘，事件序列返回给调用方。
+
+        与 label() 共用同一套准备（校验 / 事件落盘 / 组装），区别只在模型调用方式：
+        stream 逐段产出、结束才把 caption 终稿落盘（思考过程不落盘——「存终稿」口径）。
+        事件顺序 = StreamStarted（信封已落盘）→ StreamDelta…（思考 / 正文增量）→
+        StreamFinished（终稿）。模型调用失败在流中途抛 LLMError——调用方此时可能已把
+        部分增量发给界面，由入口层决定如何呈现「生成中断」。
+
+        Args / Raises: 同 label()（同一套准备与素材互斥规则）。
+
+        Yields:
+            StreamStarted | StreamDelta | StreamFinished：打标流事件。
+        """
+        start = perf_counter()
+        (
+            session_id,
+            prompt,
+            skill_texts,
+            history,
+            sent_image_bytes,
+            sent_video_bytes,
+            attachment,
+        ) = _begin_turn(
+            session_id=session_id,
+            prompt_name=prompt_name,
+            skill_names=skill_names,
+            instruction=instruction,
+            image=image,
+            image_bytes=image_bytes,
+            image_name=image_name,
+            video_bytes=video_bytes,
+            video_name=video_name,
+        )
+
+        messages, envelope_messages = _assemble(
+            prompt_body=prompt.body,
+            skill_texts=skill_texts,
+            history=history,
+            instruction=instruction,
+            image_bytes=sent_image_bytes,
+            video_bytes=sent_video_bytes,
+            video_mime=video_mime,
+            video_fps=video_fps,
+            video_max_frames=video_max_frames,
+            attachment=attachment,
+        )
+        append_envelope(
+            session_id, {"model": self._model, "messages": envelope_messages}
+        )
+        yield StreamStarted(session_id=session_id)
+
+        content_parts: list[str] = []
+        for delta in self._completer.stream(messages):
+            if delta.kind == "content":
+                content_parts.append(delta.text)
+            yield delta
+        caption = "".join(content_parts)
+        append_message(session_id, "assistant", caption)
+        logger.info(
+            "一轮流式打标完成：合计 %.0fms（会话 %s）", ms_since(start), session_id
+        )
+        yield StreamFinished(result=LabelResult(session_id=session_id, caption=caption))
+
     def restore(self, session_id: str) -> SessionSnapshot:
         """恢复一个会话：当前设置 + 对话历史（入口层重启 / CLI 续接的起点）。
 
@@ -302,6 +352,112 @@ class LabelingEngine:
             settings=_fold_settings(events),
             messages=messages,
         )
+
+
+@dataclass(frozen=True)
+class StreamStarted:
+    """流式打标开始：会话已建立、本轮请求信封已落盘（界面可先拿到会话 id）。"""
+
+    session_id: str
+
+
+@dataclass(frozen=True)
+class StreamFinished:
+    """流式打标完成：caption 终稿已落盘（历史照常可恢复）。"""
+
+    result: LabelResult
+
+
+def _begin_turn(
+    *,
+    session_id: str | None,
+    prompt_name: str | None,
+    skill_names: Sequence[str] | None,
+    instruction: str,
+    image: Path | None,
+    image_bytes: bytes | None,
+    image_name: str,
+    video_bytes: bytes | None,
+    video_name: str,
+) -> tuple[
+    str, Prompt, list[str], tuple[Message, ...], bytes | None, bytes | None, str | None
+]:
+    """label / label_stream 共用的本轮准备：校验 → 事件落盘（设置 + 用户消息）。
+
+    先校验、后落盘：提示词与 skill 是本轮的两个用户输入，在任何写盘（含新会话建目录）
+    之前全部验证完——失败轮零痕迹（不留坏设置、不留孤儿消息、也不留空壳会话）。
+
+    Returns:
+        (session_id, 基础提示词, 注入的 skill 全文, 历史消息, 图片字节, 视频字节, 附件名)。
+
+    Raises:
+        EmptyTurnError / ValueError / PromptNotSelectedError / PromptNotFoundError /
+        SkillNotFoundError / AttachmentReadError / SettingsFormatError /
+        SessionNotFoundError: 同 label() 的准备段。
+    """
+    if image is not None and image_bytes is not None:
+        raise ValueError("image 与 image_bytes 只能二选一。")
+    if video_bytes is not None and (image is not None or image_bytes is not None):
+        raise ValueError("视频与图片只能二选一（一期单素材/次）。")
+    if (
+        not instruction.strip()
+        and image is None
+        and image_bytes is None
+        and video_bytes is None
+    ):
+        raise EmptyTurnError(
+            "本轮没有任何可打标的内容：请输入指令或附一张图片 / 一段视频。"
+        )
+    if session_id is None:
+        events: list[SessionEvent] = []
+    else:
+        events = read_events(session_id)
+    settings = _fold_settings(events)
+    history = _replay_history(events)
+
+    wanted_prompt = prompt_name if prompt_name is not None else settings.prompt_name
+    wanted_skills = (
+        tuple(skill_names) if skill_names is not None else settings.skill_names
+    )
+    if wanted_prompt is None:
+        raise PromptNotSelectedError(
+            "尚未选定基础提示词（一轮打标必须有一个作 system 底座）；请传入 prompt_name。"
+        )
+    prompt = read_prompt(wanted_prompt)
+    skill_texts = _load_enabled_skill_texts(wanted_skills)
+    if session_id is None:
+        session_id = create_session()
+    if (wanted_prompt, wanted_skills) != (
+        settings.prompt_name,
+        settings.skill_names,
+    ):
+        append_settings(
+            session_id,
+            {_KEY_PROMPT: wanted_prompt, _KEY_SKILLS: list(wanted_skills)},
+        )
+
+    attachment: str | None = None
+    sent_image_bytes: bytes | None = None
+    sent_video_bytes: bytes | None = None
+    if image is not None:
+        attachment = save_attachment(session_id, image)
+        sent_image_bytes = _read_attachment(session_id, attachment)
+    elif image_bytes is not None:
+        attachment = save_attachment_bytes(session_id, image_name, image_bytes)
+        sent_image_bytes = image_bytes
+    elif video_bytes is not None:
+        attachment = save_attachment_bytes(session_id, video_name, video_bytes)
+        sent_video_bytes = video_bytes
+    append_message(session_id, "user", instruction, attachment)
+    return (
+        session_id,
+        prompt,
+        skill_texts,
+        history,
+        sent_image_bytes,
+        sent_video_bytes,
+        attachment,
+    )
 
 
 def _read_attachment(session_id: str, name: str) -> bytes:

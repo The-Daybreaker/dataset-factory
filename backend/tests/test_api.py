@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import shutil
 from pathlib import Path
 
@@ -827,6 +828,25 @@ def test_skills_import_upload_rejects_traversal(client: TestClient) -> None:
     assert response.status_code == 400
     names = [item["name"] for item in client.get("/api/skills").json()]
     assert "evil" not in names
+
+
+def test_label_stream_sse(client: TestClient, fake_engine: FakeCompleter) -> None:
+    """流式打标端点：SSE 事件序列 start → delta… → done，帧格式 event + data。"""
+    _save_prompt("p1", "你是打标助手。")
+
+    response = client.post(
+        "/api/label/stream",
+        json={"prompt_name": "p1", "instruction": "描述它"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    frames = [frame for frame in response.text.split("\n\n") if frame.strip()]
+    events = [frame.splitlines()[0].removeprefix("event: ") for frame in frames]
+    assert events == ["start", "delta", "delta", "done"]
+    done_data = json.loads(frames[-1].splitlines()[1].removeprefix("data: "))
+    assert done_data["caption"] == "打标结果"
+    assert "session_id" in done_data
 
 
 def test_skills_import_upload_conflict_409(client: TestClient) -> None:

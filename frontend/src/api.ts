@@ -10,7 +10,6 @@ import type { components } from "./api-types.gen";
 
 /** 后端契约里的 schema 类型（别名导出：调用方不必知道生成结构）。 */
 export type LabelRequest = components["schemas"]["LabelRequest"];
-export type LabelResponse = components["schemas"]["LabelResponse"];
 export type SettingsView = components["schemas"]["SettingsView"];
 export type HistoryMessageView = components["schemas"]["HistoryMessageView"];
 export type SessionSnapshotResponse = components["schemas"]["SessionSnapshotResponse"];
@@ -40,8 +39,7 @@ export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** 请求超时的默认值：打标要等模型生成（可能几十秒），其余管理操作都该秒回。 */
-const LABEL_TIMEOUT_MS = 240_000;
+/** 管理操作的请求超时：都该秒回（打标走流式 labelStream，自带增量反馈、不设硬超时）。 */
 const DEFAULT_TIMEOUT_MS = 15_000;
 
 /** 带上下文的 API 错误：界面上不止一句话，还能拿到「哪一层」与「请求 id」。 */
@@ -170,10 +168,6 @@ async function request<T>(
 
 /** 后端接口的薄封装：一处集中管理路径与类型，界面代码只管调用。 */
 export const api = {
-  /** 发一轮打标；带 session_id 即续接该会话（迭代改写）。超时给长（要等模型生成）。 */
-  label: (payload: LabelRequest) =>
-    request<LabelResponse>("POST", "/api/label", payload, LABEL_TIMEOUT_MS),
-
   /** 取最新会话快照（重启后恢复界面的入口）。 */
   latestSession: () => request<SessionSnapshotResponse>("GET", "/api/sessions/latest"),
 
@@ -281,4 +275,84 @@ export const api = {
 
   /** 请求停止服务（服务把手头请求做完再退出；成功即 202）。 */
   shutdownService: () => request<void>("POST", "/api/service/shutdown", {}),
+
+  /**
+   * 流式打标（SSE）：逐段回调思考 / 正文增量，done 回调带终稿与会话 id。
+   *
+   * POST + fetch 流式读取（EventSource 不支持 POST）；HTTP 层错误（预备段 4xx/5xx）
+   * 直接抛 ApiError，流中的模型错误走 onError 回调（SSE 已开始、状态码改不了）。
+   */
+  labelStream: async (
+    payload: LabelRequest,
+    handlers: {
+      onStart: (sessionId: string) => void;
+      onDelta: (kind: "reasoning" | "content", text: string) => void;
+      onDone: (sessionId: string, caption: string) => void;
+      onError: (message: string) => void;
+    },
+  ): Promise<void> => {
+    let response: Response;
+    try {
+      response = await fetch("/api/label/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } catch {
+      throw new ApiError(
+        "network",
+        "无法连接后端服务——请确认 dsf serve 已启动、端口没有填错",
+        null,
+        null,
+      );
+    }
+    if (!response.ok || response.body === null) {
+      const data: unknown = await response.json().catch(() => null);
+      throw new ApiError(
+        "http",
+        extractDetail(data, response.status),
+        response.status,
+        response.headers.get("X-Request-ID"),
+      );
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop() ?? "";
+      for (const frame of frames) {
+        const lines = frame.split("\n");
+        const eventLine = lines.find((line) => line.startsWith("event: "));
+        const dataLine = lines.find((line) => line.startsWith("data: "));
+        if (eventLine === undefined || dataLine === undefined) {
+          continue;
+        }
+        const event = eventLine.slice(7);
+        // SSE data 字段理论上恒在；缺字段时给空串兜底（noUncheckedIndexedAccess 下不裸索引）。
+        const data = JSON.parse(dataLine.slice(6)) as Record<
+          string,
+          string | undefined
+        >;
+        const sessionId = data.session_id ?? "";
+        if (event === "start") {
+          handlers.onStart(sessionId);
+        } else if (event === "delta") {
+          handlers.onDelta(
+            data.kind === "reasoning" ? "reasoning" : "content",
+            data.text ?? "",
+          );
+        } else if (event === "done") {
+          handlers.onDone(sessionId, data.caption ?? "");
+        } else if (event === "error") {
+          handlers.onError(data.message ?? "生成中断：未知错误");
+        }
+      }
+    }
+  },
 };

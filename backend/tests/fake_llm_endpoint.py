@@ -13,13 +13,15 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
+from collections.abc import Iterator
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse, StreamingResponse
 
 
 class FakeLLMEndpoint:
@@ -91,8 +93,12 @@ class FakeLLMEndpoint:
         self._server.should_exit = True
         self._thread.join(timeout=5)
 
-    async def _handle_chat(self, request: Request) -> JSONResponse:
-        """OpenAI /v1/chat/completions 的最小实现：记录请求、按脚本响应。"""
+    async def _handle_chat(self, request: Request) -> Response:
+        """OpenAI /v1/chat/completions 的最小实现：记录请求、按脚本响应（支持流式）。
+
+        返回类型标注用基类 Response：FastAPI 对 Response 子类直接透传、不据注解建响应
+        模型（联合类型 JSONResponse | StreamingResponse 会让它推导失败）。
+        """
         body: dict[str, Any] = await request.json()
         with self._lock:
             self.requests.append(body)
@@ -118,13 +124,18 @@ class FakeLLMEndpoint:
             if isinstance(scripted, dict)
             else "假端点回复"
         )
+        model = body.get("model", "fake-model")
+        if body.get("stream"):
+            return StreamingResponse(
+                _sse_chunks(content, model), media_type="text/event-stream"
+            )
         return JSONResponse(
             status_code=200,
             content={
                 "id": "chatcmpl-fake-001",
                 "object": "chat.completion",
                 "created": 0,
-                "model": body.get("model", "fake-model"),
+                "model": model,
                 "choices": [
                     {
                         "index": 0,
@@ -139,3 +150,25 @@ class FakeLLMEndpoint:
                 },
             },
         )
+
+
+def _sse_chunks(content: str, model: str) -> Iterator[str]:
+    """把一段回复拆成 OpenAI 风格的 SSE 增量帧（两半 + 结束帧 + [DONE]）。"""
+    half = len(content) // 2
+    for piece in (content[:half], content[half:]):
+        if piece:
+            yield _chunk_frame({"role": "assistant", "content": piece}, model, None)
+    yield _chunk_frame({}, model, "stop")
+    yield "data: [DONE]\n\n"
+
+
+def _chunk_frame(delta: dict[str, str], model: str, finish: str | None) -> str:
+    """一条 chat.completion.chunk 帧（data: JSON + 空行）。"""
+    payload = {
+        "id": "chatcmpl-fake-stream",
+        "object": "chat.completion.chunk",
+        "created": 0,
+        "model": model,
+        "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+    }
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"

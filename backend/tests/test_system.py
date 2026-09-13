@@ -240,6 +240,56 @@ def test_session_recovery_over_real_http(
     }
 
 
+def test_stream_labeling_over_real_http(
+    system_client: httpx.Client,
+    temp_data_root: Path,
+    fake_endpoint: FakeLLMEndpoint,
+) -> None:
+    """流式全链路：SSE 事件 start → delta… → done，终稿照落盘（真 TCP + 真流式端点）。"""
+    system_client.put(
+        "/api/prompts/sys-e2e",
+        json={"description": "系统测试用", "body": "你是图片打标助手。"},
+    )
+    fake_endpoint.set_responses([{"content": "流式打标结果"}])
+
+    with system_client.stream(
+        "POST",
+        "/api/label/stream",
+        json={
+            "session_id": None,
+            "prompt_name": "sys-e2e",
+            "skill_names": [],
+            "instruction": "打个标",
+            "image_base64": None,
+            "image_name": "x.png",
+        },
+    ) as response:
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        raw = "".join(chunk for chunk in response.iter_text())
+
+    events = [
+        line.removeprefix("event: ")
+        for line in raw.splitlines()
+        if line.startswith("event: ")
+    ]
+    assert events[0] == "start"
+    assert events[-1] == "done"
+    assert "delta" in events
+    # 正文增量拼起来 = 终稿；done 帧带完整 caption 与会话 id。
+    done_line = next(
+        line
+        for line in raw.splitlines()
+        if line.startswith("data: ") and "caption" in line
+    )
+    done_data = json.loads(done_line.removeprefix("data: "))
+    assert done_data["caption"] == "流式打标结果"
+    session_dir = temp_data_root / "sessions" / done_data["session_id"]
+    assert (session_dir / "events.jsonl").is_file(), "流式终稿没有落盘"
+    # 假端点收到的请求确实是流式（stream=True 透传到模型层）。
+    assert fake_endpoint.requests[0].get("stream") is True
+
+
 def test_tiny_png_is_valid_image_bytes() -> None:
     """守门测试：常量图片必须是合法 PNG（避免上面的链路测试静默失效）。"""
     raw = base64.b64decode(TINY_PNG_BASE64)

@@ -42,14 +42,15 @@ from dataset_factory.api import create_app
 
 system_app = create_app()
 from dataset_factory.llm import DEFAULT_CONFIG_NAME, SecretValue, create_config
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Response
+from fastapi.responses import JSONResponse, StreamingResponse
 
 PORT = 8765
+_FAKE_REPLY = "E2E 假模型的打标结果"
 
 
 def build_fake_llm_app() -> FastAPI:
-    """OpenAI 兼容假端点（E2E 版）：固定回复，够冒烟用。
+    """OpenAI 兼容假端点（E2E 版）：固定回复，支持流式（前端走 SSE 打标）。
 
     与 backend/tests 的 FakeLLMEndpoint 同一思路，但这里不需要可编程性
     （浏览器流程只跑通链路），所以实现收窄成一个固定响应。
@@ -57,20 +58,52 @@ def build_fake_llm_app() -> FastAPI:
     app = FastAPI()
 
     @app.post("/v1/chat/completions")
-    def chat_completions(payload: dict) -> JSONResponse:
+    def chat_completions(payload: dict) -> Response:
+        model = payload.get("model", "fake-e2e-model")
+        if payload.get("stream"):
+            import json
+
+            def chunks() -> object:
+                half = len(_FAKE_REPLY) // 2
+                for piece in (_FAKE_REPLY[:half], _FAKE_REPLY[half:]):
+                    frame = {
+                        "id": "chatcmpl-e2e-stream",
+                        "object": "chat.completion.chunk",
+                        "created": 0,
+                        "model": model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"role": "assistant", "content": piece},
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+                    yield f"data: {json.dumps(frame, ensure_ascii=False)}\n\n"
+                stop = {
+                    "id": "chatcmpl-e2e-stream",
+                    "object": "chat.completion.chunk",
+                    "created": 0,
+                    "model": model,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                }
+                yield f"data: {json.dumps(stop, ensure_ascii=False)}\n\n"
+                yield "data: [DONE]\n\n"
+
+            return StreamingResponse(chunks(), media_type="text/event-stream")
         return JSONResponse(
             {
                 "id": "chatcmpl-e2e-001",
                 "object": "chat.completion",
                 "created": 0,
-                "model": payload.get("model", "fake-e2e-model"),
+                "model": model,
                 "choices": [
                     {
                         "index": 0,
                         "finish_reason": "stop",
                         "message": {
                             "role": "assistant",
-                            "content": "E2E 假模型的打标结果",
+                            "content": _FAKE_REPLY,
                         },
                     }
                 ],

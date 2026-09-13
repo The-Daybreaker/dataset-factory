@@ -5,12 +5,12 @@ fixture = 给测试预置好可复用环境的零件，pytest 会自动加载本
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 import pytest
 
-from dataset_factory.llm import Message
+from dataset_factory.llm import Message, StreamDelta
 
 
 class FakeCompleter:
@@ -31,6 +31,14 @@ class FakeCompleter:
         if self._replies:
             return self._replies.pop(0)
         return "打标结果"
+
+    def stream(self, messages: Sequence[Message]) -> Iterator[StreamDelta]:
+        """流式路线：把脚本回复拆成两个正文增量（证明「拼装 = 增量之和」）。"""
+        self.calls.append(list(messages))
+        text = self._replies.pop(0) if self._replies else "打标结果"
+        half = len(text) // 2
+        yield StreamDelta(kind="content", text=text[:half])
+        yield StreamDelta(kind="content", text=text[half:])
 
 
 @pytest.fixture
