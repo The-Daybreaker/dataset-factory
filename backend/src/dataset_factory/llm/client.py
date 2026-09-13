@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import logging
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import Protocol, cast
 
@@ -211,6 +212,59 @@ def build_completer(config: EndpointConfig) -> Completer:
         max_retries=config.request.max_retries,
     )
     return OpenAIChatClient(client, config.model, config.request)
+
+
+# 连通性探测的传输参数：比正式打标更急——15 秒等不到就报超时、不重试（用户在等结果）。
+_PROBE_TIMEOUT_SECONDS = 15.0
+_PROBE_MAX_TOKENS = 1
+
+
+@dataclass(frozen=True)
+class ProbeResult:
+    """端点连通性探测的结果（业务结果而非异常：失败也是正常返回值）。
+
+    Attributes:
+        ok: 探测是否成功（发出极小请求且模型应答）。
+        message: 给人看的结果说明——成功固定文案；失败为 llm 分类错误消息（可操作）。
+        latency_ms: 从发请求到得出结论的耗时（毫秒）。
+    """
+
+    ok: bool
+    message: str
+    latency_ms: float
+
+
+def probe_endpoint(config: EndpointConfig) -> ProbeResult:
+    """发一个极小的真实请求探测端点连通性（Web「测试连接」与 CLI ``dsf config test`` 共用）。
+
+    传输参数固定为探测专用（15 秒超时、不重试、``max_tokens=1``），覆盖调用方传入的
+    request——探测要的是「快进快出」，正式打标参数（长超时 / 重试）在这里只会拖慢反馈。
+    失败不抛异常：连通性成败是业务结果，翻译成 ``ProbeResult`` 由入口层呈现。
+
+    Args:
+        config: 待探测的端点配置（base_url / model / api_key；request 被探测参数覆盖）。
+
+    Returns:
+        ProbeResult：成败 + 可操作消息 + 耗时。
+    """
+    test_config = replace(
+        config,
+        request=RequestConfig(
+            timeout_seconds=_PROBE_TIMEOUT_SECONDS,
+            max_retries=0,
+            max_tokens=_PROBE_MAX_TOKENS,
+        ),
+    )
+    start = perf_counter()
+    try:
+        build_completer(test_config).complete(
+            [Message(role="user", parts=(TextPart(text="ping"),))]
+        )
+    except LLMError as exc:
+        return ProbeResult(ok=False, message=str(exc), latency_ms=ms_since(start))
+    return ProbeResult(
+        ok=True, message="连接成功，模型应答正常。", latency_ms=ms_since(start)
+    )
 
 
 def _given_or_omit[T](value: T | None) -> T | openai.Omit:

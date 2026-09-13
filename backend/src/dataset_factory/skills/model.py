@@ -25,8 +25,8 @@ class Skill:
         name: skill 名称（取自 SKILL.md frontmatter，也是库里的目录名）。
         description: 用途说明（取自 frontmatter，供选择器展示）。
         enabled: 库级启用状态；停用的 skill 保留在库里、但不供打标注入（停用不删除）。
-        body_chars: SKILL.md 全文字符数——即注入请求的正文量（列表展示用；非列表路径
-            构造时可为 0）。
+        body_chars: 注入全文字符数（SKILL.md + references/ 全部文件，即打标请求的实际
+            注入量；列表展示用。非列表路径构造时可为 0）。
     """
 
     name: str
@@ -48,7 +48,7 @@ class SkillImport:
     total_bytes: int
 
 
-# 包内文件角色：skill=注入源（SKILL.md）；reference=参考资料（供查阅、不自动注入）；
+# 包内文件角色：skill / reference 均为注入源（SKILL.md 正文 + references/ 全部文件）；
 # asset / script=包资产与脚本；other=其他文件。除前两者外均不参与注入。
 SkillFileRole = Literal["skill", "reference", "asset", "script", "other"]
 

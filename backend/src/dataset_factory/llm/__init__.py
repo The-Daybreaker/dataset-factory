@@ -12,8 +12,20 @@
 """
 
 from .._fs import data_root
-from .client import Completer, OpenAIChatClient, build_completer
-from .config import EndpointConfig, RequestConfig, describe_config, read_config
+from .client import (
+    Completer,
+    OpenAIChatClient,
+    ProbeResult,
+    build_completer,
+    probe_endpoint,
+)
+from .config import (
+    ENV_API_KEY,
+    EndpointConfig,
+    RequestConfig,
+    describe_config,
+    read_config,
+)
 from .endpoints import (
     DEFAULT_CONFIG_NAME,
     SUPPORTED_API_FORMAT,
@@ -59,6 +71,7 @@ from .messages import (
 
 __all__ = [
     "DEFAULT_CONFIG_NAME",
+    "ENV_API_KEY",
     "SUPPORTED_API_FORMAT",
     "Completer",
     "ConfigConflictError",
@@ -80,6 +93,7 @@ __all__ = [
     "LLMUnexpectedError",
     "Message",
     "OpenAIChatClient",
+    "ProbeResult",
     "RequestConfig",
     "Role",
     "SecretValue",
@@ -96,6 +110,7 @@ __all__ = [
     "has_config",
     "has_stored_key",
     "list_configs",
+    "probe_endpoint",
     "read_config",
     "read_config_data",
     "read_stored_api_key",

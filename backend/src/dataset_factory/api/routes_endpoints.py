@@ -8,27 +8,21 @@ try/except 翻译——test 例外：连通性探测的成败是业务结果而�
 
 from __future__ import annotations
 
-from time import perf_counter
 from typing import cast
 
 from fastapi import APIRouter, Response, status
 
-from .._obs import ms_since
 from ..llm import (
     SUPPORTED_API_FORMAT,
     EndpointConfig,
     EndpointConfigInfo,
-    LLMError,
-    Message,
-    RequestConfig,
     SecretValue,
-    TextPart,
     active_config_name,
-    build_completer,
     create_config,
     delete_config,
     has_stored_key,
     list_configs,
+    probe_endpoint,
     read_config_data,
     read_stored_api_key,
     set_active_config,
@@ -46,9 +40,6 @@ from .schemas import (
 )
 
 router = APIRouter(prefix="/api/endpoints", tags=["端点配置"])
-
-# 连通性探测的传输参数：比正式打标更急——15 秒等不到就报超时、不重试（用户在等结果）。
-_TEST_TIMEOUT_SECONDS = 15.0
 
 
 @router.get("", response_model=list[EndpointConfigSummary])
@@ -138,7 +129,7 @@ def activate(name: str) -> Response:
 
 @router.post("/test", response_model=EndpointTestResult)
 def test_connection(request: EndpointTestRequest) -> EndpointTestResult:
-    """测试端点连通性：用表单当前值发一个极小的真实请求（max_tokens=1），不必先保存。"""
+    """测试端点连通性：用表单当前值发一个极小的真实请求，不必先保存。"""
     key: SecretValue | None
     if request.api_key is not None and request.api_key.strip() != "":
         key = SecretValue(request.api_key.strip())
@@ -152,32 +143,11 @@ def test_connection(request: EndpointTestRequest) -> EndpointTestResult:
             message="未提供密钥，且该配置名下没有已存密钥；请填写密钥后重试。",
             latency_ms=0.0,
         )
-    config = EndpointConfig(
-        base_url=request.base_url,
-        model=request.model,
-        api_key=key,
-        request=RequestConfig(
-            timeout_seconds=_TEST_TIMEOUT_SECONDS,
-            max_retries=0,
-            max_tokens=1,
-        ),
+    result = probe_endpoint(
+        EndpointConfig(base_url=request.base_url, model=request.model, api_key=key)
     )
-    return _probe(config)
-
-
-def _probe(config: EndpointConfig) -> EndpointTestResult:
-    """发一个极小的真实请求探测连通性；失败翻译成分类消息（llm 错误本身就可操作）。"""
-    start = perf_counter()
-    try:
-        build_completer(config).complete(
-            [Message(role="user", parts=(TextPart(text="ping"),))],
-        )
-    except LLMError as exc:
-        return EndpointTestResult(
-            ok=False, message=str(exc), latency_ms=ms_since(start)
-        )
     return EndpointTestResult(
-        ok=True, message="连接成功，模型应答正常。", latency_ms=ms_since(start)
+        ok=result.ok, message=result.message, latency_ms=result.latency_ms
     )
 
 

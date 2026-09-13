@@ -18,12 +18,15 @@ import uvicorn
 from fastapi import FastAPI
 from typer.testing import CliRunner
 
+import dataset_factory.cli.config as config_module
 import dataset_factory.cli.label as label_module
 from dataset_factory.cli import app
 from dataset_factory.llm import (
+    EndpointConfig,
     ImagePart,
     LLMTimeoutError,
     Message,
+    ProbeResult,
     StreamDelta,
     TextPart,
     VideoPart,
@@ -477,6 +480,85 @@ def test_skill_lifecycle(temp_data_root: Path) -> None:
     assert enable.exit_code == 0
     assert remove.exit_code == 0
     assert "为空" in after.output
+
+
+def test_skill_files_and_read(temp_data_root: Path) -> None:
+    """skill files / read：包内文件清单带角色标注；read 输出可预览文件内容。"""
+    runner.invoke(app, ["skill", "import", str(_SKILL_PACK)])
+
+    files = runner.invoke(app, ["skill", "files", "example-caption-skill"])
+    read_main = runner.invoke(
+        app, ["skill", "read", "example-caption-skill", "SKILL.md"]
+    )
+    read_ref = runner.invoke(
+        app, ["skill", "read", "example-caption-skill", "references/detail.md"]
+    )
+    read_missing = runner.invoke(
+        app, ["skill", "read", "example-caption-skill", "references/nope.md"]
+    )
+
+    assert files.exit_code == 0
+    assert "SKILL.md\tskill" in files.output
+    assert "references/detail.md\treference" in files.output
+    assert read_main.exit_code == 0
+    assert "Example Caption Skill" in read_main.output
+    assert read_ref.exit_code == 0
+    assert read_ref.output.strip() != ""
+    assert read_missing.exit_code == 1
+    assert "未找到" in read_missing.stderr or "不存在" in read_missing.stderr
+
+
+def test_config_test_reports_success_and_failure(
+    temp_data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """config test：探测成功输出连接成功；失败退出码 1、分类消息进 stderr。"""
+    created = runner.invoke(
+        app,
+        ["config", "add", "alpha", "--base-url", "https://a/v1", "--model", "m-a"],
+        input="test-key-123\n",
+    )
+    assert created.exit_code == 0
+
+    def fake_probe_ok(config: EndpointConfig) -> ProbeResult:
+        return ProbeResult(ok=True, message="连接成功，模型应答正常。", latency_ms=12.0)
+
+    monkeypatch.setattr(config_module, "probe_endpoint", fake_probe_ok)
+    ok = runner.invoke(app, ["config", "test"])
+
+    assert ok.exit_code == 0
+    assert "连接成功" in ok.output
+    assert "alpha" in ok.output
+
+    def fake_probe_fail(config: EndpointConfig) -> ProbeResult:
+        return ProbeResult(
+            ok=False, message="鉴权失败：API 密钥无效或过期。", latency_ms=8.0
+        )
+
+    monkeypatch.setattr(config_module, "probe_endpoint", fake_probe_fail)
+    bad = runner.invoke(app, ["config", "test"])
+
+    assert bad.exit_code == 1
+    assert "鉴权失败" in bad.stderr
+
+
+def test_config_test_without_config_or_key(temp_data_root: Path) -> None:
+    """config test：没有配置 → 提示添加；配置无密钥（环境变量也没设）→ 提示补配。"""
+    empty = runner.invoke(app, ["config", "test"])
+
+    assert empty.exit_code == 1
+    assert "没有可测试的端点配置" in empty.stderr
+
+    created = runner.invoke(
+        app,
+        ["config", "add", "beta", "--base-url", "https://b/v1", "--model", "m-b"],
+        input="\n",
+    )
+    assert created.exit_code == 0
+
+    no_key = runner.invoke(app, ["config", "test", "beta"])
+
+    assert no_key.exit_code == 1
+    assert "补配密钥" in no_key.stderr
 
 
 def test_session_list_and_show(

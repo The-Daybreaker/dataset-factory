@@ -8,18 +8,22 @@
 - ``list``：列出全部配置（* 标记当前使用）；
 - ``add``：新增一套配置；
 - ``remove``：删除一套配置（当前使用中的需先切换）；
-- ``use``：把一套配置设为当前使用。
+- ``use``：把一套配置设为当前使用；
+- ``test``：发一个极小的真实请求测试连通性（不必改配置）。
 """
 
 from __future__ import annotations
 
-from typing import Annotated
+import os
+from typing import Annotated, cast
 
 import typer
 
 from ..llm import (
     DEFAULT_CONFIG_NAME,
+    ENV_API_KEY,
     ConfigError,
+    EndpointConfig,
     SecretValue,
     active_config_name,
     create_config,
@@ -27,6 +31,9 @@ from ..llm import (
     describe_config,
     has_config,
     list_configs,
+    probe_endpoint,
+    read_config_data,
+    read_stored_api_key,
     set_active_config,
     update_config,
 )
@@ -164,3 +171,51 @@ def config_use(
     """把一套配置设为当前使用（对新请求立即生效）。"""
     set_active_config(name)
     typer.secho(f"当前使用的配置已切换为 {name}", fg=typer.colors.GREEN)
+
+
+@app.command("test")
+@handle_domain_errors
+def config_test(
+    name: Annotated[
+        str | None, typer.Argument(help="配置名（缺省 = 当前使用的配置）")
+    ] = None,
+) -> None:
+    """测试端点连通性：发一个极小的真实请求（15 秒超时、max_tokens=1），不必先改配置。"""
+    resolved = name if name is not None else active_config_name()
+    if resolved is None or not has_config(resolved):
+        typer.secho(
+            "错误：没有可测试的端点配置——dsf config add 添加，或带配置名参数指定。",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+    data = read_config_data(resolved)
+    env_key = os.environ.get(ENV_API_KEY, "").strip()
+    key = SecretValue(env_key) if env_key else read_stored_api_key(resolved)
+    if key is None:
+        typer.secho(
+            f"错误：配置 {resolved!r} 没有已存密钥，也未设环境变量 {ENV_API_KEY}；"
+            "请先 dsf config set 补配密钥再测试。",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+    result = probe_endpoint(
+        EndpointConfig(
+            base_url=cast(str, data["base_url"]),
+            model=cast(str, data["model"]),
+            api_key=key,
+        )
+    )
+    if result.ok:
+        typer.secho(
+            f"连接成功（{result.latency_ms:.0f} ms）：{resolved} → {cast(str, data['model'])}",
+            fg=typer.colors.GREEN,
+        )
+    else:
+        typer.secho(
+            f"连接失败（{result.latency_ms:.0f} ms）：{result.message}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)

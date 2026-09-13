@@ -60,6 +60,20 @@ def _import_skill() -> str:
     return import_skill(_SKILL_PACK).skill.name
 
 
+def _skill_injection_text() -> str:
+    """fixture skill 的期望注入全文：SKILL.md + references/ 全部文件（标记包裹）。
+
+    手工拼装而非调 read_skill——测试与实现不共用同一组装逻辑，才有互相校验的意义。
+    """
+    skill_md = (_SKILL_PACK / "SKILL.md").read_text(encoding="utf-8")
+    ref = (_SKILL_PACK / "references" / "detail.md").read_text(encoding="utf-8")
+    return (
+        skill_md
+        + "\n\n"
+        + f'<skill-file path="references/detail.md">\n{ref}\n</skill-file>'
+    )
+
+
 def _make_image(path: Path, data: bytes = b"fake-png-bytes") -> Path:
     """写一个假图片文件（fake completer 不做图片编码校验，字节任意）。"""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,7 +100,7 @@ def test_first_turn_assembles_system_skill_instruction_image(
     """首轮组装：system=提示词正文；user = <skill> 包裹全文 + 指令 + 图片字节。"""
     _save_prompt("h3", "你是打标助手，输出一句话描述。")
     skill_name = _import_skill()
-    skill_full = (_SKILL_PACK / "SKILL.md").read_text(encoding="utf-8")
+    skill_full = _skill_injection_text()
     image = _make_image(tmp_path / "cat.jpg", b"png!")
     engine = LabelingEngine(fake_completer, _MODEL)
 
@@ -224,7 +238,7 @@ def test_envelope_records_model_and_text_view(
     """信封内容：模型名 + 纯文本消息视图（图片是占位文本，不是 base64）。"""
     _save_prompt("h3", "你是打标助手。")
     skill_name = _import_skill()
-    skill_full = (_SKILL_PACK / "SKILL.md").read_text(encoding="utf-8")
+    skill_full = _skill_injection_text()
     image = _make_image(tmp_path / "cat.jpg")
     engine = LabelingEngine(fake_completer, _MODEL)
 
@@ -258,7 +272,7 @@ def test_second_turn_replays_history_with_placeholder_image(
     """第二轮迭代改写：历史按原角色回放、历史图片降为占位文本、当轮重新注入 skill。"""
     _save_prompt("h3", "你是打标助手。")
     skill_name = _import_skill()
-    skill_full = (_SKILL_PACK / "SKILL.md").read_text(encoding="utf-8")
+    skill_full = _skill_injection_text()
     image = _make_image(tmp_path / "cat.jpg")
     completer = FakeCompleter(replies=["第一轮回复", "第二轮回复"])
     engine = LabelingEngine(completer, _MODEL)

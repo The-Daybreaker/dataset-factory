@@ -914,7 +914,7 @@
         "description": "skill 条目。",
         "properties": {
           "body_chars": {
-            "description": "SKILL.md 全文字符数（即注入打标请求的正文量）",
+            "description": "注入正文字符数（SKILL.md + references/ 全部文件，即打标请求的注入量）",
             "title": "Body Chars",
             "type": "integer"
           },
@@ -1142,7 +1142,7 @@
     },
     "/api/endpoints/test": {
       "post": {
-        "description": "测试端点连通性：用表单当前值发一个极小的真实请求（max_tokens=1），不必先保存。",
+        "description": "测试端点连通性：用表单当前值发一个极小的真实请求，不必先保存。",
         "operationId": "test_connection_api_endpoints_test_post",
         "requestBody": {
           "content": {

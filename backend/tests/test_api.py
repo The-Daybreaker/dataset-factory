@@ -20,7 +20,7 @@ from dataset_factory.api import create_app
 from dataset_factory.llm import (
     EndpointConfig,
     ImagePart,
-    LLMTimeoutError,
+    ProbeResult,
     TextPart,
     VideoPart,
     read_stored_api_key,
@@ -749,16 +749,11 @@ def test_endpoints_test_ok(client: TestClient, monkeypatch: pytest.MonkeyPatch) 
     """测试连接：配置正确 → ok=true、耗时非负、探测用的是请求里的 base_url。"""
     captured: dict[str, object] = {}
 
-    class FakeClient:
-        def complete(self, messages: object) -> str:
-            captured["called"] = True
-            return "ok"
-
-    def fake_build(config: EndpointConfig) -> FakeClient:
+    def fake_probe(config: EndpointConfig) -> ProbeResult:
         captured["base_url"] = config.base_url
-        return FakeClient()
+        return ProbeResult(ok=True, message="连接成功，模型应答正常。", latency_ms=5.0)
 
-    monkeypatch.setattr(routes_endpoints, "build_completer", fake_build)
+    monkeypatch.setattr(routes_endpoints, "probe_endpoint", fake_probe)
 
     response = client.post(
         "/api/endpoints/test",
@@ -773,19 +768,20 @@ def test_endpoints_test_ok(client: TestClient, monkeypatch: pytest.MonkeyPatch) 
     body = response.json()
     assert body["ok"] is True
     assert body["latency_ms"] >= 0
-    assert captured["called"] is True
     assert captured["base_url"] == "https://example.com/v1"
 
 
 def test_endpoints_test_llm_error_becomes_result(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """测试连接：模型调用失败 → ok=false + 分类消息（HTTP 仍 200，成败看 ok）。"""
+    """测试连接：探测失败 → ok=false + 分类消息（HTTP 仍 200，成败看 ok）。"""
 
-    def fake_build(config: object) -> object:
-        raise LLMTimeoutError("调用模型超时；网络较慢或模型响应久。")
+    def fake_probe(config: EndpointConfig) -> ProbeResult:
+        return ProbeResult(
+            ok=False, message="调用模型超时；网络较慢或模型响应久。", latency_ms=1.0
+        )
 
-    monkeypatch.setattr(routes_endpoints, "build_completer", fake_build)
+    monkeypatch.setattr(routes_endpoints, "probe_endpoint", fake_probe)
 
     response = client.post(
         "/api/endpoints/test",
@@ -807,10 +803,10 @@ def test_endpoints_test_without_key_reports(
 ) -> None:
     """测试连接：无密钥可回落（表单没填、配置名下也没有）→ ok=false + 可操作提示。"""
 
-    def fake_build(config: EndpointConfig) -> object:
+    def fake_probe(config: EndpointConfig) -> ProbeResult:
         raise AssertionError("不应发起请求")
 
-    monkeypatch.setattr(routes_endpoints, "build_completer", fake_build)
+    monkeypatch.setattr(routes_endpoints, "probe_endpoint", fake_probe)
 
     response = client.post(
         "/api/endpoints/test",
@@ -839,15 +835,11 @@ def test_endpoints_test_falls_back_to_stored_key(
     assert created.status_code == 201
     captured: dict[str, object] = {}
 
-    class FakeClient:
-        def complete(self, messages: object) -> str:
-            return "ok"
-
-    def fake_build(config: EndpointConfig) -> FakeClient:
+    def fake_probe(config: EndpointConfig) -> ProbeResult:
         captured["key"] = config.api_key.reveal()
-        return FakeClient()
+        return ProbeResult(ok=True, message="连接成功，模型应答正常。", latency_ms=1.0)
 
-    monkeypatch.setattr(routes_endpoints, "build_completer", fake_build)
+    monkeypatch.setattr(routes_endpoints, "probe_endpoint", fake_probe)
 
     response = client.post(
         "/api/endpoints/test",

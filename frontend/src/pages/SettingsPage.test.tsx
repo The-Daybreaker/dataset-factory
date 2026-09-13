@@ -351,13 +351,15 @@ describe("SettingsPage · 能力·技能", () => {
     });
   });
 
-  it("列表卡片：名称旁显示注入字数徽标（SKILL.md 字符数）", async () => {
+  it("列表卡片：名称旁显示注入字数徽标（注入正文字符数）", async () => {
     await openSkills();
 
     expect(screen.getByText("1.2k 字")).toBeInTheDocument();
     expect(screen.getByText("320 字")).toBeInTheDocument();
     expect(
-      screen.getAllByTitle("SKILL.md 字符数（即注入打标请求的正文量）").length,
+      screen.getAllByTitle(
+        "注入正文字符数（SKILL.md + references，即打标请求的注入量）",
+      ).length,
     ).toBe(2);
   });
 

@@ -30,6 +30,7 @@ from dataset_factory.llm import (
     TextPart,
     VideoPart,
     build_completer,
+    probe_endpoint,
 )
 
 
@@ -274,3 +275,63 @@ def test_auth_error_message_is_clean_and_actionable() -> None:
     assert str(excinfo.value) == (
         "鉴权失败：API 密钥无效或过期；请用 `dsf config set` 重新设置密钥。"
     )
+
+
+def test_probe_endpoint_reports_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """探测成功返回 ok=True 与固定成功文案；探测参数覆盖调用方 request（快进快出）。"""
+
+    class _FakeCompleter:
+        def complete(self, messages: tuple[Message, ...]) -> str:
+            return "pong"
+
+    captured: list[EndpointConfig] = []
+
+    def fake_build(config: EndpointConfig) -> _FakeCompleter:
+        captured.append(config)
+        return _FakeCompleter()
+
+    monkeypatch.setattr("dataset_factory.llm.client.build_completer", fake_build)
+
+    result = probe_endpoint(
+        EndpointConfig(
+            base_url="https://api.example.com/v1",
+            model="test-model",
+            api_key=SecretValue("test-key"),
+            request=RequestConfig(timeout_seconds=120.0, max_retries=2, max_tokens=999),
+        )
+    )
+
+    assert result.ok is True
+    assert "连接成功" in result.message
+    assert result.latency_ms >= 0.0
+    assert captured[0].request.max_tokens == 1
+    assert captured[0].request.max_retries == 0
+
+
+def test_probe_endpoint_translates_llm_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """探测失败不抛异常：LLMError 的分类消息进 ProbeResult.message，ok=False。"""
+
+    class _FailingCompleter:
+        def complete(self, messages: tuple[Message, ...]) -> str:
+            raise LLMAuthError("鉴权失败：API 密钥无效或过期。")
+
+    def fake_build(config: EndpointConfig) -> _FailingCompleter:
+        return _FailingCompleter()
+
+    monkeypatch.setattr("dataset_factory.llm.client.build_completer", fake_build)
+
+    result = probe_endpoint(
+        EndpointConfig(
+            base_url="https://api.example.com/v1",
+            model="test-model",
+            api_key=SecretValue("bad-key"),
+        )
+    )
+
+    assert result.ok is False
+    assert "鉴权失败" in result.message
+    assert result.latency_ms >= 0.0

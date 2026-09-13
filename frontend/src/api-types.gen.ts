@@ -65,7 +65,7 @@ export interface paths {
         put?: never;
         /**
          * Test Connection
-         * @description 测试端点连通性：用表单当前值发一个极小的真实请求（max_tokens=1），不必先保存。
+         * @description 测试端点连通性：用表单当前值发一个极小的真实请求，不必先保存。
          */
         post: operations["test_connection_api_endpoints_test_post"];
         delete?: never;
@@ -985,7 +985,7 @@ export interface components {
         SkillInfo: {
             /**
              * Body Chars
-             * @description SKILL.md 全文字符数（即注入打标请求的正文量）
+             * @description 注入正文字符数（SKILL.md + references/ 全部文件，即打标请求的注入量）
              */
             body_chars: number;
             /** Description */

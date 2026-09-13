@@ -63,7 +63,7 @@ interface Feedback {
   text: string;
 }
 
-/** SKILL.md 字符数 → 列表徽标文案（即注入打标请求的正文量）。 */
+/** 注入正文字符数（SKILL.md + references）→ 列表徽标文案（即打标请求的实际注入量）。 */
 function formatChars(count: number): string {
   if (count >= 10_000) {
     return `${(count / 10_000).toFixed(1)} 万字`;
@@ -956,7 +956,7 @@ function SkillFileChip({
       <TooltipTrigger asChild>
         <span className="inline-flex">{chip}</span>
       </TooltipTrigger>
-      <TooltipContent>不参与注入（注入范围 = 仅 SKILL.md）</TooltipContent>
+      <TooltipContent>不参与注入（注入范围 = SKILL.md 与 references/）</TooltipContent>
     </Tooltip>
   );
 }
@@ -1150,7 +1150,7 @@ function SkillsPanel(): ReactElement {
                       </span>
                       <span
                         className="shrink-0 rounded-full bg-muted px-1.5 text-[10.5px] leading-[1.6] text-muted-foreground"
-                        title="SKILL.md 字符数（即注入打标请求的正文量）"
+                        title="注入正文字符数（SKILL.md + references，即打标请求的注入量）"
                       >
                         {formatChars(skill.body_chars)}
                       </span>
@@ -1249,8 +1249,7 @@ function SkillsPanel(): ReactElement {
 
             <div>
               <p className="mb-1.5 text-[12px] text-muted-foreground">
-                包文件——SKILL.md 注入请求；references 供查阅；assets / scripts
-                不参与注入
+                包文件——SKILL.md 与 references/ 注入请求；assets / scripts 不参与注入
               </p>
               <div className="flex flex-wrap gap-1.5">
                 {files.map((entry) => (
@@ -1517,7 +1516,7 @@ export function SettingsPage(): ReactElement {
               <>
                 <h2 className="mt-0.5 mb-3 shrink-0 text-[17px] font-semibold">技能</h2>
                 <p className="-mt-2 mb-3.5 shrink-0 text-[12.5px] text-muted-foreground">
-                  导入 agentskills.io 标准 Skill 包；启用后其 SKILL.md
+                  导入 agentskills.io 标准 Skill 包；启用后 SKILL.md 与 references/
                   全文注入打标请求。
                 </p>
                 <div className="min-h-0 flex-1">

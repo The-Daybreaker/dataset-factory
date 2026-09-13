@@ -193,11 +193,15 @@ def test_list_sorted_with_enabled_state(tmp_path: Path, temp_data_root: Path) ->
 
     assert [s.name for s in skills] == ["alpha-skill", _FIXTURE_NAME]
     assert all(s.enabled for s in skills)
-    # body_chars = SKILL.md 全文字符数（即注入请求的正文量）。
+    # body_chars = 注入全文字符数（SKILL.md + references/ 全部文件，即实际注入量）。
     chars = {s.name: s.body_chars for s in skills}
-    assert chars["alpha-skill"] == len(
-        "---\nname: alpha-skill\ndescription: a\n---\n正文\n"
+    alpha_md = "---\nname: alpha-skill\ndescription: a\n---\n正文\n"
+    expected = (
+        alpha_md
+        + "\n\n"
+        + '<skill-file path="references/detail.md">\n补充参考\n</skill-file>'
     )
+    assert chars["alpha-skill"] == len(expected)
     assert chars[_FIXTURE_NAME] > 0
 
 
@@ -220,6 +224,72 @@ def test_read_skill_returns_full_text(temp_data_root: Path) -> None:
 
     assert text.startswith("---")
     assert "Example Caption Skill" in text
+
+
+def test_read_skill_includes_references_with_markers(temp_data_root: Path) -> None:
+    """注入范围 = SKILL.md + references/ 全部文件：每份带路径标记、SKILL.md 在前。"""
+    import_skill(_FIXTURE_PACK)
+
+    text = read_skill(_FIXTURE_NAME)
+
+    assert text.startswith("---")
+    assert '<skill-file path="references/detail.md">' in text
+    assert text.index("Example Caption Skill") < text.index("<skill-file")
+    assert "</skill-file>" in text
+
+
+def test_read_skill_without_references_is_exact_skill_md(
+    tmp_path: Path, temp_data_root: Path
+) -> None:
+    """没有 references/ 的包：注入全文就是 SKILL.md 原文（一字不差）。"""
+    source = tmp_path / "bare"
+    source.mkdir()
+    skill_md = "---\nname: bare-skill\ndescription: d\n---\n正文\n"
+    (source / "SKILL.md").write_text(skill_md, encoding="utf-8")
+    import_skill(source)
+
+    assert read_skill("bare-skill") == skill_md
+
+
+def test_read_skill_reference_subdir_sorted_by_path(
+    tmp_path: Path, temp_data_root: Path
+) -> None:
+    """references/ 子目录递归收录、按路径排序（多份文件的段序确定）。"""
+    source = tmp_path / "multi"
+    (source / "references" / "sub").mkdir(parents=True)
+    (source / "SKILL.md").write_text(
+        "---\nname: multi-skill\ndescription: d\n---\n正文\n", encoding="utf-8"
+    )
+    (source / "references" / "b.md").write_text("B", encoding="utf-8")
+    (source / "references" / "a.md").write_text("A", encoding="utf-8")
+    (source / "references" / "sub" / "c.md").write_text("C", encoding="utf-8")
+    import_skill(source)
+
+    text = read_skill("multi-skill")
+
+    assert text.index('path="references/a.md"') < text.index('path="references/b.md"')
+    assert text.index('path="references/b.md"') < text.index(
+        'path="references/sub/c.md"'
+    )
+    assert "\nA\n</skill-file>" in text
+    assert "\nB\n</skill-file>" in text
+    assert "\nC\n</skill-file>" in text
+
+
+def test_read_skill_non_utf8_reference_raises(
+    tmp_path: Path, temp_data_root: Path
+) -> None:
+    """references/ 里混入非 UTF-8 文件 → SkillFormatError（fail loud，不静默截断注入）。"""
+    source = tmp_path / "broken-ref"
+    (source / "references").mkdir(parents=True)
+    (source / "SKILL.md").write_text(
+        "---\nname: broken-ref\ndescription: d\n---\n正文\n", encoding="utf-8"
+    )
+    (source / "references" / "blob.bin").write_bytes(b"\xff\xfe\x00binary")
+    import_skill(source)
+
+    with pytest.raises(SkillFormatError, match="UTF-8"):
+        read_skill("broken-ref")
 
 
 def test_read_missing_raises(temp_data_root: Path) -> None:

@@ -156,7 +156,9 @@ class SkillInfo(BaseModel):
     name: str
     description: str
     enabled: bool
-    body_chars: int = Field(description="SKILL.md 全文字符数（即注入打标请求的正文量）")
+    body_chars: int = Field(
+        description="注入正文字符数（SKILL.md + references/ 全部文件，即打标请求的注入量）"
+    )
 
 
 class SkillFileInfo(BaseModel):

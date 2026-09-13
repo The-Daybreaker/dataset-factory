@@ -37,6 +37,7 @@ from .model import (
 
 _SKILLS_DIRNAME = "skills"
 _SKILL_MD = "SKILL.md"
+_REFERENCES_DIRNAME = "references"
 _STATE_FILENAME = "_state.json"
 
 # 名称含路径分隔符、控制字符或 Windows 不允许的字符即非法：名称只能是单段安全目录名。
@@ -319,34 +320,69 @@ def list_skills() -> list[Skill]:
                 name=name,
                 description=description,
                 enabled=name not in disabled,
-                body_chars=len(skill_text),
+                body_chars=len(_assemble_skill_body(entry, skill_text)),
             )
         )
     return sorted(skills, key=lambda skill: skill.name)
 
 
 def read_skill(name: str) -> str:
-    """读某个 skill 的 SKILL.md 全文（供打标时按 <skill> 标记包裹注入）。
+    """读某个 skill 的注入全文：SKILL.md 正文 + references/ 全部文件（供打标时包裹注入）。
+
+    注入范围成文（2026-09-14 用户定夺，见 ADR）：SKILL.md 之外，references/ 下全部文件
+    一并注入——agentskills.io 标准里 references 靠模型运行时读文件（渐进披露），而本项目
+    不做工具调用 / agent 循环，模型没有第二条路看到它们；references 每份以
+    ``<skill-file path="…">`` 标记包裹，让模型与复盘者都知道每段内容来自哪个文件。
+    assets / scripts 不参与注入。没有 references/ 时返回值就是 SKILL.md 原文本身。
 
     Args:
         name: skill 名称。
 
     Returns:
-        SKILL.md 全文。
+        注入全文（SKILL.md 在前，references/ 按路径排序逐份跟随）。
 
     Raises:
         SkillNameError: 名称非法。
         SkillNotFoundError: 没有这个名字的 skill。
-        SkillFormatError: SKILL.md 不是合法 UTF-8。
-        SkillError: SKILL.md 不可读。
+        SkillFormatError: SKILL.md 或某个 reference 文件不是合法 UTF-8。
+        SkillError: 文件不可读。
     """
     _validate_name(name)
-    skill_md = _skill_dir(name) / _SKILL_MD
+    skill_dir = _skill_dir(name)
+    skill_md = skill_dir / _SKILL_MD
     if not skill_md.is_file():
         raise SkillNotFoundError(
             f"未找到 skill {name!r}；用 list_skills 查看已导入的。"
         )
-    return _read_text(skill_md)
+    return _assemble_skill_body(skill_dir, _read_text(skill_md))
+
+
+def _assemble_skill_body(skill_dir: Path, skill_md_text: str) -> str:
+    """组装注入全文：SKILL.md 正文在前，references/ 全部文件按路径排序逐份跟随。
+
+    Args:
+        skill_dir: skill 包目录（skills/<name>/）。
+        skill_md_text: 已读出的 SKILL.md 全文。
+
+    Returns:
+        注入全文；references 文件每份用 ``<skill-file path>`` 标记包裹，段间空行分隔。
+
+    Raises:
+        SkillFormatError: 某个 reference 文件不是合法 UTF-8。
+        SkillError: 某个 reference 文件不可读。
+    """
+    sections = [skill_md_text]
+    refs_dir = skill_dir / _REFERENCES_DIRNAME
+    if refs_dir.is_dir():
+        for path in sorted(
+            (p for p in refs_dir.rglob("*") if p.is_file()),
+            key=lambda p: p.relative_to(refs_dir).as_posix().casefold(),
+        ):
+            rel = path.relative_to(skill_dir).as_posix()
+            sections.append(
+                f'<skill-file path="{rel}">\n{_read_text(path)}\n</skill-file>'
+            )
+    return "\n\n".join(sections)
 
 
 def set_enabled(name: str, enabled: bool) -> None:
@@ -418,9 +454,10 @@ def _require_skill_dir(name: str) -> Path:
 def _classify_file(parts: tuple[str, ...]) -> SkillFileEntry:
     """按包内相对路径段判定文件角色与可预览性。
 
-    注入范围成文（design「技能双栏模式」）：仅 SKILL.md 注入请求；references/ 供查阅、
-    不自动注入；assets / scripts 与其他文件不参与注入。可预览 = SKILL.md 与 references/
-    下文件——预览服务「导入 → 核对 → 启用」闭环，不开放整包任意读。
+    注入范围成文（2026-09-14，见 ADR）：SKILL.md 与 references/ 下全部文件注入请求
+    （references 每份带路径标记）；assets / scripts 与其他文件不参与注入。可预览 =
+    SKILL.md 与 references/ 下文件——预览服务「导入 → 核对 → 启用」闭环，不开放整包
+    任意读。
 
     Args:
         parts: 包内相对路径段（已过安全解析）。
