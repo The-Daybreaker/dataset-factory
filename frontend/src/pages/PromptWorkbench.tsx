@@ -945,7 +945,7 @@ export function PromptWorkbench({
                     <span className="sr-only">附图片或视频（一期单素材 / 次）</span>
                     <input
                       type="file"
-                      accept="image/*,video/mp4,video/quicktime,video/webm"
+                      accept="image/*,video/mp4,video/quicktime,video/webm,video/x-msvideo,video/x-matroska,video/x-m4v"
                       className="sr-only"
                       aria-label="附图或视频"
                       onChange={pickMedia}

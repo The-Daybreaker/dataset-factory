@@ -29,7 +29,7 @@ from openai.types.chat import (
 )
 
 from .._obs import ms_since
-from .config import EndpointConfig, RequestConfig
+from .config import EndpointConfig, RequestConfig, SecretValue
 from .errors import (
     LLMAuthError,
     LLMBadRequestError,
@@ -87,6 +87,7 @@ class OpenAIChatClient:
         client: openai.OpenAI,
         model: str,
         request: RequestConfig | None = None,
+        api_key: SecretValue | None = None,
     ) -> None:
         """注入已装配好的 openai 客户端、模型名与请求参数（注入便于测试替换假客户端）。
 
@@ -94,10 +95,12 @@ class OpenAIChatClient:
             client: 官方 openai SDK 客户端（base_url / api_key / timeout 已配好）。
             model: 模型名。
             request: 请求参数（生成参数 + 透传的端点专有参数）；缺省表示不额外传任何参数。
+            api_key: 当前配置的密钥（供错误摘要脱敏；reveal 只在失败路径的掩码处发生）。
         """
         self._client = client
         self._model = model
         self._request = request if request is not None else RequestConfig()
+        self._api_key = api_key
 
     def complete(self, messages: Sequence[Message]) -> str:
         """把中立消息转成 OpenAI 消息、发非流式请求、取回文本。
@@ -131,14 +134,15 @@ class OpenAIChatClient:
         except openai.APIError as exc:
             # 第三段边界：模型调用本身。失败也记耗时——「卡了多久才失败」是排查的关键信息；
             # 同时留下 SDK 异常类名（如 APITimeoutError），便于与用户可见消息对照。
+            secret = self._api_key.reveal() if self._api_key is not None else None
             logger.warning(
                 "模型调用失败（%.0fms，模型 %s，%s，端点响应：%s）",
                 ms_since(start),
                 self._model,
                 type(exc).__name__,
-                _endpoint_error_summary(exc) or "（端点未返回细节）",
+                _endpoint_error_summary(exc, secret) or "（端点未返回细节）",
             )
-            raise _translate_sdk_error(exc) from exc
+            raise _translate_sdk_error(exc, secret=secret) from exc
         logger.info("模型调用完成（%.0fms，模型 %s）", ms_since(start), self._model)
         return _extract_text(response)
 
@@ -185,14 +189,15 @@ class OpenAIChatClient:
                 if delta is not None and delta.content:
                     yield StreamDelta(kind="content", text=delta.content)
         except openai.APIError as exc:
+            secret = self._api_key.reveal() if self._api_key is not None else None
             logger.warning(
                 "模型流式调用失败（%.0fms，模型 %s，%s，端点响应：%s）",
                 ms_since(start),
                 self._model,
                 type(exc).__name__,
-                _endpoint_error_summary(exc) or "（端点未返回细节）",
+                _endpoint_error_summary(exc, secret) or "（端点未返回细节）",
             )
-            raise _translate_sdk_error(exc) from exc
+            raise _translate_sdk_error(exc, secret=secret) from exc
         logger.info("模型流式调用完成（%.0fms，模型 %s）", ms_since(start), self._model)
 
 
@@ -214,7 +219,7 @@ def build_completer(config: EndpointConfig) -> Completer:
         timeout=config.request.timeout_seconds,
         max_retries=config.request.max_retries,
     )
-    return OpenAIChatClient(client, config.model, config.request)
+    return OpenAIChatClient(client, config.model, config.request, config.api_key)
 
 
 # 连通性探测的传输参数：比正式打标更急——15 秒等不到就报超时、不重试（用户在等结果）。
@@ -270,12 +275,14 @@ def probe_endpoint(config: EndpointConfig) -> ProbeResult:
     )
 
 
-def _endpoint_error_summary(exc: openai.APIError) -> str:
+def _endpoint_error_summary(exc: openai.APIError, secret: str | None = None) -> str:
     """提取端点错误响应体的单行摘要（进失败日志与用户可见错误消息）。
 
     「模型侧 400」排查需要端点的原话（如 SiliconFlow 的 ``code 20015``），只有异常类名
     等于让排查者盲猜。SDK 的 APIStatusError 带 ``body``（已解析的 JSON 或原始文本），
     拿不到时退回 ``str(exc)``（其中通常已含响应体）；压成单行并截断，防大响应冲爆日志。
+    ``secret`` 是当前配置的 API 密钥明文：摘要来自**端点响应体**（端点可配任意 base_url），
+    若端点在错误体里回显了请求内容（含密钥），此处定点掩码，防密钥经日志 / 界面二次泄漏。
     """
     raw: object
     if isinstance(exc, openai.APIStatusError):
@@ -291,6 +298,8 @@ def _endpoint_error_summary(exc: openai.APIError) -> str:
         else json.dumps(raw, ensure_ascii=False, default=str)
     )
     text = " ".join(text.split())
+    if secret and secret in text:
+        text = text.replace(secret, "*****")
     return text[:300] + ("…" if len(text) > 300 else "")
 
 
@@ -380,7 +389,7 @@ def _extract_text(response: ChatCompletion) -> str:
     return content
 
 
-def _translate_sdk_error(exc: openai.APIError) -> LLMError:
+def _translate_sdk_error(exc: openai.APIError, secret: str | None = None) -> LLMError:
     """把 openai SDK 的分类异常翻译成项目自己的类型化异常。
 
     按「先具体后一般」判类型：APITimeoutError 是 APIConnectionError 的子类、各 HTTP
@@ -388,11 +397,15 @@ def _translate_sdk_error(exc: openai.APIError) -> LLMError:
     怎么修」，不回显 SDK 原始消息（避免泄密钥 / 甩栈）；HTTP 状态类错误在其后附上
     **端点响应体摘要**（2026-09-14 用户定夺）——端点的一面之词交给用户自己判断
     （如「模型不存在」在部分端点是 400 而非 404，摘要能直接看到端点怎么说）。
+    ``secret`` 是当前配置的密钥明文：摘要生成后对它定点掩码——端点可配任意 base_url，
+    错误体若回显了请求内容（含密钥），不能让它经界面 / 日志二次泄漏（audit 2026-09-14）。
     """
-    summary = (
-        _endpoint_error_summary(exc) if isinstance(exc, openai.APIStatusError) else ""
+    secret_summary = (
+        _endpoint_error_summary(exc, secret)
+        if isinstance(exc, openai.APIStatusError)
+        else ""
     )
-    suffix = f"（端点返回：{summary}）" if summary else ""
+    suffix = f"（端点返回：{secret_summary}）" if secret_summary else ""
     if isinstance(exc, openai.APITimeoutError):
         return LLMTimeoutError(
             "调用模型超时；网络较慢或模型响应久，可稍后重试（大图 / 慢模型可调大 timeout）。"

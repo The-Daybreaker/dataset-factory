@@ -12,7 +12,13 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from ..labeling import LabelingEngine, SessionSnapshot, StreamFinished, StreamStarted
-from ..llm import LLMError, StreamDelta, build_completer, read_config
+from ..llm import (
+    VIDEO_MIME_BY_SUFFIX,
+    LLMError,
+    StreamDelta,
+    build_completer,
+    read_config,
+)
 from ..sessions import latest_session_id
 from .schemas import (
     ErrorDetail,
@@ -25,13 +31,8 @@ from .schemas import (
 
 router = APIRouter(prefix="/api", tags=["打标与会话"])
 
-# 视频扩展名 → MIME（进 video_url 的 data URL 前缀）；未识别的扩展名回落 mp4。
-_VIDEO_MIME = {
-    ".mp4": "video/mp4",
-    ".m4v": "video/x-m4v",
-    ".mov": "video/quicktime",
-    ".webm": "video/webm",
-}
+# MIME 映射单一事实源在 llm.messages（audit 2026-09-14 收敛）；未识别扩展名回落 mp4。
+_VIDEO_MIME = VIDEO_MIME_BY_SUFFIX
 
 
 def build_engine() -> LabelingEngine:
@@ -88,7 +89,7 @@ def label(request: LabelRequest) -> LabelResponse:
         video_bytes=video_bytes,
         video_name=request.video_name,
         video_mime=video_mime,
-        # fps 在请求边界已校验为整数值（multiple_of=1），float→int 转换精确无损；
+        # fps 在请求边界已校验为整数值（LabelRequest 模型校验器），float→int 转换精确无损；
         # 端点（SiliconFlow）对浮点 fps 判非法，wire 上必须是整型。
         video_fps=int(request.video_fps),
         video_max_frames=request.video_max_frames,

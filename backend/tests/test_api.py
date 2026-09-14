@@ -17,10 +17,13 @@ from fastapi.testclient import TestClient
 import dataset_factory.api.routes_endpoints as routes_endpoints
 import dataset_factory.api.routes_labeling as routes_labeling
 from dataset_factory.api import create_app
+from dataset_factory.labeling import LabelingEngine
 from dataset_factory.llm import (
     EndpointConfig,
     ImagePart,
+    LLMError,
     ProbeResult,
+    StreamDelta,
     TextPart,
     VideoPart,
     read_stored_api_key,
@@ -1023,6 +1026,34 @@ def test_label_stream_sse(client: TestClient, fake_engine: FakeCompleter) -> Non
     done_data = json.loads(frames[-1].splitlines()[1].removeprefix("data: "))
     assert done_data["caption"] == "打标结果"
     assert "session_id" in done_data
+
+
+def test_label_stream_mid_stream_error_emits_error_frame(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """流中途模型失败 → SSE error 帧（TC-24④ 的自动化兜底；audit 2026-09-14 补）。"""
+
+    class _MidStreamErrorCompleter:
+        def stream(self, messages: object) -> object:
+            yield StreamDelta(kind="content", text="部分")
+            raise LLMError("模型流中途失败（测试）")
+
+        def complete(self, messages: object) -> str:
+            raise AssertionError("流式路径不应调用 complete")
+
+    engine = LabelingEngine(_MidStreamErrorCompleter(), "m")  # type: ignore[arg-type]
+    monkeypatch.setattr(routes_labeling, "build_engine", lambda: engine)
+
+    _save_prompt("p1", "你是打标助手。")
+    response = client.post(
+        "/api/label/stream", json={"prompt_name": "p1", "instruction": "x"}
+    )
+
+    assert response.status_code == 200
+    frames = [f for f in response.text.split("\n\n") if f.strip()]
+    events = [f.splitlines()[0].removeprefix("event: ") for f in frames]
+    assert events == ["start", "delta", "error"]
+    assert "模型流中途失败" in frames[-1]
 
 
 def test_skills_import_upload_conflict_409(client: TestClient) -> None:

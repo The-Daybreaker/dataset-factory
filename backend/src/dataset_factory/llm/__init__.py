@@ -60,6 +60,8 @@ from .errors import (
     UnsupportedImageError,
 )
 from .messages import (
+    VIDEO_EXTENSIONS,
+    VIDEO_MIME_BY_SUFFIX,
     ContentPart,
     ImagePart,
     Message,
@@ -73,6 +75,8 @@ __all__ = [
     "DEFAULT_CONFIG_NAME",
     "ENV_API_KEY",
     "SUPPORTED_API_FORMAT",
+    "VIDEO_EXTENSIONS",
+    "VIDEO_MIME_BY_SUFFIX",
     "Completer",
     "ConfigConflictError",
     "ConfigError",

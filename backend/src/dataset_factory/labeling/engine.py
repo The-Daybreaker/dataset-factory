@@ -20,6 +20,7 @@ from typing import cast
 
 from .._obs import ms_since
 from ..llm import (
+    VIDEO_EXTENSIONS,
     Completer,
     ImagePart,
     Message,
@@ -531,7 +532,7 @@ def _replay_history(events: Sequence[SessionEvent]) -> tuple[Message, ...]:
     return tuple(history)
 
 
-_VIDEO_EXTENSIONS = frozenset({".mp4", ".mov", ".webm", ".avi", ".mkv", ".m4v"})
+_VIDEO_EXTENSIONS = VIDEO_EXTENSIONS
 
 
 def _attachment_label(attachment: str) -> str:

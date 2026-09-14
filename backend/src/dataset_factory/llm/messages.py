@@ -8,6 +8,18 @@ from typing import Literal
 # 消息角色（OpenAI 兼容接口的事实）：system 系统指令、user 现场内容、assistant 模型历史回复。
 Role = Literal["system", "user", "assistant"]
 
+# 视频扩展名 → MIME（video_url data URL 前缀）与支持集合——入口层（CLI / HTTP）与引擎
+# 共用的单一事实源，防三处口径漂移（audit 2026-09-14）；未识别的扩展名由调用方回落 mp4。
+VIDEO_MIME_BY_SUFFIX: dict[str, str] = {
+    ".mp4": "video/mp4",
+    ".m4v": "video/x-m4v",
+    ".mov": "video/quicktime",
+    ".webm": "video/webm",
+    ".avi": "video/x-msvideo",
+    ".mkv": "video/x-matroska",
+}
+VIDEO_EXTENSIONS = frozenset(VIDEO_MIME_BY_SUFFIX)
+
 
 @dataclass(frozen=True)
 class TextPart:

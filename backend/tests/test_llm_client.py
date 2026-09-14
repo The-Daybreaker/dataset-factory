@@ -212,6 +212,23 @@ def test_translate_without_body_keeps_clean_message() -> None:
     assert "端点返回：" not in str(excinfo.value)
 
 
+def test_error_summary_masks_api_key_in_endpoint_body() -> None:
+    """端点在错误体里回显密钥时，摘要与用户消息对密钥定点掩码（audit 2026-09-14）。"""
+    exc = _bare_sdk_error(openai.BadRequestError)
+    exc.body = {"message": "invalid key: sk-real-secret-123"}
+    sdk = MagicMock()
+    sdk.chat.completions.create.side_effect = exc
+    client = OpenAIChatClient(
+        cast(openai.OpenAI, sdk), "m", api_key=SecretValue("sk-real-secret-123")
+    )
+
+    with pytest.raises(LLMBadRequestError) as excinfo:
+        client.complete([Message(role="user", parts=(TextPart("hi"),))])
+
+    assert "sk-real-secret-123" not in str(excinfo.value)
+    assert "*****" in str(excinfo.value)
+
+
 def test_complete_raises_on_empty_choices() -> None:
     """响应无 choices → LLMError（fail loud，不静默返回空）。"""
     empty = MagicMock()

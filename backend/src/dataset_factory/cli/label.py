@@ -14,7 +14,12 @@ from typing import Annotated
 import typer
 
 from ..labeling import LabelingEngine
-from ..llm import LLMError, build_completer, read_config
+from ..llm import (
+    VIDEO_MIME_BY_SUFFIX,
+    LLMError,
+    build_completer,
+    read_config,
+)
 from ..sessions import latest_session_id
 from .errors import DOMAIN_ERRORS, handle_domain_errors
 
@@ -58,7 +63,13 @@ def label(
         typer.Option("--video", "-v", help="视频文件路径（与 --image 互斥）"),
     ] = None,
     video_fps: Annotated[
-        int, typer.Option("--video-fps", help="视频抽帧 fps（整型 1–10，默认 2）")
+        int,
+        typer.Option(
+            "--video-fps",
+            min=1,
+            max=10,
+            help="视频抽帧 fps（整型 1–10，默认 2）",
+        ),
     ] = 2,
     video_max_frames: Annotated[
         int,
@@ -79,6 +90,11 @@ def label(
         raise typer.BadParameter("图片与视频只能带一个（--image 与 --video 互斥）。")
     engine = build_engine()
     video_bytes = video.read_bytes() if video is not None else None
+    video_mime = (
+        VIDEO_MIME_BY_SUFFIX.get(video.suffix.lower(), "video/mp4")
+        if video is not None
+        else "video/mp4"
+    )
     result = engine.label(
         session_id=session_id,
         prompt_name=prompt_name,
@@ -87,6 +103,7 @@ def label(
         image=image,
         video_bytes=video_bytes,
         video_name=video.name if video is not None else "video.mp4",
+        video_mime=video_mime,
         video_fps=video_fps,
         video_max_frames=video_max_frames,
     )
