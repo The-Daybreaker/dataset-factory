@@ -790,7 +790,14 @@ export function PromptWorkbench({
                       toggleSkill(skill.name);
                     }}
                   >
-                    <span className="truncate">
+                    <span
+                      className={
+                        "truncate" +
+                        (skill.description.startsWith("文件损坏：")
+                          ? " text-destructive"
+                          : "")
+                      }
+                    >
                       {skill.name}
                       {skill.enabled ? "" : "（已停用）"}
                     </span>

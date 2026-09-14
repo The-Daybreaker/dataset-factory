@@ -1203,7 +1203,14 @@ function SkillsPanel(): ReactElement {
                           {/* 去掉 block：line-clamp-2 自带 -webkit-box 显示模式与省略号，
                               block 会把它覆盖成普通块级导致截断失效（长下划线词把卡片撑破
                               左栏宽度，2026-09-13 用户反馈）；anywhere 断长词兜底 */}
-                          <span className="line-clamp-2 text-[12px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
+                          <span
+                            className={
+                              "line-clamp-2 text-[12px] leading-relaxed [overflow-wrap:anywhere] " +
+                              (skill.description.startsWith("文件损坏：")
+                                ? "text-destructive"
+                                : "text-muted-foreground")
+                            }
+                          >
                             {skill.description}
                           </span>
                         </TooltipTrigger>

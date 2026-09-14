@@ -216,6 +216,49 @@ def test_list_skips_state_file_and_non_skill_dirs(temp_data_root: Path) -> None:
     assert [s.name for s in skills] == [_FIXTURE_NAME]
 
 
+def test_list_skills_degrades_corrupt_package(temp_data_root: Path) -> None:
+    """列表对单个损坏包宽容降级：目录名兜底进列表、description = 可读原因，其余不受影响。"""
+    import_skill(_FIXTURE_PACK)
+    bad_dir = _skills_dir(temp_data_root) / "bad"
+    bad_dir.mkdir(parents=True)
+    (bad_dir / "SKILL.md").write_text("---\ndescription: x\n没有闭合", encoding="utf-8")
+
+    skills = list_skills()
+
+    assert [s.name for s in skills] == ["bad", _FIXTURE_NAME]
+    broken = skills[0]
+    assert broken.description.startswith("文件损坏：")
+    assert "未闭合" in broken.description  # 原因可读：哪里坏
+    assert broken.body_chars == 0
+    assert skills[1].description.startswith("示例 skill")  # 好包不受影响
+
+
+def test_list_skills_corrupt_package_heals_after_fix(temp_data_root: Path) -> None:
+    """损坏包修复（SKILL.md 恢复合法内容）后，列表恢复健康形态。"""
+    bad_dir = _skills_dir(temp_data_root) / "bad"
+    bad_dir.mkdir(parents=True)
+    (bad_dir / "SKILL.md").write_text("---\ndescription: x\n没有闭合", encoding="utf-8")
+    assert list_skills()[0].description.startswith("文件损坏：")
+
+    (bad_dir / "SKILL.md").write_text(
+        "---\nname: bad\ndescription: 已修\n---\n正文\n", encoding="utf-8"
+    )
+
+    skills = list_skills()
+    assert len(skills) == 1
+    assert skills[0].description == "已修"
+
+
+def test_read_skill_corrupt_package_fails_loud(temp_data_root: Path) -> None:
+    """单条读取对损坏包仍 fail loud（降级只在列表，读全文与打标装配拒绝带病使用）。"""
+    bad_dir = _skills_dir(temp_data_root) / "bad"
+    bad_dir.mkdir(parents=True)
+    (bad_dir / "SKILL.md").write_text("---\ndescription: x\n没有闭合", encoding="utf-8")
+
+    with pytest.raises(SkillFormatError, match="未闭合"):
+        read_skill("bad")
+
+
 def test_read_skill_returns_full_text(temp_data_root: Path) -> None:
     """read_skill 返回 SKILL.md 全文（供打标注入）。"""
     import_skill(_FIXTURE_PACK)

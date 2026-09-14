@@ -42,7 +42,12 @@ from dataset_factory.sessions import (
     list_sessions,
     read_events,
 )
-from dataset_factory.skills import SkillNotFoundError, import_skill, set_enabled
+from dataset_factory.skills import (
+    SkillFormatError,
+    SkillNotFoundError,
+    import_skill,
+    set_enabled,
+)
 
 from .conftest import FakeCompleter
 
@@ -602,5 +607,36 @@ def test_unknown_skill_name_fails_loud(
 
     with pytest.raises(SkillNotFoundError):
         engine.label(prompt_name="h3", skill_names=["拼错了"], instruction="打标")
+
+    assert list_sessions() == []
+
+
+def test_corrupt_skill_package_not_selected_does_not_break_round(
+    temp_data_root: Path, fake_completer: FakeCompleter
+) -> None:
+    """库里有一个损坏包但本轮没勾选它：打标轮不受影响（列表宽容降级，A8 回归）。"""
+    _save_prompt("h3", "你是打标助手。")
+    bad_dir = temp_data_root / "skills" / "bad"
+    bad_dir.mkdir(parents=True)
+    (bad_dir / "SKILL.md").write_text("---\ndescription: x\n没有闭合", encoding="utf-8")
+    engine = LabelingEngine(fake_completer, _MODEL)
+
+    engine.label(prompt_name="h3", instruction="纯文本打标")
+
+    assert fake_completer.calls[0][1].parts == (TextPart("纯文本打标"),)
+
+
+def test_corrupt_skill_package_selected_fails_loud(
+    temp_data_root: Path, fake_completer: FakeCompleter
+) -> None:
+    """勾选了损坏包：本轮明确拒绝（可读错误），不带病使用（A8 回归）。"""
+    _save_prompt("h3", "你是打标助手。")
+    bad_dir = temp_data_root / "skills" / "bad"
+    bad_dir.mkdir(parents=True)
+    (bad_dir / "SKILL.md").write_text("---\ndescription: x\n没有闭合", encoding="utf-8")
+    engine = LabelingEngine(fake_completer, _MODEL)
+
+    with pytest.raises(SkillFormatError, match="未闭合"):
+        engine.label(prompt_name="h3", skill_names=["bad"], instruction="打标")
 
     assert list_sessions() == []

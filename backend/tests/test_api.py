@@ -285,6 +285,24 @@ def test_skills_lifecycle(client: TestClient) -> None:
     assert missing.status_code == 404
 
 
+def test_skills_list_degrades_corrupt_package(
+    client: TestClient, temp_data_root: Path
+) -> None:
+    """列表对损坏包降级呈现：200 + 「文件损坏：…」条目，好包不受影响（A8 回归）。"""
+    client.post("/api/skills/import", json={"path": str(_SKILL_PACK)})
+    bad_dir = temp_data_root / "skills" / "bad"
+    bad_dir.mkdir(parents=True)
+    (bad_dir / "SKILL.md").write_text("---\ndescription: x\n没有闭合", encoding="utf-8")
+
+    response = client.get("/api/skills")
+
+    assert response.status_code == 200
+    items = {item["name"]: item for item in response.json()}
+    assert items["bad"]["description"].startswith("文件损坏：")
+    assert items["bad"]["body_chars"] == 0
+    assert items["example-caption-skill"]["body_chars"] > 0
+
+
 def test_skills_import_conflict_is_409(client: TestClient) -> None:
     """重复导入同名 skill：409（重名不合并）。"""
     client.post("/api/skills/import", json={"path": str(_SKILL_PACK)})

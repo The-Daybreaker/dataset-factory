@@ -373,6 +373,27 @@ describe("SettingsPage · 能力·技能", () => {
     expect(screen.queryByLabelText("启用 h3-skill")).not.toBeInTheDocument();
   });
 
+  it("损坏包降级呈现：description 以「文件损坏：」开头时标红（宽容降级口径）", async () => {
+    apiMock.listSkills.mockResolvedValue([
+      {
+        name: "bad",
+        description:
+          "文件损坏：SKILL.md 的 frontmatter 未闭合（开头有 ---，但找不到结束的 ---）。",
+        enabled: true,
+        body_chars: 0,
+      },
+    ] satisfies SkillInfo[]);
+    render(<SettingsPage />);
+    await waitFor(() => screen.getByLabelText("Base URL"));
+    await userEvent.click(screen.getByRole("button", { name: "技能" }));
+
+    // TooltipContent 会另渲染一份描述文本（portal 到 body），断言收窄到列表行内的 span
+    const row = screen.getByLabelText("启用 bad").parentElement;
+    const text = await within(row as HTMLElement).findByText(/文件损坏：/);
+
+    expect(text).toHaveClass("text-destructive");
+  });
+
   it("导入成功：选择文件夹调 importSkillFiles 并给出体积与 token 提醒反馈条", async () => {
     apiMock.importSkillFiles.mockResolvedValue({
       name: "fresh",

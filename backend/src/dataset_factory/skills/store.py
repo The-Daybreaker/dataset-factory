@@ -3,8 +3,10 @@
 Skill 包按 agentskills.io 开放标准（`<name>/SKILL.md` + references/ 等）导入 = 整目录复制进
 `skills/<name>/`（自包含，原包可删）；启用 / 停用状态记在独立清单 `skills/_state.json`（不写
 进 skill 目录，保持包「原样」）；重名不合并（导入撞名即 fail loud、不覆盖旧包）；停用不删除。
-目录级导入用「复制到临时名 + os.replace 改名」做到崩溃不留半个包；数据根 + 原子写复用共享
-`_fs`；本模块禁 import 入口层与 llm（分层契约守）。
+错误口径：单条操作 fail loud，**列表（list_skills）对单个损坏包宽容降级**（2026-09-15 用户
+定夺）——坏包以「文件损坏：…」条目照常进列表，其余不受影响。目录级导入用「复制到临时名 +
+os.replace 改名」做到崩溃不留半个包；数据根 + 原子写复用共享 `_fs`；本模块禁 import 入口层
+与 llm（分层契约守）。
 """
 
 from __future__ import annotations
@@ -291,17 +293,21 @@ def import_skill_files(files: Mapping[str, bytes]) -> SkillImport:
 
 
 def list_skills() -> list[Skill]:
-    """列出库里全部 skill（按名称排序），带各自的库级启用状态。
+    """列出库里全部 skill（按名称排序），带各自的库级启用状态；单个损坏包**降级呈现**、不拦整库。
 
     只认 skills/ 下含 SKILL.md 的普通子目录：跳过 `_state.json` 等文件、`.`/`_` 前缀的内部
-    目录、以及不含 SKILL.md 的杂目录。含 SKILL.md 但 frontmatter 损坏的 → fail loud。
+    目录、以及不含 SKILL.md 的杂目录。库目录不存在时返回空列表（还没有任何包，不算错）。
+
+    损坏包的降级口径（2026-09-15 用户定夺，与提示词列表同款，Web 与 CLI 同此）：SKILL.md
+    损坏（非 UTF-8 / frontmatter 非法 / 包体组装失败）的包仍以目录名进列表，description =
+    可读的损坏原因（哪里坏、怎么修），body_chars = 0；其余条目不受影响。单条读取
+    （read_skill）与打标装配侧仍 fail loud——被勾选的坏包会被明确拒绝，不会带病使用。
 
     Returns:
-        skill 列表，按名称字典序；库目录不存在时返回空列表。
+        skill 列表（含降级的损坏包），按名称字典序。
 
     Raises:
-        SkillFormatError: 某个 skill 的 SKILL.md 损坏。
-        SkillError: 启用状态清单损坏，或某个 SKILL.md 不可读。
+        SkillError: 启用状态清单损坏。
     """
     directory = _skills_dir()
     if not directory.is_dir():
@@ -313,14 +319,26 @@ def list_skills() -> list[Skill]:
             continue
         if not (entry / _SKILL_MD).is_file():
             continue
-        skill_text = _read_text(entry / _SKILL_MD)
-        name, description = parse_skill_frontmatter(skill_text)
+        try:
+            skill_text = _read_text(entry / _SKILL_MD)
+            name, description = parse_skill_frontmatter(skill_text)
+            body_chars = len(_assemble_skill_body(entry, skill_text))
+        except SkillError as exc:
+            skills.append(
+                Skill(
+                    name=entry.name,
+                    description=f"文件损坏：{exc}",
+                    enabled=entry.name not in disabled,
+                    body_chars=0,
+                )
+            )
+            continue
         skills.append(
             Skill(
                 name=name,
                 description=description,
                 enabled=name not in disabled,
-                body_chars=len(_assemble_skill_body(entry, skill_text)),
+                body_chars=body_chars,
             )
         )
     return sorted(skills, key=lambda skill: skill.name)
@@ -344,7 +362,7 @@ def read_skill(name: str) -> str:
     Raises:
         SkillNameError: 名称非法。
         SkillNotFoundError: 没有这个名字的 skill。
-        SkillFormatError: SKILL.md 或某个 reference 文件不是合法 UTF-8。
+        SkillFormatError: SKILL.md 非法 UTF-8 / frontmatter 损坏，或某个 reference 文件不是合法 UTF-8。
         SkillError: 文件不可读。
     """
     _validate_name(name)
@@ -354,7 +372,10 @@ def read_skill(name: str) -> str:
         raise SkillNotFoundError(
             f"未找到 skill {name!r}；用 list_skills 查看已导入的。"
         )
-    return _assemble_skill_body(skill_dir, _read_text(skill_md))
+    skill_text = _read_text(skill_md)
+    # frontmatter 在此复检：列表降级后这里是坏包进注入流程的唯一闸门（不把损坏包带病注入）。
+    parse_skill_frontmatter(skill_text)
+    return _assemble_skill_body(skill_dir, skill_text)
 
 
 def _assemble_skill_body(skill_dir: Path, skill_md_text: str) -> str:
