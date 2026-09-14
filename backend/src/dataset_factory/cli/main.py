@@ -3,9 +3,9 @@
 命令一览（``dsf --help`` / ``dsf <命令> --help`` 看细节）：
 
 - 打标：``dsf label``（单发，支持会话续接）、``dsf chat``（终端多轮）；
-- 配置：``dsf config set`` / ``dsf config show``（密钥交互输入不回显）；
+- 配置：``dsf config set / show / list / add / remove / use / test / params``（密钥交互输入不回显）；
 - 提示词库：``dsf prompt list / show / save / rename / rm``；
-- Skill 库：``dsf skill import / list / enable / disable / rm``；
+- Skill 库：``dsf skill import / list / enable / disable / files / read / rm``；
 - 会话：``dsf session list / show``。
 
 退出码约定（外部 agent 按此解析）：

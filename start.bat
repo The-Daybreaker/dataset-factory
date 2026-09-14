@@ -51,12 +51,20 @@ if not exist "frontend\dist\index.html" (
     popd
 )
 
-rem 幂等启动：端口已被监听 = 服务已在运行，直接打开界面、不重复起服务。
-netstat -ano | findstr /r /c":%PORT% .*LISTENING" >nul 2>nul
+rem 幂等启动（含身份校验）：端口在监听且监听进程是本工具（命令行含 dsf 特征）= 服务已在
+rem 运行，直接打开界面、不重复起服务；端口被无关程序占用则不启动，给出可操作提示。
+powershell -NoProfile -Command "$conn = Get-NetTCPConnection -LocalPort %PORT% -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if (-not $conn) { exit 1 }; $cmdline = (Get-CimInstance Win32_Process -Filter ('ProcessId=' + $conn.OwningProcess)).CommandLine; exit ([int]($cmdline -notmatch 'dsf'))" >nul 2>nul
 if %errorlevel% equ 0 (
     echo [start] 服务已在运行（端口 %PORT%），直接打开界面。
     if not defined DSF_NO_BROWSER start "" "http://127.0.0.1:%PORT%"
     exit /b 0
+)
+netstat -ano | findstr /r /c":%PORT% .*LISTENING" >nul 2>nul
+if %errorlevel% equ 0 (
+    echo [start] 端口 %PORT% 已被其他程序占用（不是本工具的服务），本次未启动。
+    echo [start] 可换端口：set DSF_PORT=8001 后重新运行 start.bat；或结束占用程序后再试。
+    pause
+    exit /b 1
 )
 
 rem 隐藏拉起服务：Start-Process 给新进程独立的隐藏控制台，不影响本窗口；

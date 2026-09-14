@@ -15,16 +15,18 @@ import typer
 
 from ..labeling import LabelingEngine
 from ..llm import (
+    VIDEO_EXTENSIONS,
     VIDEO_MIME_BY_SUFFIX,
     LLMError,
     build_completer,
     read_config,
 )
-from ..sessions import latest_session_id
+from ..sessions import SessionError, latest_session_id
 from .errors import DOMAIN_ERRORS, handle_domain_errors
 
-# chat 输入行里附图的轻量语法：`@图片路径 指令`（@ 开头第一个词是图，其余是指令）。
-_AT_IMAGE_SYNTAX = re.compile(r"^@(\S+)\s*(.*)$")
+# chat 输入行里附件的轻量语法：`@文件路径 指令`（@ 开头第一个词是附件路径，其余是指令；
+# 图片 / 视频按扩展名区分，视频扩展名集合以 llm 层的 VIDEO_EXTENSIONS 为准）。
+_AT_SYNTAX = re.compile(r"^@(\S+)\s*(.*)$")
 
 
 def build_engine() -> LabelingEngine:
@@ -129,12 +131,33 @@ def chat(
         str | None,
         typer.Option("--prompt", "-p", help="基础提示词名称；新会话必选，续接可省"),
     ] = None,
+    skill_names: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--skill",
+            "-s",
+            help="启用的 skill（可多次）；首轮生效并随会话延续，续接可省",
+        ),
+    ] = None,
+    video_fps: Annotated[
+        int,
+        typer.Option(
+            "--video-fps",
+            min=1,
+            max=10,
+            help="@ 附带视频的抽帧 fps（整型 1–10，默认 2）",
+        ),
+    ] = 2,
+    video_max_frames: Annotated[
+        int,
+        typer.Option("--video-max-frames", help="@ 附带视频的抽帧帧数上限（默认 16）"),
+    ] = 16,
     session_id: Annotated[
         str | None,
         typer.Option("--session", help="要恢复的会话 id；缺省自动取最新会话"),
     ] = None,
 ) -> None:
-    """终端多轮打标：交互输入指令（附图用 `@图片路径 指令`），Ctrl+D / Ctrl+C 退出。"""
+    """终端多轮打标：交互输入指令（附图 / 附视频用 `@文件路径 指令`），Ctrl+D / Ctrl+C 退出。"""
     engine = build_engine()
     if session_id is None:
         session_id = latest_session_id()
@@ -150,45 +173,80 @@ def chat(
             f"当前基础提示词: {snapshot.settings.prompt_name or '（未设置，首轮需 -p 指定）'}",
             fg=typer.colors.YELLOW,
         )
-    typer.echo("输入指令开始（附图：@图片路径 指令；退出：Ctrl+D / Ctrl+C）")
+    typer.echo("输入指令开始（附图 / 附视频：@文件路径 指令；退出：Ctrl+D / Ctrl+C）")
     while True:
         try:
             line = input("\n> ")
         except (EOFError, KeyboardInterrupt):
             typer.echo()
             break
-        image_path, instruction = _parse_chat_line(line)
-        if not instruction and image_path is None and not line.strip():
+        attachment, instruction = _parse_chat_line(line)
+        if not instruction and attachment is None and not line.strip():
             continue
         try:
-            result = engine.label(
-                session_id=session_id,
-                prompt_name=prompt_name,
-                instruction=instruction,
-                image=image_path,
-            )
-        except DOMAIN_ERRORS as exc:
-            # 逐轮容错：一轮失败（超时、@错了图片路径等）报错后继续，多轮上下文还在盘上，
-            # 直接重发本轮即可——整场退出等于把前面的对话全作废。
-            typer.secho(f"错误：{exc}", fg=typer.colors.RED, err=True)
-            if isinstance(exc, LLMError) and exc.retryable:
-                typer.secho(
-                    "该错误通常是暂时性的（网络 / 超时），可直接重发本轮。",
-                    fg=typer.colors.YELLOW,
-                    err=True,
+            if attachment is not None and attachment.suffix.lower() in VIDEO_EXTENSIONS:
+                result = engine.label(
+                    session_id=session_id,
+                    prompt_name=prompt_name,
+                    skill_names=skill_names,
+                    instruction=instruction,
+                    video_bytes=_read_chat_video(attachment),
+                    video_name=attachment.name,
+                    video_mime=VIDEO_MIME_BY_SUFFIX.get(
+                        attachment.suffix.lower(), "video/mp4"
+                    ),
+                    video_fps=video_fps,
+                    video_max_frames=video_max_frames,
                 )
+            else:
+                result = engine.label(
+                    session_id=session_id,
+                    prompt_name=prompt_name,
+                    skill_names=skill_names,
+                    instruction=instruction,
+                    image=attachment,
+                )
+        except DOMAIN_ERRORS as exc:
+            _report_turn_failure(exc)
             continue
         session_id = result.session_id
         prompt_name = None  # 首轮落定后由会话设置携带，不再重复传
+        skill_names = None
         typer.echo(result.caption)
 
 
+def _report_turn_failure(exc: BaseException) -> None:
+    """逐轮容错的统一报错：本轮失败打印可操作消息后由调用方继续下一轮（历史已在盘上）。"""
+    typer.secho(f"错误：{exc}", fg=typer.colors.RED, err=True)
+    if isinstance(exc, LLMError) and exc.retryable:
+        typer.secho(
+            "该错误通常是暂时性的（网络 / 超时），可直接重发本轮。",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+
+
 def _parse_chat_line(line: str) -> tuple[Path | None, str]:
-    """解析 chat 输入行：`@图片路径 指令` → (图片路径, 指令)；普通行 → (None, 原文)。"""
-    matched = _AT_IMAGE_SYNTAX.match(line.strip())
+    """解析 chat 输入行：`@文件路径 指令` → (附件路径, 指令)；普通行 → (None, 原文)。"""
+    matched = _AT_SYNTAX.match(line.strip())
     if matched is None:
         return None, line
     return Path(matched.group(1)), matched.group(2)
+
+
+def _read_chat_video(attachment: Path) -> bytes:
+    """读 @ 附带的视频文件字节（视频扩展名判定以 llm 层 VIDEO_EXTENSIONS 为准）。
+
+    视频字节必须在入口层读好交给引擎（引擎只收字节）；读不出来是用户错（路径不存在 /
+    无权限），翻译成与「附件源不是文件」同域同口径的 SessionError，走 chat 的逐轮容错
+    ——报错后继续下一轮，会话历史还在盘上，不整场退出。
+    """
+    try:
+        return attachment.read_bytes()
+    except OSError as exc:
+        raise SessionError(
+            f"无法读取视频 {attachment}（{exc.strerror or exc}）；请检查路径后重发本轮。"
+        ) from exc
 
 
 def _print_history_line(role: str, text: str, attachment: str | None) -> None:

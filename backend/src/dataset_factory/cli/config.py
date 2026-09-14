@@ -9,11 +9,13 @@
 - ``add``：新增一套配置；
 - ``remove``：删除一套配置（当前使用中的需先切换）；
 - ``use``：把一套配置设为当前使用；
-- ``test``：发一个极小的真实请求测试连通性（不必改配置）。
+- ``test``：发一个极小的真实请求测试连通性（不必改配置）；
+- ``params``：查看 / 整体替换一套配置的请求参数（与 Web 设置页「高级参数」同一份配置）。
 """
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Annotated, cast
 
@@ -22,6 +24,7 @@ import typer
 from ..llm import (
     DEFAULT_CONFIG_NAME,
     ENV_API_KEY,
+    SUPPORTED_API_FORMAT,
     ConfigError,
     EndpointConfig,
     SecretValue,
@@ -36,6 +39,7 @@ from ..llm import (
     read_stored_api_key,
     set_active_config,
     update_config,
+    validated_request_params,
 )
 from .errors import handle_domain_errors
 
@@ -226,3 +230,91 @@ def config_test(
             err=True,
         )
         raise typer.Exit(1)
+
+
+@app.command("params")
+@handle_domain_errors
+def config_params(
+    name: Annotated[
+        str | None, typer.Argument(help="配置名（缺省 = 当前使用的配置）")
+    ] = None,
+    set_json: Annotated[
+        str | None,
+        typer.Option(
+            "--set",
+            help=(
+                "以 JSON 对象整体替换该配置的请求参数（如 '{\"temperature\": 0.7}'，"
+                "'{}' = 清空全部）。只认 temperature / top_p / max_tokens / extra_body /"
+                " timeout_seconds / max_retries 六个键，其余键丢弃（厂商专有参数放 extra_body）"
+            ),
+        ),
+    ] = None,
+) -> None:
+    """查看或设置端点配置的请求参数（生成 + 传输；与 Web 设置页「高级参数」同一份配置）。"""
+    resolved = name if name is not None else active_config_name()
+    if resolved is None:
+        typer.secho(
+            "错误：没有可用的端点配置——dsf config add 添加，或带配置名参数指定。",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+    if not has_config(resolved):
+        typer.secho(
+            f"错误：端点配置 {resolved!r} 不存在；用 dsf config list 查看现有配置。",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+    if set_json is None:
+        _echo_request_params(resolved)
+        return
+    params = _parse_params_json(set_json)
+    data = read_config_data(resolved)
+    # api_format / 密钥原样沿用（update_config 的 None 密钥 = 不动 credentials）；
+    # 只把请求参数块换成 --set 给的整份（与 Web 高级参数区的更新语义一致）。
+    update_config(
+        resolved,
+        base_url=cast(str, data["base_url"]),
+        model=cast(str, data["model"]),
+        api_format=cast("str | None", data.get("api_format")) or SUPPORTED_API_FORMAT,
+        request_params=params,
+    )
+    updated = validated_request_params(read_config_data(resolved), resolved)
+    if updated:
+        typer.secho(f"已更新配置 {resolved} 的请求参数：", fg=typer.colors.GREEN)
+        typer.echo(json.dumps(updated, ensure_ascii=False, indent=2))
+    else:
+        typer.secho(
+            f"已清空配置 {resolved} 的请求参数（全部用内置默认）。",
+            fg=typer.colors.GREEN,
+        )
+
+
+def _echo_request_params(name: str) -> None:
+    """打印一套配置当前生效的请求参数（查看用；未设置时给设置指引）。"""
+    params = validated_request_params(read_config_data(name), name)
+    if not params:
+        typer.echo(
+            f"配置 {name} 未设置请求参数（全部用内置默认）；"
+            f"用 dsf config params {name} --set '<JSON>' 设置。"
+        )
+        return
+    typer.echo(f"配置 {name} 的请求参数：")
+    typer.echo(json.dumps(params, ensure_ascii=False, indent=2))
+
+
+def _parse_params_json(raw: str) -> dict[str, object]:
+    """解析 --set 的 JSON 文本：必须是对象（键值对），否则按用法错误退出（退出码 2）。"""
+    try:
+        parsed: object = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter(
+            f"--set 的值不是合法 JSON：{exc.msg}；"
+            "请传 JSON 对象，如 '{\"temperature\": 0.7}'。"
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise typer.BadParameter(
+            "--set 的值必须是 JSON 对象（键值对），如 '{\"temperature\": 0.7}'。"
+        )
+    return cast(dict[str, object], parsed)

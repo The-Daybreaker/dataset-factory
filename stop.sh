@@ -19,6 +19,13 @@ if [ -z "${PID}" ]; then
     exit 0
 fi
 
+# 身份校验：只结束本工具拉起的服务（命令行含 dsf 特征），防止误杀占用同端口的其他程序。
+if ! ps -p "${PID}" -o command= 2>/dev/null | grep -q dsf; then
+    echo "[stop] 端口 ${PORT} 的监听进程（PID=${PID}）不是本工具的服务，已拒绝结束。" >&2
+    echo "[stop] 若确要处理该进程：核对端口（DSF_PORT，需与启动时一致）或手动操作。" >&2
+    exit 1
+fi
+
 echo "[stop] 结束进程 PID=${PID}（端口 ${PORT}）..."
 kill "${PID}" 2>/dev/null || true
 sleep 1

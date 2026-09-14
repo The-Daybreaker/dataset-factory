@@ -292,6 +292,86 @@ def test_chat_at_image_syntax(
     )
 
 
+def test_chat_with_skill_flag(temp_data_root: Path, fake_engine: FakeCompleter) -> None:
+    """chat 带 --skill：首轮注入 skill 全文，之后由会话设置携带、后续轮继续注入。"""
+    _save_prompt("h3", "你是打标助手。")
+    skill_name = import_skill(_SKILL_PACK).skill.name
+
+    result = runner.invoke(
+        app, ["chat", "-p", "h3", "-s", skill_name], input="第一轮\n第二轮\n"
+    )
+
+    assert result.exit_code == 0
+    assert len(fake_engine.calls) == 2
+    for call in fake_engine.calls:
+        # skill 全文注入在「本轮的 user 消息」里（messages 末位；前面是 system 与历史）。
+        assert any(
+            isinstance(part, TextPart) and part.text.startswith("<skill>")
+            for part in call[-1].parts
+        )
+
+
+def test_chat_at_video_syntax(
+    temp_data_root: Path, tmp_path: Path, fake_engine: FakeCompleter
+) -> None:
+    """chat 的 @ 语法发视频：按扩展名识别为视频块，抽帧参数取默认值。"""
+    _save_prompt("h3", "你是打标助手。")
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"mp4!")
+
+    result = runner.invoke(app, ["chat", "-p", "h3"], input=f"@{video} 描述这段视频\n")
+
+    assert result.exit_code == 0
+    user = fake_engine.calls[0][1]
+    videos = [part for part in user.parts if isinstance(part, VideoPart)]
+    assert len(videos) == 1
+    assert videos[0].fps == 2.0
+    assert videos[0].max_frames == 16
+    assert any(
+        part.text == "描述这段视频" for part in user.parts if isinstance(part, TextPart)
+    )
+
+
+def test_chat_at_video_with_frame_options(
+    temp_data_root: Path, tmp_path: Path, fake_engine: FakeCompleter
+) -> None:
+    """chat 的 --video-fps / --video-max-frames 随 @ 视频传到引擎（.mov 扩展名同样识别）。"""
+    _save_prompt("h3", "你是打标助手。")
+    video = tmp_path / "clip.mov"
+    video.write_bytes(b"mov!")
+
+    result = runner.invoke(
+        app,
+        ["chat", "-p", "h3", "--video-fps", "4", "--video-max-frames", "8"],
+        input=f"@{video} 描述\n",
+    )
+
+    assert result.exit_code == 0
+    videos = [
+        part for part in fake_engine.calls[0][1].parts if isinstance(part, VideoPart)
+    ]
+    assert len(videos) == 1
+    assert videos[0].fps == 4.0
+    assert videos[0].max_frames == 8
+
+
+def test_chat_at_video_missing_file_keeps_session_alive(
+    temp_data_root: Path, fake_engine: FakeCompleter
+) -> None:
+    """@ 视频路径读不出来：报可操作错误后继续会话（逐轮容错），下一轮照常。"""
+    _save_prompt("h3", "你是打标助手。")
+
+    result = runner.invoke(
+        app, ["chat", "-p", "h3"], input="@不存在的视频.mp4 描述\n第二轮\n"
+    )
+
+    assert result.exit_code == 0
+    assert "无法读取视频" in result.stderr
+    assert "重发本轮" in result.stderr
+    assert "打标结果" in result.output
+    assert len(fake_engine.calls) == 1
+
+
 def test_config_set_and_show(temp_data_root: Path) -> None:
     """config set：密钥交互输入不回显落盘；show 显示配置与密钥来源（不显内容）。"""
     result_set = runner.invoke(
@@ -575,6 +655,221 @@ def test_config_test_without_config_or_key(temp_data_root: Path) -> None:
 
     assert no_key.exit_code == 1
     assert "补配密钥" in no_key.stderr
+
+
+def test_config_params_set_and_show_roundtrip(temp_data_root: Path) -> None:
+    """config params：--set 写入后 show 读回一致；密钥文件不受影响（沿用语义）。"""
+    runner.invoke(
+        app,
+        ["config", "add", "alpha", "--base-url", "https://a/v1", "--model", "m-a"],
+        input="test-key-123\n",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "config",
+            "params",
+            "alpha",
+            "--set",
+            '{"temperature": 0.7, "max_tokens": 512}',
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert '"temperature": 0.7' in result.output
+    assert '"max_tokens": 512' in result.output
+    # 参数块在 config.json 里平铺在顶层（存储层口径），读取侧按 validated_request_params 收取。
+    data = json.loads(
+        (temp_data_root / "endpoints" / "alpha" / "config.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert data["temperature"] == 0.7
+    assert data["max_tokens"] == 512
+    # params 只动参数块：密钥文件原样在（沿用语义的落盘证据）。
+    assert (temp_data_root / "endpoints" / "alpha" / "credentials").read_text(
+        encoding="utf-8"
+    ) == "test-key-123"
+
+    show = runner.invoke(app, ["config", "params", "alpha"])
+
+    assert show.exit_code == 0
+    assert '"temperature": 0.7' in show.output
+    assert '"max_tokens": 512' in show.output
+    assert "test-key-123" not in show.output
+
+
+def test_config_params_set_replaces_whole_block(temp_data_root: Path) -> None:
+    """params --set 的整体替换语义：再次 --set 后只保留新给的一整块。"""
+    runner.invoke(
+        app,
+        ["config", "add", "alpha", "--base-url", "https://a/v1", "--model", "m-a"],
+        input="\n",
+    )
+    runner.invoke(app, ["config", "params", "alpha", "--set", '{"temperature": 0.7}'])
+
+    result = runner.invoke(
+        app, ["config", "params", "alpha", "--set", '{"max_tokens": 8}']
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(
+        (temp_data_root / "endpoints" / "alpha" / "config.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert data["max_tokens"] == 8
+    assert "temperature" not in data
+
+
+def test_config_params_set_empty_clears(temp_data_root: Path) -> None:
+    """params --set '{}'：清空全部请求参数（回到内置默认）。"""
+    runner.invoke(
+        app,
+        ["config", "add", "alpha", "--base-url", "https://a/v1", "--model", "m-a"],
+        input="\n",
+    )
+    runner.invoke(app, ["config", "params", "alpha", "--set", '{"temperature": 0.7}'])
+
+    result = runner.invoke(app, ["config", "params", "alpha", "--set", "{}"])
+
+    assert result.exit_code == 0
+    assert "已清空" in result.output
+    show = runner.invoke(app, ["config", "params", "alpha"])
+    assert "未设置请求参数" in show.output
+
+
+def test_config_params_set_unknown_keys_dropped(temp_data_root: Path) -> None:
+    """params --set 只认六个参数键：其余键丢弃（与 Web / 存储层同口径）。"""
+    runner.invoke(
+        app,
+        ["config", "add", "alpha", "--base-url", "https://a/v1", "--model", "m-a"],
+        input="\n",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "config",
+            "params",
+            "alpha",
+            "--set",
+            '{"temperature": 0.5, "vendor_special": 1}',
+        ],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(
+        (temp_data_root / "endpoints" / "alpha" / "config.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert data["temperature"] == 0.5
+    assert "vendor_special" not in data
+
+
+def test_config_params_set_invalid_json_is_usage_error(temp_data_root: Path) -> None:
+    """params --set 非法 JSON / 非对象：退出码 2（用法错误）、stderr 给可操作消息。"""
+    runner.invoke(
+        app,
+        ["config", "add", "alpha", "--base-url", "https://a/v1", "--model", "m-a"],
+        input="\n",
+    )
+
+    broken = runner.invoke(
+        app, ["config", "params", "alpha", "--set", "{temperature: 0.7}"]
+    )
+    not_object = runner.invoke(app, ["config", "params", "alpha", "--set", "[1, 2]"])
+
+    assert broken.exit_code == 2
+    assert "JSON 对象" in broken.output
+    assert not_object.exit_code == 2
+    assert "JSON 对象" in not_object.output
+
+
+def test_config_params_set_bad_value_type_fails_loud(temp_data_root: Path) -> None:
+    """params --set 值类型不合法（temperature 传字符串）：退出码 1、报错点名键名。"""
+    runner.invoke(
+        app,
+        ["config", "add", "alpha", "--base-url", "https://a/v1", "--model", "m-a"],
+        input="\n",
+    )
+
+    result = runner.invoke(
+        app,
+        ["config", "params", "alpha", "--set", '{"temperature": "hot"}'],
+    )
+
+    assert result.exit_code == 1
+    assert "temperature" in result.stderr
+    assert "数字" in result.stderr
+
+
+def test_config_params_show_empty(temp_data_root: Path) -> None:
+    """params 查看未设置参数的配置：提示未设置并给设置指引（不报错）。"""
+    runner.invoke(
+        app,
+        ["config", "add", "alpha", "--base-url", "https://a/v1", "--model", "m-a"],
+        input="\n",
+    )
+
+    result = runner.invoke(app, ["config", "params", "alpha"])
+
+    assert result.exit_code == 0
+    assert "未设置请求参数" in result.output
+    assert "--set" in result.output
+
+
+def test_config_params_errors_report_name(temp_data_root: Path) -> None:
+    """params 没有配置 / 配置名不存在：退出码 1、stderr 回显配置名或引导。"""
+    empty = runner.invoke(app, ["config", "params"])
+
+    assert empty.exit_code == 1
+    assert "没有可用的端点配置" in empty.stderr
+
+    runner.invoke(
+        app,
+        ["config", "add", "alpha", "--base-url", "https://a/v1", "--model", "m-a"],
+        input="\n",
+    )
+    ghost = runner.invoke(app, ["config", "params", "ghost"])
+
+    assert ghost.exit_code == 1
+    assert "ghost" in ghost.stderr
+    assert "不存在" in ghost.stderr
+
+
+def test_config_params_targets_named_config_not_active(temp_data_root: Path) -> None:
+    """params 带配置名：写入指定配置，不动当前使用的另一套。"""
+    runner.invoke(
+        app,
+        ["config", "add", "alpha", "--base-url", "https://a/v1", "--model", "m-a"],
+        input="\n",
+    )
+    runner.invoke(
+        app,
+        ["config", "add", "beta", "--base-url", "https://b/v1", "--model", "m-b"],
+        input="\n",
+    )
+
+    result = runner.invoke(
+        app, ["config", "params", "beta", "--set", '{"temperature": 0.9}']
+    )
+
+    assert result.exit_code == 0
+    beta = json.loads(
+        (temp_data_root / "endpoints" / "beta" / "config.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    alpha = json.loads(
+        (temp_data_root / "endpoints" / "alpha" / "config.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert beta["temperature"] == 0.9
+    assert "temperature" not in alpha
 
 
 def test_session_list_and_show(
