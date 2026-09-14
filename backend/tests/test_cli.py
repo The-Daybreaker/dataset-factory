@@ -541,6 +541,22 @@ def test_config_test_reports_success_and_failure(
     assert "鉴权失败" in bad.stderr
 
 
+def test_config_test_missing_name_reports_name(temp_data_root: Path) -> None:
+    """config test 传不存在的配置名 → 报错回显该配置名（而非笼统的「没有配置」）。"""
+    created = runner.invoke(
+        app,
+        ["config", "add", "alpha", "--base-url", "https://a/v1", "--model", "m-a"],
+        input="test-key-123\n",
+    )
+    assert created.exit_code == 0
+
+    result = runner.invoke(app, ["config", "test", "ghost"])
+
+    assert result.exit_code == 1
+    assert "ghost" in result.stderr
+    assert "不存在" in result.stderr
+
+
 def test_config_test_without_config_or_key(temp_data_root: Path) -> None:
     """config test：没有配置 → 提示添加；配置无密钥（环境变量也没设）→ 提示补配。"""
     empty = runner.invoke(app, ["config", "test"])

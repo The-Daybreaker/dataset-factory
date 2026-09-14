@@ -576,7 +576,14 @@ export function PromptWorkbench({
                   >
                     {prompt.name}
                   </span>
-                  <span className="mt-[3px] line-clamp-2 block text-[12.5px] leading-[1.55] text-muted-foreground">
+                  <span
+                    className={
+                      "mt-[3px] line-clamp-2 block text-[12.5px] leading-[1.55] " +
+                      (prompt.description.startsWith("文件损坏：")
+                        ? "text-destructive"
+                        : "text-muted-foreground")
+                    }
+                  >
                     {prompt.description === "" ? "（无描述）" : prompt.description}
                   </span>
                 </button>
@@ -966,13 +973,15 @@ export function PromptWorkbench({
                       max={10}
                       step={1}
                       value={media.fps}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        // 先取值再进 setState 更新器：更新器延迟执行时合成事件的
+                        // currentTarget 已被 React 置空，更新器内读取会抛错崩树
+                        //（2026-09-14 验收实测白屏，memory 59① 同款反模式）。
+                        const next = Number(event.currentTarget.value);
                         setMedia((current) =>
-                          current === null
-                            ? current
-                            : { ...current, fps: Number(event.currentTarget.value) },
-                        )
-                      }
+                          current === null ? current : { ...current, fps: next },
+                        );
+                      }}
                       className="h-6 w-14 rounded-md border border-input bg-background px-1.5 text-[12px]"
                       aria-label="视频抽帧 fps"
                     />
@@ -984,16 +993,12 @@ export function PromptWorkbench({
                       min={1}
                       max={256}
                       value={media.maxFrames}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        const next = Number(event.currentTarget.value);
                         setMedia((current) =>
-                          current === null
-                            ? current
-                            : {
-                                ...current,
-                                maxFrames: Number(event.currentTarget.value),
-                              },
-                        )
-                      }
+                          current === null ? current : { ...current, maxFrames: next },
+                        );
+                      }}
                       className="h-6 w-14 rounded-md border border-input bg-background px-1.5 text-[12px]"
                       aria-label="视频抽帧帧数上限"
                     />

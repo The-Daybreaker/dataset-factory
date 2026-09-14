@@ -182,9 +182,16 @@ def config_test(
 ) -> None:
     """测试端点连通性：发一个极小的真实请求（15 秒超时、max_tokens=1），不必先改配置。"""
     resolved = name if name is not None else active_config_name()
-    if resolved is None or not has_config(resolved):
+    if resolved is None:
         typer.secho(
             "错误：没有可测试的端点配置——dsf config add 添加，或带配置名参数指定。",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+    if not has_config(resolved):
+        typer.secho(
+            f"错误：端点配置 {resolved!r} 不存在；用 dsf config list 查看现有配置。",
             fg=typer.colors.RED,
             err=True,
         )

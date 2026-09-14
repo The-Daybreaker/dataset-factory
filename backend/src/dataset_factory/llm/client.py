@@ -136,7 +136,7 @@ class OpenAIChatClient:
                 ms_since(start),
                 self._model,
                 type(exc).__name__,
-                _endpoint_error_summary(exc),
+                _endpoint_error_summary(exc) or "（端点未返回细节）",
             )
             raise _translate_sdk_error(exc) from exc
         logger.info("模型调用完成（%.0fms，模型 %s）", ms_since(start), self._model)
@@ -190,7 +190,7 @@ class OpenAIChatClient:
                 ms_since(start),
                 self._model,
                 type(exc).__name__,
-                _endpoint_error_summary(exc),
+                _endpoint_error_summary(exc) or "（端点未返回细节）",
             )
             raise _translate_sdk_error(exc) from exc
         logger.info("模型流式调用完成（%.0fms，模型 %s）", ms_since(start), self._model)
@@ -271,7 +271,7 @@ def probe_endpoint(config: EndpointConfig) -> ProbeResult:
 
 
 def _endpoint_error_summary(exc: openai.APIError) -> str:
-    """提取端点错误响应体的单行摘要（进失败日志）。
+    """提取端点错误响应体的单行摘要（进失败日志与用户可见错误消息）。
 
     「模型侧 400」排查需要端点的原话（如 SiliconFlow 的 ``code 20015``），只有异常类名
     等于让排查者盲猜。SDK 的 APIStatusError 带 ``body``（已解析的 JSON 或原始文本），
@@ -291,8 +291,6 @@ def _endpoint_error_summary(exc: openai.APIError) -> str:
         else json.dumps(raw, ensure_ascii=False, default=str)
     )
     text = " ".join(text.split())
-    if text == "":
-        return "（端点未返回细节）"
     return text[:300] + ("…" if len(text) > 300 else "")
 
 
@@ -387,8 +385,14 @@ def _translate_sdk_error(exc: openai.APIError) -> LLMError:
 
     按「先具体后一般」判类型：APITimeoutError 是 APIConnectionError 的子类、各 HTTP
     状态异常是 APIStatusError 的子类，故先判子类再判父类。用户可见消息只说「哪里错、
-    怎么修」，不回显 SDK 原始消息（避免泄密钥 / 甩栈）。
+    怎么修」，不回显 SDK 原始消息（避免泄密钥 / 甩栈）；HTTP 状态类错误在其后附上
+    **端点响应体摘要**（2026-09-14 用户定夺）——端点的一面之词交给用户自己判断
+    （如「模型不存在」在部分端点是 400 而非 404，摘要能直接看到端点怎么说）。
     """
+    summary = (
+        _endpoint_error_summary(exc) if isinstance(exc, openai.APIStatusError) else ""
+    )
+    suffix = f"（端点返回：{summary}）" if summary else ""
     if isinstance(exc, openai.APITimeoutError):
         return LLMTimeoutError(
             "调用模型超时；网络较慢或模型响应久，可稍后重试（大图 / 慢模型可调大 timeout）。"
@@ -400,27 +404,32 @@ def _translate_sdk_error(exc: openai.APIError) -> LLMError:
     if isinstance(exc, openai.AuthenticationError):
         return LLMAuthError(
             "鉴权失败：API 密钥无效或过期；请用 `dsf config set` 重新设置密钥。"
+            + suffix
         )
     if isinstance(exc, openai.PermissionDeniedError):
-        return LLMAuthError("无权访问该端点或模型；请检查密钥权限。")
+        return LLMAuthError("无权访问该端点或模型；请检查密钥权限。" + suffix)
     if isinstance(exc, openai.RateLimitError):
         return LLMRateLimitError(
-            "触发限流（请求过多或额度用尽）；请稍后重试或检查配额。"
+            "触发限流（请求过多或额度用尽）；请稍后重试或检查配额。" + suffix
         )
     if isinstance(exc, openai.NotFoundError):
-        return LLMNotFoundError("端点或模型不存在；请检查 base_url 与模型名是否正确。")
+        return LLMNotFoundError(
+            "端点或模型不存在；请检查 base_url 与模型名是否正确。" + suffix
+        )
     if isinstance(exc, openai.BadRequestError):
         return LLMBadRequestError(
-            "请求被端点判为非法（消息 / 图片 / 参数不合法）；请检查输入。"
+            "请求被端点判为非法（消息 / 图片 / 参数不合法）；请检查输入。" + suffix
         )
     if isinstance(exc, openai.UnprocessableEntityError):
-        return LLMBadRequestError("请求格式端点无法处理；请检查输入。")
+        return LLMBadRequestError("请求格式端点无法处理；请检查输入。" + suffix)
     if isinstance(exc, openai.InternalServerError):
-        return LLMServerError("模型服务端错误（5xx）；请稍后重试。")
+        return LLMServerError("模型服务端错误（5xx）；请稍后重试。" + suffix)
     if isinstance(exc, openai.APIStatusError):
         if exc.status_code >= 500:
             return LLMServerError(
-                f"模型服务端错误（HTTP {exc.status_code}）；请稍后重试。"
+                f"模型服务端错误（HTTP {exc.status_code}）；请稍后重试。{suffix}"
             )
-        return LLMUnexpectedError(f"模型端点返回意外错误（HTTP {exc.status_code}）。")
+        return LLMUnexpectedError(
+            f"模型端点返回意外错误（HTTP {exc.status_code}）。{suffix}"
+        )
     return LLMUnexpectedError("调用模型时发生意外错误；请重试或检查端点配置。")

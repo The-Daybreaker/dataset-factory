@@ -2,8 +2,10 @@
 
 条目 = 平铺 `prompts/<名称>.md`（文件名即名称）；保存时若已存在，先把旧版**复制**进
 `_history/`（不是移动——保证当前条目任何时刻都在、崩溃安全），按时间戳命名、并把该条目的
-历史裁到最近 N 版，再原子写新版；单条序列化后卡 32 KiB 字节护栏；缺失 / 损坏 / 超限 / 名称
-非法一律 fail loud。原子写与数据根复用共享的 `_fs`；本模块禁 import 入口层与 llm（分层契约守）。
+历史裁到最近 N 版，再原子写新版；单条序列化后卡 32 KiB 字节护栏。错误口径：单条读写
+（保存 / 读取 / 改名 / 删除）fail loud，给可操作错误；**列表（list_prompts）对单个损坏条目
+宽容降级**（2026-09-14 用户定夺）——坏文件以「文件损坏：…」条目照常进列表，其余不受影响。
+原子写与数据根复用共享的 `_fs`；本模块禁 import 入口层与 llm（分层契约守）。
 """
 
 from __future__ import annotations
@@ -107,26 +109,36 @@ def _read_entry(path: Path) -> Prompt:
 
 
 def list_prompts() -> list[Prompt]:
-    """列出全部提示词条目（按名称排序）。
+    """列出全部提示词条目（按名称排序）；单个损坏条目**降级呈现**、不拦整库。
 
     只认 prompts/ 下的普通 `*.md` 文件：跳过 _history/ 子目录、原子写留下的 `.` 前缀临时
     文件与任何非普通文件。库目录不存在时返回空列表（还没有任何条目，不算错）。
 
-    Returns:
-        提示词列表，按名称字典序。
+    损坏条目的降级口径（2026-09-14 用户定夺，Web 与 CLI 同此）：解析失败的文件仍以
+    文件名进列表，description = 可读的损坏原因（哪里坏、怎么修），body = 文件原始全文
+    （可在编辑列直接修复后保存，保存即自愈）；其余条目不受影响。单条读取（read_prompt）
+    仍 fail loud 给详细错误——打标装配侧拿到损坏条目会被明确拒绝，不会带病使用。
 
-    Raises:
-        PromptError: 某个条目不可读。
-        PromptParseError: 某个条目损坏。
+    Returns:
+        提示词列表（含降级的损坏条目），按名称字典序。
     """
     directory = _prompts_dir()
     if not directory.is_dir():
         return []
-    return [
-        _read_entry(path)
-        for path in sorted(directory.glob(f"*{_SUFFIX}"))
-        if path.is_file() and not path.name.startswith(".")
-    ]
+    prompts: list[Prompt] = []
+    for path in sorted(directory.glob(f"*{_SUFFIX}")):
+        if not path.is_file() or path.name.startswith("."):
+            continue
+        try:
+            prompts.append(_read_entry(path))
+        except (PromptError, PromptParseError) as exc:
+            name = path.name[: -len(_SUFFIX)]
+            try:
+                raw = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                raw = ""
+            prompts.append(Prompt(name=name, description=f"文件损坏：{exc}", body=raw))
+    return prompts
 
 
 def read_prompt(name: str) -> Prompt:

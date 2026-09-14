@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EndpointConfigSummary, PromptInfo, SkillInfo } from "../api";
@@ -286,5 +286,55 @@ describe("PromptWorkbench", () => {
     await waitFor(() => {
       expect(apiMock.deletePrompt).toHaveBeenCalledWith("h3-video");
     });
+  });
+
+  it("视频附件条：程序化向 fps / 帧上限输入框注入值不崩树，且值随请求发出（setState 更新器读 event 反模式回归）", async () => {
+    // jsdom 的 FileReader 是异步的；换成同步回调的假件让 onload 立即触发。
+    class FakeFileReader {
+      result = "";
+      onload: ((event: { target: FakeFileReader }) => void) | null = null;
+      readAsDataURL(): void {
+        this.result = "data:video/mp4;base64,AAAA";
+        this.onload?.({ target: this });
+      }
+    }
+    vi.stubGlobal("FileReader", FakeFileReader);
+    apiMock.labelStream.mockImplementation(async (_payload, handlers) => {
+      handlers.onStart("s1");
+      handlers.onDelta("content", "视频描述");
+      handlers.onDone("s1", "视频描述");
+    });
+    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
+    });
+    fireEvent.change(screen.getByLabelText("附图或视频"), {
+      target: {
+        files: [new File(["fake-mp4"], "clip.mp4", { type: "video/mp4" })],
+      },
+    });
+
+    // 2026-09-14 验收实测：此前对该输入框程序化注入值会让更新器读到已被置空的
+    // event.currentTarget，抛 TypeError 崩掉整棵 React 树（白屏）。
+    fireEvent.change(screen.getByLabelText("视频抽帧 fps"), {
+      target: { value: "3" },
+    });
+    fireEvent.change(screen.getByLabelText("视频抽帧帧数上限"), {
+      target: { value: "8" },
+    });
+    expect(screen.getByLabelText("视频抽帧 fps")).toHaveValue(3);
+    expect(screen.getByLabelText("视频抽帧帧数上限")).toHaveValue(8);
+
+    await userEvent.type(screen.getByLabelText("打标指令"), "描述视频");
+    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      expect(apiMock.labelStream).toHaveBeenCalledWith(
+        expect.objectContaining({ video_fps: 3, video_max_frames: 8 }),
+        expect.anything(),
+      );
+    });
+    vi.unstubAllGlobals();
   });
 });

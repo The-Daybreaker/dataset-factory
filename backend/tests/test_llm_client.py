@@ -187,6 +187,31 @@ def test_complete_error_log_includes_endpoint_body(
     assert "20015" in caplog.text
 
 
+def test_translate_attaches_endpoint_body_to_message() -> None:
+    """HTTP 状态类错误的用户可见消息附加端点响应体摘要（端点原话交给用户判断）。"""
+    exc = _bare_sdk_error(openai.BadRequestError)
+    exc.body = {"code": 20015, "message": "The parameter is invalid."}
+    client = _client_raising(exc)
+
+    with pytest.raises(LLMBadRequestError) as excinfo:
+        client.complete([Message(role="user", parts=(TextPart("hi"),))])
+
+    assert "请求被端点判为非法" in str(excinfo.value)
+    assert "端点返回：" in str(excinfo.value)
+    assert "20015" in str(excinfo.value)
+
+
+def test_translate_without_body_keeps_clean_message() -> None:
+    """异常没有响应体（如未初始化实例）时消息保持干净，不附加空摘要。"""
+    client = _client_raising(_bare_sdk_error(openai.BadRequestError))
+
+    with pytest.raises(LLMBadRequestError) as excinfo:
+        client.complete([Message(role="user", parts=(TextPart("hi"),))])
+
+    assert "请求被端点判为非法" in str(excinfo.value)
+    assert "端点返回：" not in str(excinfo.value)
+
+
 def test_complete_raises_on_empty_choices() -> None:
     """响应无 choices → LLMError（fail loud，不静默返回空）。"""
     empty = MagicMock()

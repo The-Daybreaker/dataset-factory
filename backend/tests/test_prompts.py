@@ -363,3 +363,46 @@ def test_seed_builtin_presets_keeps_user_deletion(temp_data_root: Path) -> None:
     seed_builtin_presets()
 
     assert list_prompts() == []
+
+
+def test_list_prompts_degrades_corrupt_entry(temp_data_root: Path) -> None:
+    """列表对单个损坏条目宽容降级：description = 可读原因、body = 原始全文，其余条目不受影响。"""
+    save_prompt(Prompt(name="good", description="好的", body="正文"))
+    _write_raw(temp_data_root, "bad", "---\ndescription: x\n没有闭合")
+
+    prompts = list_prompts()
+
+    assert [p.name for p in prompts] == ["bad", "good"]
+    broken = prompts[0]
+    assert broken.description.startswith("文件损坏：")
+    assert "未闭合" in broken.description  # 原因可读：哪里坏
+    assert broken.body == "---\ndescription: x\n没有闭合"  # 原始全文：可在编辑列修复
+    assert prompts[1].description == "好的"
+
+
+def test_list_prompts_broken_entry_heals_after_fix(temp_data_root: Path) -> None:
+    """损坏条目修复（保存合法内容）后，列表恢复健康形态（保存即自愈路径）。"""
+    _write_raw(temp_data_root, "bad", "---\ndescription: x\n没有闭合")
+    assert list_prompts()[0].description.startswith("文件损坏：")
+
+    save_prompt(Prompt(name="bad", description="已修", body="完整正文"))
+
+    prompts = list_prompts()
+    assert len(prompts) == 1
+    assert prompts[0].description == "已修"
+    assert prompts[0].body == "完整正文"
+
+
+def test_list_prompts_broken_entry_body_uses_replacement_chars(
+    temp_data_root: Path,
+) -> None:
+    """损坏条目 body 读原始文本时容忍非法 UTF-8 字节（errors=replace，不二次抛错）。"""
+    _prompts_dir(temp_data_root).mkdir(parents=True, exist_ok=True)
+    path = _prompts_dir(temp_data_root) / "bin.md"
+    path.write_bytes(b"---\nname: bin\n\xff\xfe not utf8")
+
+    prompts = list_prompts()
+
+    assert len(prompts) == 1
+    assert prompts[0].name == "bin"
+    assert prompts[0].description.startswith("文件损坏：")
