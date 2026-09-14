@@ -292,10 +292,26 @@ def test_skills_import_conflict_is_409(client: TestClient) -> None:
 
 
 def test_skills_import_bad_path_is_400(client: TestClient) -> None:
-    """导入路径不存在：400（用户填错路径，不是系统错）。"""
+    """导入路径不存在：400 且带可操作消息（用户填错路径，不是系统错）。"""
     response = client.post("/api/skills/import", json={"path": "Z:/不存在/skill"})
 
     assert response.status_code == 400
+    assert "路径不存在" in response.json()["detail"]
+
+
+def test_skills_import_single_file(client: TestClient, tmp_path: Path) -> None:
+    """路径指向单个 .md 文件：按 SKILL.md 单文件导入（名称取自 frontmatter）。"""
+    source = tmp_path / "my-skill.md"
+    source.write_bytes(
+        "---\nname: single-file-skill\ndescription: 单文件\n---\n\n# S\n".encode()
+    )
+
+    response = client.post("/api/skills/import", json={"path": str(source)})
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "single-file-skill"
+    listing = client.get("/api/skills/single-file-skill/files").json()
+    assert [item["path"] for item in listing["files"]] == ["SKILL.md"]
 
 
 def test_config_get_empty(client: TestClient) -> None:
@@ -1032,7 +1048,7 @@ def test_label_with_video_uses_video_params(
             "instruction": "描述动作",
             "video_base64": payload,
             "video_name": "clip.mp4",
-            "video_fps": 3.0,
+            "video_fps": 3,
             "video_max_frames": 8,
         },
     )
@@ -1041,8 +1057,27 @@ def test_label_with_video_uses_video_params(
     user = fake_engine.calls[0][-1]
     assert user.parts == (
         TextPart("描述动作"),
-        VideoPart(b"fake-mp4", fps=3.0, max_frames=8),
+        VideoPart(b"fake-mp4", fps=3, max_frames=8),
     )
+
+
+def test_label_with_fractional_fps_is_422(
+    client: TestClient, fake_engine: FakeCompleter
+) -> None:
+    """视频 fps 非整数 → 422（端点对浮点 fps 判 20015，契约直接收窄为整型）。"""
+    payload = base64.b64encode(b"fake-mp4").decode("ascii")
+
+    response = client.post(
+        "/api/label",
+        json={
+            "prompt_name": "p1",
+            "instruction": "x",
+            "video_base64": payload,
+            "video_fps": 1.5,
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_label_image_and_video_together_is_400(

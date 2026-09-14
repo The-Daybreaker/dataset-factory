@@ -29,11 +29,13 @@ class VideoPart:
 
     fps / max_frames 是请求侧的抽帧参数（端点服务端按 min(fps × 时长, max_frames) 抽帧）；
     帧上限只是请求值，端点能力上限由服务端把关、超限以端点报错呈现。
+    fps 为整型——端点（SiliconFlow）对浮点 fps 判参数非法（实测错误码 20015），
+    用整型把「抽帧步进只能是整数帧/秒」钉进类型契约。
     """
 
     data: bytes
     mime: str = "video/mp4"
-    fps: float = 2.0
+    fps: int = 2
     max_frames: int = 16
 
 

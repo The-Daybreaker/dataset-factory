@@ -194,7 +194,7 @@ export const api = {
   /** 列出 skill（含启用状态）。 */
   listSkills: () => request<SkillInfo[]>("GET", "/api/skills"),
 
-  /** 从本机目录导入 skill 包（服务端可访问的路径；CLI / 脚本路线）。 */
+  /** 从本机路径导入 skill（服务端可访问的路径；目录整包或单个 SKILL.md 文件均可）。 */
   importSkill: (path: string) =>
     request<SkillImportResponse>("POST", "/api/skills/import", { path }),
 
@@ -205,6 +205,13 @@ export const api = {
       const relative = file.webkitRelativePath || file.name;
       form.append("files", file, relative);
     }
+    return request<SkillImportResponse>("POST", "/api/skills/import-upload", form);
+  },
+
+  /** 上传导入单个 SKILL.md 文件（无文件夹结构的单文件 skill；统一按 SKILL.md 交付）。 */
+  importSkillFile: (file: File) => {
+    const form = new FormData();
+    form.append("files", file, "SKILL.md");
     return request<SkillImportResponse>("POST", "/api/skills/import-upload", form);
   },
 

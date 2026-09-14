@@ -163,13 +163,13 @@ def test_video_turn_sends_video_part(
         instruction="描述这个动作",
         video_bytes=b"fake-mp4-bytes",
         video_name="clip.mp4",
-        video_fps=3.0,
+        video_fps=3,
         video_max_frames=8,
     )
 
     assert fake_completer.calls[0][1].parts == (
         TextPart("描述这个动作"),
-        VideoPart(b"fake-mp4-bytes", fps=3.0, max_frames=8),
+        VideoPart(b"fake-mp4-bytes", fps=3, max_frames=8),
     )
 
 

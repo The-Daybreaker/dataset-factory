@@ -88,7 +88,9 @@ def label(request: LabelRequest) -> LabelResponse:
         video_bytes=video_bytes,
         video_name=request.video_name,
         video_mime=video_mime,
-        video_fps=request.video_fps,
+        # fps 在请求边界已校验为整数值（multiple_of=1），float→int 转换精确无损；
+        # 端点（SiliconFlow）对浮点 fps 判非法，wire 上必须是整型。
+        video_fps=int(request.video_fps),
         video_max_frames=request.video_max_frames,
     )
     return LabelResponse(session_id=result.session_id, caption=result.caption)
@@ -127,7 +129,7 @@ def label_stream(request: LabelRequest) -> StreamingResponse:
         video_bytes=video_bytes,
         video_name=request.video_name,
         video_mime=video_mime,
-        video_fps=request.video_fps,
+        video_fps=int(request.video_fps),
         video_max_frames=request.video_max_frames,
     )
     # 预备段（校验 / 落信封）在返回响应前先执行到首个事件：域错误在此按全局映射转

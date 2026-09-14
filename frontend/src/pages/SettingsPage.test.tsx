@@ -16,6 +16,7 @@ const apiMock = vi.hoisted(() => ({
   listSkills: vi.fn(),
   importSkill: vi.fn(),
   importSkillFiles: vi.fn(),
+  importSkillFile: vi.fn(),
   setSkillEnabled: vi.fn(),
   deleteSkill: vi.fn(),
   listSkillFiles: vi.fn(),
@@ -395,6 +396,49 @@ describe("SettingsPage · 能力·技能", () => {
     expect(
       await screen.findByText(/41\.0 KiB——skill 全文将注入打标请求/),
     ).toBeInTheDocument();
+  });
+
+  it("路径导入：粘贴路径点导入调 importSkill；空路径时导入按钮禁用", async () => {
+    apiMock.importSkill.mockResolvedValue({
+      name: "path-skill",
+      description: "",
+      enabled: true,
+      total_bytes: 1024,
+    });
+    await openSkills();
+
+    const importButton = screen.getByRole("button", { name: "导入" });
+    expect(importButton).toBeDisabled();
+
+    await userEvent.type(screen.getByLabelText("skill 本机路径"), "C:/skills/demo");
+    expect(importButton).toBeEnabled();
+    await userEvent.click(importButton);
+
+    await waitFor(() => {
+      expect(apiMock.importSkill).toHaveBeenCalledWith("C:/skills/demo");
+    });
+    expect(await screen.findByText(/已导入「path-skill」/)).toBeInTheDocument();
+  });
+
+  it("单文件导入：SKILL.md 文件入口调 importSkillFile（单文件 skill 无文件夹结构）", async () => {
+    apiMock.importSkillFile.mockResolvedValue({
+      name: "single",
+      description: "",
+      enabled: true,
+      total_bytes: 2048,
+    });
+    await openSkills();
+
+    fireEvent.change(screen.getByLabelText("选择 SKILL.md 文件"), {
+      target: {
+        files: [new File(["# S"], "my-skill.md", { type: "text/markdown" })],
+      },
+    });
+
+    await waitFor(() => {
+      expect(apiMock.importSkillFile).toHaveBeenCalledTimes(1);
+    });
+    expect(await screen.findByText(/已导入「single」/)).toBeInTheDocument();
   });
 
   it("包文件 chips：可预览文件点击加载内容；assets 灰显禁用（不参与注入）", async () => {

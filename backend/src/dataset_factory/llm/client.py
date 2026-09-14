@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, replace
@@ -131,10 +132,11 @@ class OpenAIChatClient:
             # 第三段边界：模型调用本身。失败也记耗时——「卡了多久才失败」是排查的关键信息；
             # 同时留下 SDK 异常类名（如 APITimeoutError），便于与用户可见消息对照。
             logger.warning(
-                "模型调用失败（%.0fms，模型 %s，%s）",
+                "模型调用失败（%.0fms，模型 %s，%s，端点响应：%s）",
                 ms_since(start),
                 self._model,
                 type(exc).__name__,
+                _endpoint_error_summary(exc),
             )
             raise _translate_sdk_error(exc) from exc
         logger.info("模型调用完成（%.0fms，模型 %s）", ms_since(start), self._model)
@@ -184,10 +186,11 @@ class OpenAIChatClient:
                     yield StreamDelta(kind="content", text=delta.content)
         except openai.APIError as exc:
             logger.warning(
-                "模型流式调用失败（%.0fms，模型 %s，%s）",
+                "模型流式调用失败（%.0fms，模型 %s，%s，端点响应：%s）",
                 ms_since(start),
                 self._model,
                 type(exc).__name__,
+                _endpoint_error_summary(exc),
             )
             raise _translate_sdk_error(exc) from exc
         logger.info("模型流式调用完成（%.0fms，模型 %s）", ms_since(start), self._model)
@@ -265,6 +268,32 @@ def probe_endpoint(config: EndpointConfig) -> ProbeResult:
     return ProbeResult(
         ok=True, message="连接成功，模型应答正常。", latency_ms=ms_since(start)
     )
+
+
+def _endpoint_error_summary(exc: openai.APIError) -> str:
+    """提取端点错误响应体的单行摘要（进失败日志）。
+
+    「模型侧 400」排查需要端点的原话（如 SiliconFlow 的 ``code 20015``），只有异常类名
+    等于让排查者盲猜。SDK 的 APIStatusError 带 ``body``（已解析的 JSON 或原始文本），
+    拿不到时退回 ``str(exc)``（其中通常已含响应体）；压成单行并截断，防大响应冲爆日志。
+    """
+    raw: object
+    if isinstance(exc, openai.APIStatusError):
+        # getattr 兜底：测试里的未初始化异常实例没有 body / message 属性，运行时也不能赌。
+        raw = getattr(exc, "body", None) or getattr(exc, "message", None) or str(exc)
+    else:
+        raw = str(exc)
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="replace")
+    text = (
+        raw
+        if isinstance(raw, str)
+        else json.dumps(raw, ensure_ascii=False, default=str)
+    )
+    text = " ".join(text.split())
+    if text == "":
+        return "（端点未返回细节）"
+    return text[:300] + ("…" if len(text) > 300 else "")
 
 
 def _given_or_omit[T](value: T | None) -> T | openai.Omit:

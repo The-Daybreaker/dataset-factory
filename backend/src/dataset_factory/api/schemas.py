@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ..llm import SUPPORTED_API_FORMAT
 
@@ -42,11 +42,27 @@ class LabelRequest(BaseModel):
     )
     video_name: str = Field(default="video.mp4", description="视频原始文件名")
     video_fps: float = Field(
-        default=2.0, ge=0.1, le=10.0, description="视频抽帧 fps（请求值，端点把关上限）"
+        default=2.0,
+        ge=0.1,
+        le=10.0,
+        description="视频抽帧 fps（整数值，1–10；端点对浮点 fps 判非法，整性在模型校验器兜底）",
     )
     video_max_frames: int = Field(
         default=16, ge=1, le=256, description="视频抽帧帧数上限"
     )
+
+    @model_validator(mode="after")
+    def _video_fps_is_integral(self) -> LabelRequest:
+        """视频轮的 fps 必须是整数值：端点（SiliconFlow）对浮点 fps 判 20015 非法。
+
+        契约类型保持 number（避免破坏性变更挡板），整性收窄在边界校验器兜底；
+        非整数值 → 422，错误消息给到可操作的原因。
+        """
+        if self.video_base64 is not None and self.video_fps != int(self.video_fps):
+            raise ValueError(
+                "video_fps 必须为整数值（如 1、2、4）：打标端点对浮点 fps 判参数非法。"
+            )
+        return self
 
 
 class LabelResponse(BaseModel):

@@ -357,7 +357,10 @@ export interface paths {
         put?: never;
         /**
          * Import One
-         * @description 从本地路径导入 skill 包（整目录复制进库、默认启用）。
+         * @description 从本机路径导入 skill（默认启用）：目录整包复制；单个文件按 SKILL.md 单文件导入。
+         *
+         *     目录源走 agentskills.io 标准整包复制；指向一个 ``.md`` 文件时视为「无文件夹结构的
+         *     单文件 skill」——文件整体按 SKILL.md 交付，名称 / 描述取自它的 frontmatter。
          */
         post: operations["import_one_api_skills_import_post"];
         delete?: never;
@@ -769,7 +772,7 @@ export interface components {
             video_base64?: string | null;
             /**
              * Video Fps
-             * @description 视频抽帧 fps（请求值，端点把关上限）
+             * @description 视频抽帧 fps（整数值，1–10；端点对浮点 fps 判非法，整性在模型校验器兜底）
              * @default 2
              */
             video_fps: number;

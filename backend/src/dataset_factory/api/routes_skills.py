@@ -1,8 +1,9 @@
 """Skill 库端点：GET /api/skills、POST /api/skills/import、POST /api/skills/import-upload、enable/disable、DELETE。
 
-skill 是本地目录包（agentskills.io 标准）。两条导入路线：CLI / 脚本走本地路径复制
-（import-upload 之外），浏览器走「文件夹选择器 / 拖拽」上传文件集——浏览器安全模型拿不到
-所选文件夹的本地路径，传的是文件内容；上传路线的相对路径在此清洗（拒绝穿越与空段）。
+skill 是本地目录包（agentskills.io 标准）。导入有三条路线：CLI / 脚本与 Web「路径导入」走本地
+路径（/api/skills/import，目录整包或单个 SKILL.md 文件），浏览器走「文件夹选择器」上传文件集
+（/api/skills/import-upload）——浏览器安全模型拿不到所选文件夹的本地路径，传的是文件内容；
+上传路线的相对路径在此清洗（拒绝穿越与空段）。
 """
 
 from __future__ import annotations
@@ -83,8 +84,28 @@ def list_all() -> list[SkillInfo]:
     },
 )
 def import_one(request: SkillImportRequest) -> SkillImportResponse:
-    """从本地路径导入 skill 包（整目录复制进库、默认启用）。"""
-    result = import_skill(Path(request.path))
+    """从本机路径导入 skill（默认启用）：目录整包复制；单个文件按 SKILL.md 单文件导入。
+
+    目录源走 agentskills.io 标准整包复制；指向一个 ``.md`` 文件时视为「无文件夹结构的
+    单文件 skill」——文件整体按 SKILL.md 交付，名称 / 描述取自它的 frontmatter。
+    """
+    source = Path(request.path)
+    if not source.exists():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"路径不存在：{source}。",
+        )
+    if source.is_file():
+        try:
+            content = source.read_bytes()
+        except OSError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"无法读取文件：{exc.strerror or exc}。",
+            ) from exc
+        result = import_skill_files({_SKILL_MD: content})
+    else:
+        result = import_skill(source)
     return SkillImportResponse(
         name=result.skill.name,
         description=result.skill.description,

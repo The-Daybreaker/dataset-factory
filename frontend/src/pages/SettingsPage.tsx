@@ -21,6 +21,7 @@ import type {
   ServiceLogs,
   ServiceStatus,
   SkillFileInfo,
+  SkillImportResponse,
   SkillInfo,
 } from "../api";
 import { api, errorMessage } from "../api";
@@ -971,7 +972,9 @@ function SkillsPanel(): ReactElement {
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [pathValue, setPathValue] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mdInputRef = useRef<HTMLInputElement>(null);
 
   const reload = useCallback(async (): Promise<void> => {
     try {
@@ -1050,16 +1053,51 @@ function SkillsPanel(): ReactElement {
     }
   };
 
+  const applyImportResult = (result: SkillImportResponse): void => {
+    const sizeKb = (result.total_bytes / 1024).toFixed(1);
+    setFeedback({
+      kind: "success",
+      text: `已导入「${result.name}」（${sizeKb} KiB——skill 全文将注入打标请求，体积偏大时留意 token 消耗）`,
+    });
+    setSelected(result.name);
+  };
+
   const doImport = async (picked: File[]): Promise<void> => {
     setImporting(true);
     try {
-      const result = await api.importSkillFiles(picked);
-      const sizeKb = (result.total_bytes / 1024).toFixed(1);
-      setFeedback({
-        kind: "success",
-        text: `已导入「${result.name}」（${sizeKb} KiB——skill 全文将注入打标请求，体积偏大时留意 token 消耗）`,
-      });
-      setSelected(result.name);
+      applyImportResult(await api.importSkillFiles(picked));
+      await reload();
+    } catch (err) {
+      setFeedback({ kind: "error", text: errorMessage(err) });
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const doImportFile = async (picked: File | undefined): Promise<void> => {
+    if (picked === undefined) {
+      return;
+    }
+    setImporting(true);
+    try {
+      applyImportResult(await api.importSkillFile(picked));
+      await reload();
+    } catch (err) {
+      setFeedback({ kind: "error", text: errorMessage(err) });
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const doImportPath = async (): Promise<void> => {
+    const path = pathValue.trim();
+    if (path === "") {
+      return;
+    }
+    setImporting(true);
+    try {
+      applyImportResult(await api.importSkill(path));
+      setPathValue("");
       await reload();
     } catch (err) {
       setFeedback({ kind: "error", text: errorMessage(err) });
@@ -1203,16 +1241,53 @@ function SkillsPanel(): ReactElement {
               event.currentTarget.value = "";
             }}
           />
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full"
-            disabled={importing}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <FolderOpenIcon className="size-4" />
-            {importing ? "导入中…" : "选择文件夹…"}
-          </Button>
+          <input
+            ref={mdInputRef}
+            type="file"
+            accept=".md"
+            hidden
+            aria-label="选择 SKILL.md 文件"
+            onChange={(event) => {
+              void doImportFile(event.currentTarget.files?.[0]);
+              event.currentTarget.value = "";
+            }}
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={importing}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <FolderOpenIcon className="size-4" />
+              文件夹…
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={importing}
+              onClick={() => mdInputRef.current?.click()}
+            >
+              <FileTextIcon className="size-4" />
+              SKILL.md 文件…
+            </Button>
+          </div>
+          <div className="mt-2 flex gap-2">
+            <Input
+              aria-label="skill 本机路径"
+              placeholder="粘贴本机路径后导入…"
+              value={pathValue}
+              onInput={(event) => setPathValue(event.currentTarget.value)}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              disabled={importing || pathValue.trim() === ""}
+              onClick={() => void doImportPath()}
+            >
+              导入
+            </Button>
+          </div>
           {feedback !== null && (
             <Alert
               variant={feedback.kind === "error" ? "destructive" : "success"}

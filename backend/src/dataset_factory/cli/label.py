@@ -58,8 +58,8 @@ def label(
         typer.Option("--video", "-v", help="视频文件路径（与 --image 互斥）"),
     ] = None,
     video_fps: Annotated[
-        float, typer.Option("--video-fps", help="视频抽帧 fps（0.1–10，默认 2.0）")
-    ] = 2.0,
+        int, typer.Option("--video-fps", help="视频抽帧 fps（整型 1–10，默认 2）")
+    ] = 2,
     video_max_frames: Annotated[
         int,
         typer.Option("--video-max-frames", help="视频抽帧帧数上限（默认 16）"),

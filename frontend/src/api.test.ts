@@ -107,7 +107,7 @@ describe("labelStream SSE 解析", () => {
         instruction: "写",
         image_name: "image.png",
         video_name: "video.mp4",
-        video_fps: 2.0,
+        video_fps: 2,
         video_max_frames: 16,
       },
       {
@@ -141,7 +141,7 @@ describe("labelStream SSE 解析", () => {
           instruction: "x",
           image_name: "image.png",
           video_name: "video.mp4",
-          video_fps: 2.0,
+          video_fps: 2,
           video_max_frames: 16,
         },
         {

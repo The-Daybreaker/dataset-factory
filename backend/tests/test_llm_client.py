@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import cast
 from unittest.mock import MagicMock
 
@@ -155,7 +156,7 @@ def test_complete_converts_user_message_with_video() -> None:
     messages = [
         Message(
             role="user",
-            parts=(TextPart("describe"), VideoPart(mp4, fps=3.0, max_frames=24)),
+            parts=(TextPart("describe"), VideoPart(mp4, fps=3, max_frames=24)),
         )
     ]
 
@@ -167,8 +168,23 @@ def test_complete_converts_user_message_with_video() -> None:
     assert user_content[1]["type"] == "video_url"
     video_url = user_content[1]["video_url"]
     assert video_url["url"].startswith("data:video/mp4;base64,")
-    assert video_url["fps"] == 3.0
+    assert video_url["fps"] == 3
+    assert isinstance(video_url["fps"], int)  # 端点对浮点 fps 判非法（20015 实测）
     assert video_url["max_frames"] == 24
+
+
+def test_complete_error_log_includes_endpoint_body(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """模型调用失败的警告日志携带端点响应体摘要（400 的一面之词要能回看）。"""
+    exc = _bare_sdk_error(openai.BadRequestError)
+    exc.body = {"code": 20015, "message": "The parameter is invalid."}
+    client = _client_raising(exc)
+
+    with pytest.raises(LLMBadRequestError), caplog.at_level(logging.WARNING):
+        client.complete([Message(role="user", parts=(TextPart("hi"),))])
+
+    assert "20015" in caplog.text
 
 
 def test_complete_raises_on_empty_choices() -> None:

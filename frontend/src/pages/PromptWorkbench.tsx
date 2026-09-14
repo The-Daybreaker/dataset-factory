@@ -403,7 +403,7 @@ export function PromptWorkbench({
         name: file.name,
         dataUrl: String(reader.result),
         kind: isVideo ? "video" : "image",
-        fps: 2.0,
+        fps: 2,
         maxFrames: 16,
       });
     };
@@ -441,7 +441,7 @@ export function PromptWorkbench({
           image_name: media?.kind === "image" ? media.name : "image.png",
           video_base64: media?.kind === "video" ? media.dataUrl : null,
           video_name: media?.kind === "video" ? media.name : "video.mp4",
-          video_fps: media?.kind === "video" ? media.fps : 2.0,
+          video_fps: media?.kind === "video" ? media.fps : 2,
           video_max_frames: media?.kind === "video" ? media.maxFrames : 16,
         },
         {
@@ -962,9 +962,9 @@ export function PromptWorkbench({
                     fps
                     <input
                       type="number"
-                      min={0.1}
+                      min={1}
                       max={10}
-                      step={0.1}
+                      step={1}
                       value={media.fps}
                       onChange={(event) =>
                         setMedia((current) =>

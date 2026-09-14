@@ -148,7 +148,7 @@ class LabelingEngine:
         video_bytes: bytes | None = None,
         video_name: str = "video.mp4",
         video_mime: str = "video/mp4",
-        video_fps: float = 2.0,
+        video_fps: int = 2,
         video_max_frames: int = 16,
     ) -> LabelResult:
         """跑一轮打标：组装请求 → 先落信封 → 调模型 → 落回复，返回 caption 与会话 id。
@@ -259,7 +259,7 @@ class LabelingEngine:
         video_bytes: bytes | None = None,
         video_name: str = "video.mp4",
         video_mime: str = "video/mp4",
-        video_fps: float = 2.0,
+        video_fps: int = 2,
         video_max_frames: int = 16,
     ) -> Iterator[StreamStarted | StreamDelta | StreamFinished]:
         """流式跑一轮打标：先落信封 → 逐段产出增量 → 终稿落盘，事件序列返回给调用方。
@@ -569,7 +569,7 @@ def _assemble(
     image_bytes: bytes | None,
     video_bytes: bytes | None,
     video_mime: str,
-    video_fps: float,
+    video_fps: int,
     video_max_frames: int,
     attachment: str | None,
 ) -> tuple[list[Message], list[JsonValue]]:
