@@ -601,6 +601,39 @@
         "title": "LabelResponse",
         "type": "object"
       },
+      "Problem": {
+        "description": "RFC 9457 problem+json 错误体——二期新端点的统一错误形状。\n\n与一期 `ErrorDetail`（`{\"detail\"}`）并存：一期端点不返工，前端读 detail 兼容两者。\n扩展字段（occupier / 冲突清单等）由各错误在响应里按需附加，不进本模型。",
+        "properties": {
+          "detail": {
+            "description": "中文可操作消息——下一步该做什么",
+            "title": "Detail",
+            "type": "string"
+          },
+          "status": {
+            "description": "HTTP 状态码（与响应状态一致）",
+            "title": "Status",
+            "type": "integer"
+          },
+          "title": {
+            "description": "人读的短语概括",
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "description": "机器可读的错误类别 slug（如 task-not-found）",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "status",
+          "detail"
+        ],
+        "title": "Problem",
+        "type": "object"
+      },
       "PromptFull": {
         "description": "提示词全文。",
         "properties": {
@@ -978,6 +1011,39 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "WorkdirInfo": {
+        "description": "工作目录注册表条目——GET /api/workdirs 列表与详情的响应体。",
+        "properties": {
+          "id": {
+            "description": "wid 短 ID（注册表主键，搬迁后不变）",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "description": "最后使用时刻（Unix 秒，UTC）",
+            "title": "Last Used At",
+            "type": "number"
+          },
+          "path": {
+            "description": "工作目录的规范绝对路径",
+            "title": "Path",
+            "type": "string"
+          },
+          "title": {
+            "description": "显示名（默认 = 目录名，可改、允许重名）",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "path",
+          "title",
+          "last_used_at"
+        ],
+        "title": "WorkdirInfo",
         "type": "object"
       }
     }
@@ -2463,6 +2529,86 @@
         "summary": "Cancel Task",
         "tags": [
           "tasks"
+        ]
+      }
+    },
+    "/api/workdirs": {
+      "get": {
+        "description": "列出全部登记的工作目录，按最后使用时间倒序（最近在前）。",
+        "operationId": "list_all_api_workdirs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WorkdirInfo"
+                  },
+                  "title": "Response List All Api Workdirs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List All",
+        "tags": [
+          "工作目录"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}": {
+      "get": {
+        "description": "按 wid 查注册表条目。",
+        "operationId": "get_one_api_workdirs__wid__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkdirInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "wid 不在注册表（problem+json: workdir-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get One",
+        "tags": [
+          "工作目录"
         ]
       }
     }

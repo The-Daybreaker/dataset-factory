@@ -1,0 +1,273 @@
+"""工作目录注册表与 ``.dsf/`` 门面（二期新增）。
+
+设计要点：
+- **工作目录 = 素材容器**，一个目录可以有多个批次（= 策略）并存；元数据在 ``.dsf/`` 子目录。
+- **注册表** = 数据根里一份「最近使用工作目录」索引（短 ID + canonical path + 显示名 +
+  最后使用时间），**是地址簿不是花名册**——存在性以磁盘为准，丢失自愈。
+- **幂等判定 = realpath 比较**：同一物理目录走不同路径串（符号链接 / 盘符大小写差异）
+  注册为同一条，避免重复登记。
+- **wid 不随搬迁改变**（dsh 源码注释「path normalization rewrites paths, and a reference
+  anchor must stay stable」）——注册表原地更新 path，wid 保持不变（RESEARCH-0006）。
+
+本模块是 ``.dsf/`` 的唯一写者门面——外部模块（runs / strategies / export）均经此写。
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import secrets
+import time
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any
+
+from .._fs import atomic_write_text, data_root
+from .errors import (
+    WorkdirMetadataCorruptedError,
+    WorkdirNotFoundError,
+    WorkdirPathError,
+)
+
+__all__ = [
+    "WorkdirEntry",
+    "WorkdirRegistry",
+    "WorkdirStore",
+    "ensure_dsf_layout",
+]
+
+#: wid 长度（与 task_id 同一「随机短 ID + 查重」模式）。
+_WID_LENGTH = 11
+
+#: ``.dsf/`` 元数据子目录名（工作目录内的隐藏目录）。
+_DSF_DIR_NAME = ".dsf"
+
+#: 注册表文件路径（在数据根里，全局唯一）。
+_REGISTRY_FILE_NAME = "workdirs.json"
+
+#: 内部状态文件（在 ``.dsf/`` 里，存储本工作目录的批次列表与重试列表）。
+_STATE_FILE_NAME = "state.json"
+
+
+@dataclass
+class WorkdirEntry:
+    """注册表条目：wid + canonical path + 显示名 + 最后使用时间戳。
+
+    path 用 os.path.normpath 规范化，但不做 realpath（realpath 只用于幂等比较、
+    注册表存规范化路径更利于人读与跨平台对齐）。
+    """
+
+    id: str
+    path: str
+    title: str
+    last_used_at: float  # epoch seconds（UTC）
+
+
+def _generate_wid() -> str:
+    """生成随机短 ID（uuid 截短、生成时查重）。"""
+    return secrets.token_urlsafe(8)[:_WID_LENGTH]
+
+
+def _realpath(path: Path) -> str:
+    """取 realpath 字符串——幂等判定锚点。
+
+    符号链接与盘符大小写差异都被 realpath 解析为同一物理路径。
+    """
+    return os.path.realpath(path)
+
+
+def _read_registry() -> list[WorkdirEntry]:
+    """读注册表。文件损坏抛 WorkdirMetadataCorruptedError（fail loud）。"""
+    registry_file = data_root() / _REGISTRY_FILE_NAME
+    data: list[dict[str, Any]] = []
+    if registry_file.exists():
+        try:
+            raw = registry_file.read_text(encoding="utf-8")
+            data = json.loads(raw) if raw.strip() else []
+        except (json.JSONDecodeError, OSError) as exc:
+            raise WorkdirMetadataCorruptedError(
+                f"工作目录注册表文件损坏（{registry_file}），请重建或删除该文件后重试。",
+            ) from exc
+    return [WorkdirEntry(**item) for item in data]
+
+
+def _write_registry(entries: list[WorkdirEntry]) -> None:
+    """原子写注册表。"""
+    registry_file = data_root() / _REGISTRY_FILE_NAME
+    payload = [asdict(entry) for entry in entries]
+    atomic_write_text(registry_file, json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+class WorkdirRegistry:
+    """全局工作目录注册表（数据根下唯一文件，跨工作目录共享）。
+
+    幂等判定 = realpath 比较：同一物理目录只保留一条（最后使用的 wid），
+    重复登记不创建新条目、只更新已有条目的 last_used_at 与 title。
+    """
+
+    @staticmethod
+    def list_all() -> list[WorkdirEntry]:
+        """列出全部注册条目，按最后使用时间倒序（最近在前）——顶部两级下拉的数据源。"""
+        entries = _read_registry()
+        entries.sort(key=lambda entry: entry.last_used_at, reverse=True)
+        return entries
+
+    @staticmethod
+    def get(wid: str) -> WorkdirEntry:
+        """按 wid 查条目。不存在抛 WorkdirNotFoundError。"""
+        for entry in _read_registry():
+            if entry.id == wid:
+                return entry
+        raise WorkdirNotFoundError(
+            f"工作目录 {wid} 不在注册表中——可能已被删除，请从顶部下拉重新选择。",
+        )
+
+    @staticmethod
+    def register(path: Path, title: str = "") -> WorkdirEntry:
+        """登记一个工作目录；幂等（同 realpath 只更新 last_used_at 与路径）。
+
+        Args:
+            path: 工作目录路径（会做 is_dir 校验）。
+            title: 显示名；空串 = 用目录名兜底（更新时空串 = 沿用旧名不改）。
+
+        Returns:
+            注册表条目（新建或更新后的现状）。
+        """
+        if not path.is_dir():
+            raise WorkdirPathError(
+                f"路径「{path}」不存在或不是目录——请检查后重试。",
+            )
+        canonical = str(path)
+        real = _realpath(path)
+        entries = _read_registry()
+        # 幂等：同物理目录只保留一条（更新已有条目）。
+        for existing in entries:
+            if _realpath(Path(existing.path)) == real:
+                existing.path = canonical
+                if title:
+                    existing.title = title
+                existing.last_used_at = time.time()
+                _write_registry(entries)
+                return existing
+        # 新登记：分配随机 wid、查重。
+        wid = _generate_wid()
+        existing_ids = {e.id for e in entries}
+        while wid in existing_ids:
+            wid = _generate_wid()
+        entry = WorkdirEntry(
+            id=wid,
+            path=canonical,
+            title=title if title else path.name,
+            last_used_at=time.time(),
+        )
+        entries.append(entry)
+        _write_registry(entries)
+        return entry
+
+    @staticmethod
+    def update_path(wid: str, new_path: Path) -> WorkdirEntry:
+        """搬迁后原地更新 path（wid 不变）。"""
+        if not new_path.is_dir():
+            raise WorkdirPathError(
+                f"新路径「{new_path}」不存在或不是目录——搬迁未完成。",
+            )
+        entries = _read_registry()
+        for entry in entries:
+            if entry.id == wid:
+                entry.path = str(new_path)
+                entry.last_used_at = time.time()
+                _write_registry(entries)
+                return entry
+        raise WorkdirNotFoundError(
+            f"工作目录 {wid} 不在注册表中——无法更新路径。",
+        )
+
+    @staticmethod
+    def remove(wid: str) -> None:
+        """从注册表移除（工作目录本身不动）。"""
+        entries = _read_registry()
+        filtered = [e for e in entries if e.id != wid]
+        if len(filtered) == len(entries):
+            raise WorkdirNotFoundError(
+                f"工作目录 {wid} 不在注册表中——无法删除。",
+            )
+        _write_registry(filtered)
+
+
+def ensure_dsf_layout(workdir_path: Path) -> Path:
+    """确保工作目录内 ``.dsf/`` 子目录结构就位，返回 ``.dsf`` 路径。
+
+    幂等：已存在的目录不报错、不重建。创建层级：
+
+    - ``.dsf/``（元数据根）
+    - ``.dsf/strategies/``（策略快照全文）
+    - ``.dsf/runs/``（每次运行一个子目录）
+
+    ``state.json`` / ``imports.jsonl`` / ``run.lock`` / ``run-info.json`` 由各自
+    写入方在首次写时创建，本函数只保证目录结构。
+    """
+    dsf = workdir_path / _DSF_DIR_NAME
+    (dsf / "strategies").mkdir(parents=True, exist_ok=True)
+    (dsf / "runs").mkdir(parents=True, exist_ok=True)
+    return dsf
+
+
+class WorkdirStore:
+    """单个工作目录的 ``.dsf/`` 门面——``.dsf/`` 下的唯一写者。
+
+    外部模块（runs / strategies / export）均经此写文件，保证所有写入走原子写
+    且路径在 ``.dsf/`` 内（不做 realpath confine 校验，那是素材预览端点的事——
+    本模块只写元数据）。
+    """
+
+    def __init__(self, workdir_path: Path) -> None:
+        """以工作目录路径构造门面。调用方负责确保该路径已登记（register 过）。"""
+        self._workdir = workdir_path
+        self._dsf = ensure_dsf_layout(workdir_path)
+
+    @property
+    def dsf_path(self) -> Path:
+        """``.dsf/`` 绝对路径。"""
+        return self._dsf
+
+    @property
+    def state_file(self) -> Path:
+        """``.dsf/state.json`` 路径（批次列表 + 重试列表 + 排除名单的唯一可变共享状态）。"""
+        return self._dsf / _STATE_FILE_NAME
+
+    @property
+    def strategies_dir(self) -> Path:
+        """``.dsf/strategies/`` 路径（每套策略一份快照全文）。"""
+        return self._dsf / "strategies"
+
+    @property
+    def runs_dir(self) -> Path:
+        """``.dsf/runs/`` 路径（每次运行一个子目录）。"""
+        return self._dsf / "runs"
+
+    @property
+    def imports_file(self) -> Path:
+        """``.dsf/imports.jsonl`` 路径（append-only 导入记录）。"""
+        return self._dsf / "imports.jsonl"
+
+    def read_state(self) -> dict[str, object]:
+        """读 ``state.json``。不存在或空 → 空状态字典（不含任何键）。
+
+        文件损坏抛 RegistryCorruptedError（fail loud——坏文件不静默兜底）。
+        """
+        if not self.state_file.exists():
+            return {}
+        try:
+            raw = self.state_file.read_text(encoding="utf-8")
+            return json.loads(raw) if raw.strip() else {}
+        except (json.JSONDecodeError, OSError) as exc:
+            raise WorkdirMetadataCorruptedError(
+                f"工作目录状态文件损坏（{self.state_file}），请重建或删除该文件后重试。",
+            ) from exc
+
+    def write_state(self, state: dict[str, object]) -> None:
+        """原子写 ``state.json``（读—改—写全程持锁由调用方保证）。"""
+        atomic_write_text(
+            self.state_file,
+            json.dumps(state, ensure_ascii=False, indent=2),
+        )

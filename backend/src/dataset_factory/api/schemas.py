@@ -307,3 +307,25 @@ class EndpointUpdateRequest(BaseModel):
         description="请求参数（生成 + 传输）；缺省 = 沿用已有参数不变；"
         "提供 = 整体替换（未提供的参数键视为清除）",
     )
+
+
+class Problem(BaseModel):
+    """RFC 9457 problem+json 错误体——二期新端点的统一错误形状。
+
+    与一期 `ErrorDetail`（`{"detail"}`）并存：一期端点不返工，前端读 detail 兼容两者。
+    扩展字段（occupier / 冲突清单等）由各错误在响应里按需附加，不进本模型。
+    """
+
+    type: str = Field(description="机器可读的错误类别 slug（如 task-not-found）")
+    title: str = Field(description="人读的短语概括")
+    status: int = Field(description="HTTP 状态码（与响应状态一致）")
+    detail: str = Field(description="中文可操作消息——下一步该做什么")
+
+
+class WorkdirInfo(BaseModel):
+    """工作目录注册表条目——GET /api/workdirs 列表与详情的响应体。"""
+
+    id: str = Field(description="wid 短 ID（注册表主键，搬迁后不变）")
+    path: str = Field(description="工作目录的规范绝对路径")
+    title: str = Field(description="显示名（默认 = 目录名，可改、允许重名）")
+    last_used_at: float = Field(description="最后使用时刻（Unix 秒，UTC）")

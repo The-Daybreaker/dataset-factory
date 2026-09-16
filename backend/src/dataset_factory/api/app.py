@@ -56,6 +56,11 @@ from ..skills import (
     SkillSourceError,
 )
 from ..tasks import TaskManager, TaskNotFoundError
+from ..workdir import (
+    WorkdirMetadataCorruptedError,
+    WorkdirNotFoundError,
+    WorkdirPathError,
+)
 from . import (
     routes_config,
     routes_endpoints,
@@ -64,6 +69,7 @@ from . import (
     routes_service,
     routes_skills,
     routes_tasks,
+    routes_workdir,
 )
 from .middleware import RequestLogMiddleware
 from .problems import problem_response
@@ -89,6 +95,7 @@ def create_app(frontend_dir: Path | None = None) -> FastAPI:
     app.include_router(routes_config.router)
     app.include_router(routes_service.router)
     app.include_router(routes_tasks.router)
+    app.include_router(routes_workdir.router)
     directory = frontend_dir if frontend_dir is not None else _default_frontend_dir()
     if directory.is_dir():
         app.mount("/", StaticFiles(directory=directory, html=True), name="frontend")
@@ -173,8 +180,29 @@ def _register_error_handlers(app: FastAPI) -> None:
         for exc_type in exc_types:
             app.add_exception_handler(exc_type, make_handler(status_code))
 
-    # 二期新端点走 problem+json 错误形（api.problems）：任务 404 只指动作、不解释机制。
+    # 二期新端点走 problem+json 错误形（api.problems）：错误体 = type slug + title + status + detail。
     def task_not_found_handler(request: Request, exc: Exception) -> JSONResponse:
         return problem_response(404, "task-not-found", "任务不存在", str(exc))
 
     app.add_exception_handler(TaskNotFoundError, task_not_found_handler)
+
+    def workdir_not_found_handler(request: Request, exc: Exception) -> JSONResponse:
+        return problem_response(404, "workdir-not-found", "工作目录不存在", str(exc))
+
+    app.add_exception_handler(WorkdirNotFoundError, workdir_not_found_handler)
+
+    def workdir_path_invalid_handler(request: Request, exc: Exception) -> JSONResponse:
+        return problem_response(400, "workdir-path-invalid", "路径不合法", str(exc))
+
+    app.add_exception_handler(WorkdirPathError, workdir_path_invalid_handler)
+
+    def workdir_metadata_corrupted_handler(
+        request: Request, exc: Exception
+    ) -> JSONResponse:
+        return problem_response(
+            500, "workdir-metadata-corrupted", "工作目录元数据损坏", str(exc)
+        )
+
+    app.add_exception_handler(
+        WorkdirMetadataCorruptedError, workdir_metadata_corrupted_handler
+    )
