@@ -1034,6 +1034,11 @@
       "RunStatusView": {
         "description": "当前运行的进度快照（GET current 的响应体）。",
         "properties": {
+          "batch": {
+            "description": "批次序号（sN 的 N——防止跨批次误读进度）",
+            "title": "Batch",
+            "type": "integer"
+          },
           "counters": {
             "additionalProperties": {
               "type": "integer"
@@ -1084,6 +1089,7 @@
         },
         "required": [
           "run_id",
+          "batch",
           "mode",
           "status",
           "counters",
@@ -4119,7 +4125,7 @@
     },
     "/api/workdirs/{wid}/batches/{sN}/hide": {
       "post": {
-        "description": "停用批次：不出现在下拉 / 列表 / 打包选项，产物全部保留。",
+        "description": "停用批次：不出现在下拉 / 列表 / 打包选项，产物全部保留。\n\n该批次正在跑批则中断本次运行（design 定案「停用 = 停用」沿用手动停止语义）：\n查运行注册表命中本批次即置位协作取消，当前条目在安全点停下。",
         "operationId": "hide_batch_api_workdirs__wid__batches__sN__hide_post",
         "parameters": [
           {

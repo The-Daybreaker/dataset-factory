@@ -348,9 +348,13 @@ def test_rate_limit_error_carries_retry_after_header() -> None:
 
 
 def test_rate_limit_error_without_parsable_retry_after_is_none() -> None:
-    """Retry-After 缺失 / 非 HTTP-date 数字格式：retry_after 回落 None（调用方走本地退避）。"""
+    """Retry-After 缺失 / 非 HTTP-date 数字格式：retry_after 回落 None（调用方走本地退避）。
+
+    日期串用小写键命中取值路径（httpx.Headers 大小写不敏感），float 解析失败
+    才是本测试真正覆盖的分支。
+    """
     client = _client_raising(
-        _rate_limit_with_headers({"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"})
+        _rate_limit_with_headers({"retry-after": "Wed, 21 Oct 2026 07:28:00 GMT"})
     )
 
     with pytest.raises(LLMRateLimitError) as excinfo:

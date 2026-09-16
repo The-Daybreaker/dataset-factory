@@ -73,13 +73,19 @@ class RunJournal:
             handle.flush()
 
 
-def load_recent_success_hashes(runs_dir: Path) -> dict[str, str]:
-    """扫历史运行流水，取每条素材最近一次**成功**打标时读取的素材哈希。
+def load_recent_success_hashes(runs_dir: Path, seq: int) -> dict[str, str]:
+    """扫**本批次**历史运行流水，取每条素材最近一次成功打标时读取的素材哈希。
 
     断点续跑的跳过判定（E1）：有产物的条目，当前素材哈希与「最近一次成功打标」
-    一致才跳过——产物出自成功打标，所以比对锚点取 succeeded 行（失败的尝试没有
-    产物，与产物无关）。运行目录名字典序 = 时间序，从新到旧扫，每条素材取第一次
-    遇到的 succeeded 行；一个运行里同一素材以最后一行为准（重试后成功的行）。
+    一致才跳过。锚点必须按批次过滤（items.jsonl 行内必带 batch）——产物是
+    「策略 × 素材」维度的，s2 用素材 v1 打的产物，不能拿 s1 后来对 v2 打标
+    的哈希当锚点，否则过期产物会被错误跳过。运行目录名字典序 = 时间序，从新到
+    旧扫，每条素材取最新运行里的成功行（正常写入同条目每次运行至多一行终态，
+    多行为历史异常数据、以首条成功行为准）。
+
+    Args:
+        runs_dir: ``.dsf/runs/`` 目录。
+        seq: 批次序号（只认该批次的流水行）。
 
     Returns:
         素材主干 → 素材哈希（只含有过成功打标的条目；从没成功过的不在映射里，
@@ -97,7 +103,7 @@ def load_recent_success_hashes(runs_dir: Path) -> dict[str, str]:
         if not items_path.is_file():
             continue
         for record in _read_items_file(items_path):
-            if record["status"] != "succeeded":
+            if record["status"] != "succeeded" or record.get("batch") != seq:
                 continue
             item = cast(str, record["item"])
             if item not in hashes:

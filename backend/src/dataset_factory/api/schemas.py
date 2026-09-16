@@ -575,6 +575,7 @@ class RunStatusView(BaseModel):
     """当前运行的进度快照（GET current 的响应体）。"""
 
     run_id: str = Field(description="运行 id")
+    batch: int = Field(description="批次序号（sN 的 N——防止跨批次误读进度）")
     mode: str = Field(description="full | retry")
     status: str = Field(
         description="running | completed | interrupted | failed（failed = 启动失败）"

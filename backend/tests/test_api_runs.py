@@ -160,6 +160,100 @@ def test_start_run_rejects_second_run_with_409(
             assert body["occupier"]["batch"] == "s1"
 
             gates[0].set()  # 放行让第一个运行收尾
+            await _wait_current_404(http, wid)  # 等收尾，不留后台线程与 pytest 抢目录
+
+    asyncio.run(scenario())
+
+
+def test_current_run_rejects_wrong_batch(
+    temp_data_root: Path,
+    batch_env: tuple[Path, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """批次归属校验（审计 P2 回归）：s1 在跑时，s2 的 current / stop / stream 都 404。
+
+    URL 是批次作用域——s2 的请求不能命中 s1 的运行（跨批次误停 / 进度张冠李戴）。
+    """
+    from dataset_factory.strategies import create_batch
+
+    workdir, wid = batch_env
+    create_batch(
+        workdir,
+        name="二号批",
+        description="",
+        endpoint="main",
+        prompt="详细描述",
+        skills=[],
+    )
+    gates = _gates(1)
+    _inject_fake_completer(monkeypatch, GatedCompleter(gates))
+
+    async def scenario() -> None:
+        transport = httpx.ASGITransport(app=create_app(frontend_dir=Path("no-dist")))
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as http:
+            await http.post(
+                f"/api/workdirs/{wid}/batches/s1/runs", json={"mode": "full"}
+            )
+            await asyncio.sleep(0.2)  # 等运行持锁、卡到门口
+
+            other = f"/api/workdirs/{wid}/batches/s2/runs"
+            assert (await http.get(f"{other}/current")).status_code == 404
+            assert (await http.post(f"{other}/stop")).status_code == 404
+            stream = await http.get(f"{other}/stream")
+            assert stream.status_code == 404
+            assert stream.json()["type"] == "run-not-active"
+
+            # 本批次照常可见、可停（对照）。
+            own = await http.get(f"/api/workdirs/{wid}/batches/s1/runs/current")
+            assert own.status_code == 200
+            assert own.json()["batch"] == 1
+
+            gates[0].set()
+            await _wait_current_404(http, wid)
+
+    asyncio.run(scenario())
+
+
+def test_hide_batch_interrupts_running_run(
+    temp_data_root: Path,
+    batch_env: tuple[Path, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """停用批次中断运行（design 定案接线，审计 P2 回归）：hide 后运行以 interrupted 收尾。"""
+    workdir, wid = batch_env
+    gates = _gates(1)
+    _inject_fake_completer(monkeypatch, GatedCompleter(gates))
+
+    async def scenario() -> None:
+        transport = httpx.ASGITransport(app=create_app(frontend_dir=Path("no-dist")))
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as http:
+            await http.post(
+                f"/api/workdirs/{wid}/batches/s1/runs", json={"mode": "full"}
+            )
+            # 等第一条素材真正进入处理中（current_item 就位 = 卡在门口等门）。
+            deadline = time.monotonic() + _WAIT_TIMEOUT
+            while time.monotonic() < deadline:
+                probe = await http.get(f"/api/workdirs/{wid}/batches/s1/runs/current")
+                if (
+                    probe.status_code == 200
+                    and probe.json()["current_item"] == "cat_001"
+                ):
+                    break
+                await asyncio.sleep(0.01)
+            else:
+                pytest.fail("运行未在超时内进入第一条素材")
+
+            hidden = await http.post(f"/api/workdirs/{wid}/batches/s1/hide")
+            assert hidden.status_code == 200  # 停用成功且已请求中断运行
+            gates[0].set()  # 放行当前条目：完成后边界检查停止信号 → interrupted
+
+            await _wait_current_404(http, wid)
+            assert (workdir / "s1__cat_001.txt").exists()
+            assert not (workdir / "s1__cat_002.txt").exists()
 
     asyncio.run(scenario())
 
@@ -267,11 +361,16 @@ def test_stream_delivers_events_until_finished(
     batch_env: tuple[Path, str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SSE：订阅后按帧收业务事件，run-finished 后流关闭（帧结构同一期 /label/stream）。"""
+    """SSE：订阅后按帧收业务事件，run-finished 后流关闭（帧结构同一期 /label/stream）。
+
+    门时序：等流真正连上（collect 置位 connected）再放门——订阅生效先于事件产生，
+    否则门放行后运行可能先跑完、流请求落空。
+    """
     _workdir, wid = batch_env
     gates = _gates(2)
     _inject_fake_completer(monkeypatch, GatedCompleter(gates))
     frames: list[str] = []
+    connected = threading.Event()
 
     async def scenario() -> None:
         transport = httpx.ASGITransport(app=create_app(frontend_dir=Path("no-dist")))
@@ -297,10 +396,12 @@ def test_stream_delivers_events_until_finished(
                     assert response.headers["content-type"].startswith(
                         "text/event-stream"
                     )
+                    connected.set()  # 订阅已在服务端建立（流已开）
                     async for chunk in response.aiter_text():
                         frames.append(chunk)
 
             collector = asyncio.ensure_future(collect())
+            await asyncio.to_thread(connected.wait, _WAIT_TIMEOUT)
             gates[0].set()
             gates[1].set()
             await asyncio.wait_for(collector, timeout=_WAIT_TIMEOUT)

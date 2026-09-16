@@ -259,6 +259,87 @@ def test_resume_relables_when_product_blank_or_without_anchor(batch: Path) -> No
     assert report.counters["skipped"] == 0
 
 
+def test_e1_anchor_is_per_batch_not_global(batch: Path) -> None:
+    """E1 锚点按批次隔离（审计 P1 回归）：s1 后来对新材料打的标，不能当 s2 的锚点。
+
+    s2 用素材 v1 打标 → 素材换成 v2 → s1 对 v2 打标 → s2 续跑必须重打
+    （s2 的产物出自 v1；若锚点串批，s1 的 v2 哈希会让 s2 的过期产物被错误跳过）。
+    """
+    create_batch(
+        batch,
+        name="二号批",
+        description="",
+        endpoint="main",
+        prompt="详细描述",
+        skills=[],
+    )
+    runner_s2_first = _runner(batch, ScriptedCompleter(), seq=2)
+    runner_s2_first.run()  # s2 用 v1 打标（产物 s2__cat_001/002.txt + batch=2 流水）
+
+    (batch / "cat_001.jpg").write_bytes(b"image-v2-bytes")  # 素材换成 v2
+
+    runner_s1 = _runner(batch, ScriptedCompleter(), seq=1)
+    runner_s1.run()  # s1 对 v2 打标（batch=1 流水记 v2 哈希）
+
+    completer_s2 = ScriptedCompleter()
+    report_s2 = _runner(batch, completer_s2, seq=2).run()
+
+    # cat_001：s2 产物出自 v1，素材已到 v2 → 重打；cat_002：素材没变 → 正常跳过。
+    assert report_s2.counters["skipped"] == 1
+    assert completer_s2.calls == 1
+    assert (batch / "s2__cat_001.txt").read_text(encoding="utf-8") == "打标结果"
+
+
+def test_run_info_write_failure_does_not_leak_lock(
+    batch: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """锁路径 OSError 防御（审计 P1 回归）：run-info 写失败只损失提示、锁照常持有。
+
+    锁在结束时正常释放——该工作目录不会死锁到进程重启。
+    """
+    from dataset_factory.runs import lock as runs_lock_module
+
+    def _broken_write(path: Path, text: str) -> None:
+        raise OSError("磁盘满（模拟）")
+
+    monkeypatch.setattr(runs_lock_module, "atomic_write_text", _broken_write)
+
+    report = _runner(batch, ScriptedCompleter()).run()
+
+    assert report.status == "completed"
+    assert not (WorkdirStore(batch).dsf_path / "run-info.json").exists()
+    probe = FileLock(WorkdirStore(batch).dsf_path / "run.lock")
+    probe.acquire(timeout=0)  # 抢得到 = 锁已正常释放
+    probe.release()
+
+
+def test_same_stem_multi_extension_uses_one_source(batch: Path) -> None:
+    """同主干多扩展并存（审计 P2 回归）：计划比对与执行读取同源，E1 跳过判定生效。
+
+    导入器按完整文件名查重、同主干两种扩展可并存（手工放置场景）；若计划与执行
+    各取各的文件，E1 哈希永远对不上、每轮都重打。
+    """
+    (batch / "cat_001.png").write_bytes(b"png-variant")
+    store = WorkdirStore(batch)
+    store.append_import_record(
+        {
+            "imported_at": "2026-09-16T00:00:00+00:00",
+            "source": "x",
+            "files": [{"name": "cat_001.png", "sha256": "x"}],
+        }
+    )
+
+    _runner(batch, ScriptedCompleter()).run()  # 首轮：两个条目都打标
+
+    completer = ScriptedCompleter()
+    report = _runner(batch, completer).run()
+
+    # 两条全部命中锚点 = 哈希比对与读取同源；若计划与执行各取各的文件，
+    # cat_001 会对不上锚点而重打（calls == 1、skipped == 1）。
+    assert report.counters["skipped"] == 2
+    assert completer.calls == 0
+
+
 # --------------------------------------------------------------------------
 # retry 模式：快照执行 + 出列
 # --------------------------------------------------------------------------

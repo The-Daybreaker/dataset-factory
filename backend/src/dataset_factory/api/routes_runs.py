@@ -59,12 +59,27 @@ def _registry(request: Request) -> tuple[dict[str, BatchRunner], threading.Lock]
     )
 
 
-def _active_runner(request: Request, workdir: Path) -> BatchRunner:
-    """查该工作目录的当前运行；没有则 404（problem+json: run-not-active）。"""
+def _active_runner(request: Request, workdir: Path, seq: int) -> BatchRunner:
+    """查该工作目录的当前运行并校验批次归属；无运行 / 批次不符 → 404。
+
+    批次校验不可省：URL 是批次作用域（/batches/{sN}/runs/...），而注册表按工作
+    目录键控（同一时刻只有一个运行）——s2 的 stop / current 不能命中 s1 的运行，
+    那是「跨批次误停 / 进度张冠李戴」。
+    """
     registry, guard = _registry(request)
     with guard:
         runner = registry.get(str(workdir))
-    if runner is None:
+    if runner is None or runner.snapshot()["batch"] != seq:
+        raise RunNotActiveError("该批次当前没有进行中的跑批——启动一次跑批后再试。")
+    return runner
+
+
+def _require_active(runner: BatchRunner) -> BatchRunner:
+    """对 stop / stream 的额外校验：运行已到终态（尚未被线程移出注册表的窗口）按 404 处理。
+
+    此时 run-finished 已发过，订阅它只会挂死等不到帧。
+    """
+    if runner.snapshot()["status"] in {"completed", "interrupted", "failed"}:
         raise RunNotActiveError("该批次当前没有进行中的跑批——启动一次跑批后再试。")
     return runner
 
@@ -153,8 +168,8 @@ def start_run(
 )
 def current_run(wid: str, sN: str, request: Request) -> RunStatusView:
     """当前运行进度快照（轮询用；SSE 断线重连后的全量刷新同款数据）。"""
-    parse_seq(sN)  # sN 不合法按批次不存在处理（与 batch 端点同口径）
-    runner = _active_runner(request, _workdir_path(wid))
+    seq = parse_seq(sN)  # sN 不合法按批次不存在处理（与 batch 端点同口径）
+    runner = _active_runner(request, _workdir_path(wid), seq)
     return RunStatusView(**runner.snapshot())
 
 
@@ -171,8 +186,8 @@ def current_run(wid: str, sN: str, request: Request) -> RunStatusView:
 )
 def stop_run(wid: str, sN: str, request: Request) -> Response:
     """请求停止当前跑批（协作取消）：置位信号即返回，当前条目在安全点停下。"""
-    parse_seq(sN)
-    runner = _active_runner(request, _workdir_path(wid))
+    seq = parse_seq(sN)
+    runner = _require_active(_active_runner(request, _workdir_path(wid), seq))
     runner.stop()
     return Response(status_code=204)
 
@@ -193,8 +208,8 @@ def stream_run(wid: str, sN: str, request: Request) -> StreamingResponse:
     订阅之前已发生的事件不补发（前端断线约定：重连先全量拉条目视图刷新界面）；
     事件经线程安全队列从跑批线程转发到流。
     """
-    parse_seq(sN)
-    runner = _active_runner(request, _workdir_path(wid))
+    seq = parse_seq(sN)
+    runner = _require_active(_active_runner(request, _workdir_path(wid), seq))
     events: queue.Queue[RunEvent | None] = queue.Queue()
 
     def _forward(event: RunEvent) -> None:

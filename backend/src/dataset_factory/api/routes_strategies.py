@@ -17,8 +17,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import cast
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Request, Response
 
+from ..runs import BatchRunner
 from ..strategies import (
     BatchEntry,
     LibraryStrategy,
@@ -95,6 +96,19 @@ def _to_batch_view(wid: str, entry: BatchEntry) -> BatchView:
 def _workdir_path(wid: str) -> Path:
     """wid → 工作目录路径（未登记 404 由异常处理器翻译）。"""
     return Path(WorkdirRegistry.get(wid).path)
+
+
+def _stop_registry_runner(request: Request, workdir: Path, seq: int) -> None:
+    """该批次正在跑批则请求停止（停用批次中断运行的设计语义；无运行即空操作）。
+
+    与 routes_runs 的注册表访问同一约定：按工作目录 realpath 键控、命中后校验
+    批次归属——停用 s2 不能误停 s1 的运行。停止是协作式的（当前条目在安全点
+    停下），本函数置位信号即返回、不等运行结束。
+    """
+    registry = request.app.state.run_registry
+    runner = registry.get(str(workdir))
+    if isinstance(runner, BatchRunner) and runner.snapshot()["batch"] == seq:
+        runner.stop()
 
 
 # --------------------------------------------------------------------------
@@ -369,9 +383,16 @@ def patch_batch(wid: str, sN: str, body: BatchUpdateRequest) -> BatchView:
         },
     },
 )
-def hide_batch(wid: str, sN: str) -> BatchView:
-    """停用批次：不出现在下拉 / 列表 / 打包选项，产物全部保留。"""
-    entry = set_batch_active(_workdir_path(wid), parse_seq(sN), active=False)
+def hide_batch(wid: str, sN: str, request: Request) -> BatchView:
+    """停用批次：不出现在下拉 / 列表 / 打包选项，产物全部保留。
+
+    该批次正在跑批则中断本次运行（design 定案「停用 = 停用」沿用手动停止语义）：
+    查运行注册表命中本批次即置位协作取消，当前条目在安全点停下。
+    """
+    seq = parse_seq(sN)
+    workdir = _workdir_path(wid)
+    _stop_registry_runner(request, workdir, seq)
+    entry = set_batch_active(workdir, seq, active=False)
     return _to_batch_view(wid, entry)
 
 

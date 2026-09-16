@@ -267,9 +267,10 @@ class BatchRunner:
     # -- 进度快照（current 端点数据源；跨线程无锁读——单键读写原子性够用） ----
 
     def snapshot(self) -> dict[str, Any]:
-        """当前运行进度快照：run_id / mode / status / counters / 当前条目 / 失败信息。"""
+        """当前运行进度快照：run_id / batch / mode / status / counters / 当前条目。"""
         return {
             "run_id": self._run_id,
+            "batch": self._seq,
             "mode": self._mode,
             "status": self._status,
             "counters": dict(self._counters),
@@ -330,7 +331,12 @@ class BatchRunner:
             raise
 
     def _run(self) -> RunReport:
-        """run() 的原始执行体（锁的获取与释放都在这里）。"""
+        """run() 的原始执行体（锁的获取与释放都在这里）。
+
+        acquire 也在 try/finally 内：抢锁成功后的任何失败（如 run-info 写盘，
+        虽已被 RunLock 内部消化）都必须走到 release——锁泄漏等于该工作目录
+        死锁到进程重启，违背文件锁「无需人工清理」的选型根基。
+        """
         entry = get_batch(self._workdir, self._seq)
         if not entry.active:
             raise BatchInactiveError(
@@ -361,10 +367,11 @@ class BatchRunner:
         """
         counters = self._counters
         planned_stems: list[str] = []
+        assets: dict[str, Path] = {}
         if self._mode == "retry":
             planned_stems = list(read_retry_list(self._workdir, self._seq))
         else:
-            planned_stems, skip_stems = _plan_full(
+            planned_stems, skip_stems, assets = _plan_full(
                 self._workdir, self._seq, store.runs_dir
             )
             counters["skipped"] = len(skip_stems)
@@ -412,7 +419,14 @@ class BatchRunner:
                 interrupted = True
                 break
             self._current_item = item
-            if self._label_one(journal, engine, snapshot, item, counters):
+            # 素材路径与计划同源（full 用计划期的目录扫描结果，retry 现解析）——
+            # 「比对哈希的那份」与「实际读取送模型的那份」必须是同一个文件。
+            asset_path = (
+                assets.get(item)
+                if self._mode == "full"
+                else _resolve_asset(self._workdir, item)
+            )
+            if self._label_one(journal, engine, snapshot, item, asset_path):
                 succeeded_items.append(item)
 
         status = (
@@ -421,16 +435,26 @@ class BatchRunner:
             else _STATUS_COMPLETED
         )
         self._status = status
-        counters["attempted"] = counters["succeeded"] + counters["failed"]
         finished_at = _utc_now_iso()
         run_meta["status"] = status
         run_meta["counters"] = dict(counters)
         run_meta["finished_at"] = finished_at
+        # 终态 run.json 先落（attempted 由逐条记账实时维护，收尾不再重算）——
+        # 之后的收尾步骤全部「可容忍失败」：它们失败只损失便利，绝不能把已经
+        # 落盘的终态推翻成快照里的 failed（机制读到的终态必须唯一）。
         journal.write_run_json(run_meta)
         if self._mode == "retry" and succeeded_items:
             # 出列在锁内做（运行全程持锁）：本次成功的条目移出重试列表，仍失败与
-            # 中断没跑到的保留（「还没补完的账」）。
-            _remove_retry_items(self._workdir, self._seq, succeeded_items)
+            # 中断没跑到的保留（「还没补完的账」）。失败可容忍：出列没成功 =
+            # 成功条目仍留在列表，下次重试幂等重打（多花一次调用，方向安全）。
+            try:
+                _remove_retry_items(self._workdir, self._seq, succeeded_items)
+            except (OSError, WorkdirMetadataCorruptedError):
+                logger.warning(
+                    "跑批 %s 的重试列表出列失败（成功条目仍在列表，下次重试幂等重打）",
+                    self._run_id,
+                    exc_info=True,
+                )
         journal.append_log_line(
             f"[{finished_at}] 结束（{status}）：成功 {counters['succeeded']}、"
             f"失败 {counters['failed']}、跳过 {counters['skipped']}、"
@@ -457,7 +481,7 @@ class BatchRunner:
         engine: LabelingEngine,
         snapshot: Any,
         item: str,
-        counters: dict[str, int],
+        asset_path: Path | None,
     ) -> bool:
         """打一条素材：退避重试循环到成功或判死，写流水、发事件、记人读日志。
 
@@ -467,80 +491,15 @@ class BatchRunner:
         self._emit(
             ItemUpdatedEvent(item=item, batch=self._seq, status="started", attempt=0)
         )
-        asset_path = _resolve_asset(self._workdir, item)
-        prompt_body = cast(str, snapshot.prompt["body"])
-        skill_texts = [cast(str, block["body"]) for block in snapshot.skills]
 
         attempt = 0
         while True:
             attempt += 1
-            started = perf_counter()
-            elapsed_ms = 0
-            failure: _Failure | None = None
-            try:
-                if asset_path is None:
-                    # raise 作统一失败处理的入口：缺失、空白描述与模型错误共用
-                    # 同一套「退避重试 / 记死」逻辑（TRY301 定点豁免，拆开反而散）。
-                    raise MaterialReadError(  # noqa: TRY301
-                        f"素材 {item} 不在工作目录（缺失）——请先补回素材再重试。"
-                    )
-                result = engine.label_material(
-                    asset_path,
-                    prompt_body=prompt_body,
-                    skill_texts=skill_texts,
-                    video_fps=self._video_fps,
-                    video_max_frames=self._video_max_frames,
-                )
-                elapsed_ms = int((perf_counter() - started) * 1000)
-                if not result.caption.strip():
-                    raise _BlankCaptionError()  # noqa: TRY301 —— 同上
-                # 成功：产物原子写（只有完整产物算已有产物，中断不留半截）。
-                atomic_write_text(
-                    self._workdir / f"s{self._seq}__{item}.txt", result.caption
-                )
-                counters["succeeded"] += 1
-                journal.append_item(
-                    {
-                        "item": item,
-                        "batch": self._seq,
-                        "status": "succeeded",
-                        "attempt": attempt,
-                        "asset_hash": result.asset_hash,
-                        "elapsed_ms": elapsed_ms,
-                    }
-                )
-                self._emit(
-                    ItemUpdatedEvent(
-                        item=item, batch=self._seq, status="succeeded", attempt=attempt
-                    )
-                )
-                journal.append_log_line(
-                    f"[{_utc_now_compact()}] {item} 尝试 {attempt} 成功（{elapsed_ms}ms）"
-                )
-            except _BlankCaptionError:
-                failure = _Failure(
-                    "llm-content",
-                    "模型返回了空白描述；按内容层失败处理。",
-                    retryable=True,
-                )
-            except (MaterialReadError, MaterialOversizeError) as exc:
-                failure = _Failure("asset-unreadable", str(exc))
-            except ValueError as exc:
-                # 快照提示词空白 / 素材扩展名白名单外——批次配置类，重试不会变好。
-                failure = _Failure("config", str(exc))
-            except LLMError as exc:
-                reason_code, retryable = _classify_llm_error(exc)
-                failure = _Failure(
-                    reason_code,
-                    str(exc),
-                    retryable=retryable,
-                    retry_after=getattr(exc, "retry_after", None),
-                )
-            except OSError as exc:
-                # 产物写入失败（磁盘 / 权限）：重试同条多半还是撞，按 config 记死。
-                failure = _Failure("config", f"写入产物失败：{exc.strerror or exc}")
-            else:
-                return True  # 成功路径（TRY300：返回值放 else 块，与失败处理分离）
+            failure = self._attempt_one(
+                journal, engine, snapshot, item, asset_path, attempt
+            )
+            if failure is None:
+                return True
 
             # 失败路径：可重试且没到上限且没被停止 → 退避后重试；否则记死。
             if (
@@ -559,7 +518,13 @@ class BatchRunner:
                     # 退避中被打断：本条不写终态行（回到「排队中」，下次续跑再打）。
                     return False
                 continue
-            counters["failed"] += 1
+            if self._stop_event.is_set():
+                # 停止信号在：正在处理的条目无论失败可否重试都不写终态行——
+                # 「被打断」不是「失败」（模型调用中打断与退避中打断口径一致），
+                # 记成失败会让停止后的失败统计凭空多账。
+                return False
+            self._counters["failed"] += 1
+            self._counters["attempted"] += 1
             journal.append_item(
                 {
                     "item": item,
@@ -568,7 +533,7 @@ class BatchRunner:
                     "attempt": attempt,
                     "reason_code": failure.reason_code,
                     "message": _one_line(failure.message),
-                    "elapsed_ms": elapsed_ms,
+                    "elapsed_ms": failure.elapsed_ms,
                 }
             )
             self._emit(
@@ -586,6 +551,97 @@ class BatchRunner:
                 f"{_one_line(failure.message)}）"
             )
             return False
+
+    def _attempt_one(
+        self,
+        journal: RunJournal,
+        engine: LabelingEngine,
+        snapshot: Any,
+        item: str,
+        asset_path: Path | None,
+        attempt: int,
+    ) -> _Failure | None:
+        """跑一次尝试：成功完成记账并返回 None；失败返回 _Failure（不产生产物）。
+
+        成功路径刻意分两段：**产物原子写**失败按素材 / 系统问题转失败（重试同条
+        多半还撞，且产物没写成、无双计风险）；**记账段**（items.jsonl / 事件 / 计数
+        / 人读日志）在产物写成功之后执行——其中 items.jsonl 写盘失败属结构性错误，
+        直接冒泡给 run() 的 failed 收口（此时产物已在盘上、计数未增、绝无「成功又
+        记失败」的双计；E1 下次续跑按「有产物无锚点」重打，天然自愈）。
+        """
+        started = perf_counter()
+
+        def _elapsed() -> int:
+            return int((perf_counter() - started) * 1000)
+
+        try:
+            if asset_path is None:
+                # raise 作统一失败处理的入口：缺失、空白描述与模型错误共用
+                # 同一套「退避重试 / 记死」逻辑（TRY301 定点豁免，拆开反而散）。
+                raise MaterialReadError(  # noqa: TRY301
+                    f"素材 {item} 不在工作目录（缺失）——请先补回素材再重试。"
+                )
+            result = engine.label_material(
+                asset_path,
+                prompt_body=cast(str, snapshot.prompt["body"]),
+                skill_texts=[cast(str, block["body"]) for block in snapshot.skills],
+                video_fps=self._video_fps,
+                video_max_frames=self._video_max_frames,
+            )
+            if not result.caption.strip():
+                raise _BlankCaptionError()  # noqa: TRY301 —— 同上
+        except _BlankCaptionError:
+            return _Failure(
+                "llm-content",
+                "模型返回了空白描述；按内容层失败处理。",
+                retryable=True,
+                elapsed_ms=_elapsed(),
+            )
+        except (MaterialReadError, MaterialOversizeError) as exc:
+            return _Failure("asset-unreadable", str(exc), elapsed_ms=_elapsed())
+        except ValueError as exc:
+            # 快照提示词空白 / 素材扩展名白名单外——批次配置类，重试不会变好。
+            return _Failure("config", str(exc), elapsed_ms=_elapsed())
+        except LLMError as exc:
+            reason_code, retryable = _classify_llm_error(exc)
+            return _Failure(
+                reason_code,
+                str(exc),
+                retryable=retryable,
+                retry_after=getattr(exc, "retry_after", None),
+                elapsed_ms=_elapsed(),
+            )
+        # 成功：产物原子写（只有完整产物算已有产物，中断不留半截）。
+        try:
+            atomic_write_text(
+                self._workdir / f"s{self._seq}__{item}.txt", result.caption
+            )
+        except OSError as exc:
+            return _Failure(
+                "config",
+                f"写入产物失败：{exc.strerror or exc}",
+                elapsed_ms=_elapsed(),
+            )
+        # 记账段（产物已落盘；append_item 失败冒泡走 failed 收口，见 docstring）。
+        journal.append_item(
+            {
+                "item": item,
+                "batch": self._seq,
+                "status": "succeeded",
+                "attempt": attempt,
+                "asset_hash": result.asset_hash,
+                "elapsed_ms": _elapsed(),
+            }
+        )
+        self._counters["succeeded"] += 1
+        self._counters["attempted"] += 1
+        self._emit(
+            ItemUpdatedEvent(
+                item=item, batch=self._seq, status="succeeded", attempt=attempt
+            )
+        )
+        journal.append_log_line(f"[{_utc_now_compact()}] {item} 尝试 {attempt} 成功")
+        return None
 
     # -- 事件多播 -------------------------------------------------------------
 
@@ -608,17 +664,22 @@ class _Failure:
     message: str
     retryable: bool = False
     retry_after: float | None = None
+    elapsed_ms: int = 0
 
 
-def _plan_full(workdir: Path, seq: int, runs_dir: Path) -> tuple[list[str], list[str]]:
+def _plan_full(
+    workdir: Path, seq: int, runs_dir: Path
+) -> tuple[list[str], list[str], dict[str, Path]]:
     """full 模式定计划：登记在册素材逐条判定「跳过 / 要打」。
 
-    跳过判定（E1 续跑）：有产物（txt 非空白）且当前素材哈希与最近一次成功打标
-    一致 → 跳过；无产物、产物空白、无锚点（从没成功打过）、哈希不一致（打标后
-    素材被换过）→ 重打。只对有产物条目现算哈希（无产物的本来就要打）。
+    跳过判定（E1 续跑）：有产物（txt 非空白）且当前素材哈希与**本批次**最近一次
+    成功打标一致 → 跳过；无产物、产物空白、无锚点（从没成功打过）、哈希不一致
+    （打标后素材被换过）→ 重打。只对有产物条目现算哈希（无产物的本来就要打）。
 
     Returns:
-        (要打的素材主干列表, 跳过的素材主干列表)，均按主干排序（确定性）。
+        (要打的素材主干列表, 跳过的素材主干列表, 主干 → 素材路径映射)。
+        前两个列表均按主干排序（确定性）；映射供执行循环直接取用——比对哈希的
+        那份与实际读取送模型的那份必须是同一个文件（同主干多扩展时防两处各取各的）。
     """
     store = WorkdirStore(workdir)
     # files[] 的形状（dict + name: str）已由 read_import_records 校验，这里只取名字。
@@ -629,7 +690,7 @@ def _plan_full(workdir: Path, seq: int, runs_dir: Path) -> tuple[list[str], list
         if isinstance(entry.get("name"), str)
     }
     assets = _scan_assets(workdir)
-    hashes = load_recent_success_hashes(runs_dir)
+    hashes = load_recent_success_hashes(runs_dir, seq)
 
     to_label: list[str] = []
     skipped: list[str] = []
@@ -648,11 +709,16 @@ def _plan_full(workdir: Path, seq: int, runs_dir: Path) -> tuple[list[str], list
                     skipped.append(stem)
                     continue
         to_label.append(stem)
-    return to_label, skipped
+    return to_label, skipped, assets
 
 
 def _scan_assets(workdir: Path) -> dict[str, Path]:
-    """工作目录现状里的素材文件（白名单内、平铺不递归），主干 → 路径。"""
+    """工作目录现状里的素材文件（白名单内、平铺不递归），主干 → 路径。
+
+    这是「主干 → 素材文件」解析的**单一事实源**（计划判定与执行读取共用，含
+    retry 模式经 _resolve_asset 间接使用）——同主干多扩展并存时两处必须取同一份，
+    否则 E1 比对的哈希与送模型的素材错位、跳过判定永久失真。
+    """
     result: dict[str, Path] = {}
     if not workdir.is_dir():
         return result
@@ -664,12 +730,11 @@ def _scan_assets(workdir: Path) -> dict[str, Path]:
 
 
 def _resolve_asset(workdir: Path, item: str) -> Path | None:
-    """按素材主干解析工作目录里的素材文件；找不到（缺失）返回 None。"""
-    for suffix in sorted(ASSET_EXTENSIONS):
-        candidate = workdir / f"{item}{suffix}"
-        if candidate.is_file():
-            return candidate
-    return None
+    """按素材主干解析工作目录里的素材文件；找不到（缺失）返回 None。
+
+    经 _scan_assets 同源解析（retry 模式的逐条解析——列表通常很短，全扫成本可忽略）。
+    """
+    return _scan_assets(workdir).get(item)
 
 
 def _classify_llm_error(exc: LLMError) -> tuple[str, bool]:
