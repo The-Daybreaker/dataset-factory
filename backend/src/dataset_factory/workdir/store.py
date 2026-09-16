@@ -20,7 +20,7 @@ import secrets
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .._fs import atomic_write_text, data_root
 from .errors import (
@@ -250,6 +250,11 @@ class WorkdirStore:
         """``.dsf/imports.jsonl`` 路径（append-only 导入记录）。"""
         return self._dsf / "imports.jsonl"
 
+    @property
+    def tmp_dir(self) -> Path:
+        """``.dsf/tmp/`` 暂存目录（复制导入的临时落点，写完原子改名进工作目录）。"""
+        return self._dsf / "tmp"
+
     def read_state(self) -> dict[str, object]:
         """读 ``state.json``。不存在或空 → 空状态字典（不含任何键）。
 
@@ -271,3 +276,92 @@ class WorkdirStore:
             self.state_file,
             json.dumps(state, ensure_ascii=False, indent=2),
         )
+
+    def append_import_record(self, record: dict[str, object]) -> None:
+        """追加一条导入记录到 ``imports.jsonl``（append-only，一行一次导入）。
+
+        写入后 flush + fsync 才算落盘；进程在写入中途被杀最多留下残缺尾行，
+        读取侧按「砍掉残缺尾巴」容忍（与 sessions 事件流同一套崩溃安全读法）。
+
+        Args:
+            record: 序列化为一条 JSON 的导入记录（imported_at / source / files）。
+
+        Raises:
+            OSError: 打开 / 写入 / 刷盘失败。
+        """
+        line = json.dumps(record, ensure_ascii=False)
+        with self.imports_file.open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write(line + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    def read_import_records(self) -> list[dict[str, object]]:
+        """读全部导入记录（追加序 = 时间正序）。
+
+        崩溃安全读法（与 sessions 事件流一致）：文件末尾无换行 = 写到一半的残缺行，
+        砍掉残缺尾巴再解析；中间的完整行损坏则 fail loud（坏文件不静默兜底），
+        缺失字段或类型不对同样按损坏处理。
+
+        Returns:
+            导入记录列表，每条含 imported_at（str）/ source（str）/ files（list[dict]）。
+
+        Raises:
+            WorkdirMetadataCorruptedError: 记录文件损坏（JSON 不合法或形状不对）。
+        """
+        if not self.imports_file.exists():
+            return []
+        try:
+            raw = self.imports_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise WorkdirMetadataCorruptedError(
+                f"导入记录文件无法读取（{self.imports_file}）：{exc}",
+            ) from exc
+        if raw and not raw.endswith("\n"):
+            raw = raw[: raw.rfind("\n") + 1]
+        records: list[dict[str, object]] = []
+        for line in raw.splitlines():
+            if not line.strip():
+                continue
+            try:
+                data: object = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise WorkdirMetadataCorruptedError(
+                    f"导入记录文件损坏（{self.imports_file}）——"
+                    "可删除该文件后用「重建导入记录」补记，或修复后重试。",
+                ) from exc
+            self._validate_import_record(data)
+            records.append(cast("dict[str, object]", data))
+        return records
+
+    @staticmethod
+    def _validate_import_record(data: object) -> None:
+        """校验一条导入记录的形状（fail loud：形状不对按文件损坏处理）。
+
+        Raises:
+            WorkdirMetadataCorruptedError: 不是对象、缺字段或字段类型不对。
+        """
+
+        def _corrupted() -> WorkdirMetadataCorruptedError:
+            return WorkdirMetadataCorruptedError(
+                "导入记录文件里有一条记录形状不对（缺字段或类型不符）——"
+                "可删除该文件后用「重建导入记录」补记，或修复后重试。",
+            )
+
+        if not isinstance(data, dict):
+            raise _corrupted()
+        record = cast("dict[str, object]", data)
+        if not isinstance(record.get("imported_at"), str):
+            raise _corrupted()
+        if not isinstance(record.get("source"), str):
+            raise _corrupted()
+        files = record.get("files")
+        if not isinstance(files, list):
+            raise _corrupted()
+        for item in cast("list[object]", files):
+            if not isinstance(item, dict):
+                raise _corrupted()
+            entry = cast("dict[str, object]", item)
+            if not isinstance(entry.get("name"), str) or not isinstance(
+                entry.get("sha256"), str
+            ):
+                raise _corrupted()

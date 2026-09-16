@@ -57,6 +57,7 @@ from ..skills import (
 )
 from ..tasks import TaskManager, TaskNotFoundError
 from ..workdir import (
+    ImportSourceConflictError,
     WorkdirMetadataCorruptedError,
     WorkdirNotFoundError,
     WorkdirPathError,
@@ -206,3 +207,10 @@ def _register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(
         WorkdirMetadataCorruptedError, workdir_metadata_corrupted_handler
     )
+
+    def import_source_conflict_handler(
+        request: Request, exc: Exception
+    ) -> JSONResponse:
+        return problem_response(422, "import-source-conflict", "导入来源冲突", str(exc))
+
+    app.add_exception_handler(ImportSourceConflictError, import_source_conflict_handler)

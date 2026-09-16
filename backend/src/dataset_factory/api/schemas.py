@@ -329,3 +329,63 @@ class WorkdirInfo(BaseModel):
     path: str = Field(description="工作目录的规范绝对路径")
     title: str = Field(description="显示名（默认 = 目录名，可改、允许重名）")
     last_used_at: float = Field(description="最后使用时刻（Unix 秒，UTC）")
+
+
+class WorkdirCreateRequest(BaseModel):
+    """POST /api/workdirs 的请求体：登记工作目录（可选带初始导入）。
+
+    带来源目录 = 复制导入（素材被复制进工作目录，初始导入）；不带 = 就地采用
+    （直接使用目录内素材，不复制）。两种都会扫描 + 登记导入记录，均为长任务。
+    """
+
+    path: str = Field(description="工作目录绝对路径（服务端本地）")
+    title: str = Field(default="", description="显示名；缺省 = 目录名")
+    source: str | None = Field(
+        default=None,
+        description="原始素材目录；提供 = 复制导入，缺省 = 就地采用。"
+        "来源须与工作目录不同且互不嵌套",
+    )
+
+
+class WorkdirCreateAccepted(BaseModel):
+    """POST /api/workdirs 的 202 受理响应：任务句柄 + 已登记的工作目录条目。"""
+
+    task_id: str = Field(description="导入任务句柄（GET /api/tasks/{id} 轮询）")
+    workdir: WorkdirInfo = Field(description="已登记（或复用）的工作目录条目")
+
+
+class WorkdirImportRequest(BaseModel):
+    """POST /api/workdirs/{wid}/imports 的请求体：补充导入。"""
+
+    source: str = Field(
+        description="原始素材目录（服务端本地，须与工作目录不同且互不嵌套）",
+    )
+    force_names: list[str] = Field(
+        default_factory=list,
+        description="异名同容时仍按新名强制导入的源文件名清单；缺省 = 全部默认跳过",
+    )
+
+
+class ImportAccepted(BaseModel):
+    """POST /api/workdirs/{wid}/imports 的 202 受理响应：任务句柄。"""
+
+    task_id: str = Field(description="导入任务句柄（GET /api/tasks/{id} 轮询）")
+
+
+class ImportFileRecord(BaseModel):
+    """导入记录里的单个文件：文件名 + 导入时的内容哈希。"""
+
+    name: str = Field(description="文件名（工作目录内的平铺文件名）")
+    sha256: str = Field(description="导入时内容哈希（SHA-256 十六进制）")
+
+
+class ImportRecord(BaseModel):
+    """一条导入记录（``.dsf/imports.jsonl`` 一行）——素材出身的载体。
+
+    素材的出身 = 包含它的最近一次导入记录；同一素材多次导入取最近一次。
+    就地采用的来源路径 = 工作目录自身。
+    """
+
+    imported_at: str = Field(description="导入时刻（UTC ISO 8601）")
+    source: str = Field(description="来源目录路径（就地采用 = 工作目录自身）")
+    files: list[ImportFileRecord] = Field(description="本次登记的文件清单")

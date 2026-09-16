@@ -478,6 +478,72 @@
         "title": "HistoryMessageView",
         "type": "object"
       },
+      "ImportAccepted": {
+        "description": "POST /api/workdirs/{wid}/imports 的 202 受理响应：任务句柄。",
+        "properties": {
+          "task_id": {
+            "description": "导入任务句柄（GET /api/tasks/{id} 轮询）",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "title": "ImportAccepted",
+        "type": "object"
+      },
+      "ImportFileRecord": {
+        "description": "导入记录里的单个文件：文件名 + 导入时的内容哈希。",
+        "properties": {
+          "name": {
+            "description": "文件名（工作目录内的平铺文件名）",
+            "title": "Name",
+            "type": "string"
+          },
+          "sha256": {
+            "description": "导入时内容哈希（SHA-256 十六进制）",
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "sha256"
+        ],
+        "title": "ImportFileRecord",
+        "type": "object"
+      },
+      "ImportRecord": {
+        "description": "一条导入记录（``.dsf/imports.jsonl`` 一行）——素材出身的载体。\n\n素材的出身 = 包含它的最近一次导入记录；同一素材多次导入取最近一次。\n就地采用的来源路径 = 工作目录自身。",
+        "properties": {
+          "files": {
+            "description": "本次登记的文件清单",
+            "items": {
+              "$ref": "#/components/schemas/ImportFileRecord"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "imported_at": {
+            "description": "导入时刻（UTC ISO 8601）",
+            "title": "Imported At",
+            "type": "string"
+          },
+          "source": {
+            "description": "来源目录路径（就地采用 = 工作目录自身）",
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "imported_at",
+          "source",
+          "files"
+        ],
+        "title": "ImportRecord",
+        "type": "object"
+      },
       "LabelRequest": {
         "description": "POST /api/label 的请求体。",
         "properties": {
@@ -1011,6 +1077,82 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "WorkdirCreateAccepted": {
+        "description": "POST /api/workdirs 的 202 受理响应：任务句柄 + 已登记的工作目录条目。",
+        "properties": {
+          "task_id": {
+            "description": "导入任务句柄（GET /api/tasks/{id} 轮询）",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "workdir": {
+            "$ref": "#/components/schemas/WorkdirInfo",
+            "description": "已登记（或复用）的工作目录条目"
+          }
+        },
+        "required": [
+          "task_id",
+          "workdir"
+        ],
+        "title": "WorkdirCreateAccepted",
+        "type": "object"
+      },
+      "WorkdirCreateRequest": {
+        "description": "POST /api/workdirs 的请求体：登记工作目录（可选带初始导入）。\n\n带来源目录 = 复制导入（素材被复制进工作目录，初始导入）；不带 = 就地采用\n（直接使用目录内素材，不复制）。两种都会扫描 + 登记导入记录，均为长任务。",
+        "properties": {
+          "path": {
+            "description": "工作目录绝对路径（服务端本地）",
+            "title": "Path",
+            "type": "string"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "原始素材目录；提供 = 复制导入，缺省 = 就地采用。来源须与工作目录不同且互不嵌套",
+            "title": "Source"
+          },
+          "title": {
+            "default": "",
+            "description": "显示名；缺省 = 目录名",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "WorkdirCreateRequest",
+        "type": "object"
+      },
+      "WorkdirImportRequest": {
+        "description": "POST /api/workdirs/{wid}/imports 的请求体：补充导入。",
+        "properties": {
+          "force_names": {
+            "description": "异名同容时仍按新名强制导入的源文件名清单；缺省 = 全部默认跳过",
+            "items": {
+              "type": "string"
+            },
+            "title": "Force Names",
+            "type": "array"
+          },
+          "source": {
+            "description": "原始素材目录（服务端本地，须与工作目录不同且互不嵌套）",
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "WorkdirImportRequest",
         "type": "object"
       },
       "WorkdirInfo": {
@@ -2556,6 +2698,58 @@
         "tags": [
           "工作目录"
         ]
+      },
+      "post": {
+        "description": "登记工作目录并受理初始导入（长任务，202 + task_id + Retry-After）。\n\n校验在登记之前完成（失败的请求不在注册表留痕）；注册表登记同步完成\n（wid 立即可用、幂等——同 realpath 只更新已有条目），扫描与复制走任务。",
+        "operationId": "create_workdir_api_workdirs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkdirCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkdirCreateAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "工作目录或来源目录路径不合法（problem+json: workdir-path-invalid）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "来源目录与工作目录相同或互为嵌套（problem+json: import-source-conflict）"
+          }
+        },
+        "summary": "Create Workdir",
+        "tags": [
+          "工作目录"
+        ]
       }
     },
     "/api/workdirs/{wid}": {
@@ -2607,6 +2801,138 @@
           }
         },
         "summary": "Get One",
+        "tags": [
+          "工作目录"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/imports": {
+      "get": {
+        "description": "导入历史（追加序 = 时间正序）——素材出身回看的数据源。",
+        "operationId": "list_imports_api_workdirs__wid__imports_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ImportRecord"
+                  },
+                  "title": "Response List Imports Api Workdirs  Wid  Imports Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "wid 不在注册表（problem+json: workdir-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Imports",
+        "tags": [
+          "工作目录"
+        ]
+      },
+      "post": {
+        "description": "补充导入（长任务，202 + task_id + Retry-After）。\n\n重新导入缺失素材也走本端点：来源指向原始目录，已登记的同名同容文件\n幂等跳过并重登记，缺失的补回。",
+        "operationId": "create_import_api_workdirs__wid__imports_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkdirImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "来源目录路径不合法（problem+json: workdir-path-invalid）"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "wid 不在注册表（problem+json: workdir-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "来源目录与工作目录相同或互为嵌套（problem+json: import-source-conflict）"
+          }
+        },
+        "summary": "Create Import",
         "tags": [
           "工作目录"
         ]

@@ -1,20 +1,50 @@
-"""接口测试：workdir 注册表端点（GET /api/workdirs + GET /{wid}，problem+json 404）。"""
+"""接口测试：workdir 端点（注册表读面 + 登记/导入的 202 任务面 + 导入历史）。
+
+读面与错误语义用 TestClient 直测；受理端点（202 + 任务）走 httpx ASGITransport——
+任务受理需要运行中的事件循环（TestClient 门户线程没有），同一事件循环里受理 +
+轮询到终态（test_api_tasks 同款模式）。
+"""
 
 from __future__ import annotations
 
+import asyncio
+import time
 from pathlib import Path
+from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from dataset_factory.api import create_app
 from dataset_factory.workdir import WorkdirRegistry
 
+_PNG_BYTES = b"\x89PNG-fake-image-bytes"
+_WAIT_TIMEOUT = 5.0
+
 
 @pytest.fixture
 def client(tmp_path: Path, temp_data_root: Path) -> TestClient:
     """挂临时空 frontend 目录的测试客户端（依赖 temp_data_root 隔离数据根）。"""
     return TestClient(create_app(frontend_dir=tmp_path))
+
+
+def _write(directory: Path, name: str, content: bytes) -> None:
+    """在目录里放一个文件（测试素材的统一写法）。"""
+    (directory / name).write_bytes(content)
+
+
+async def _wait_terminal(
+    http: httpx.AsyncClient, task_id: str, timeout: float = _WAIT_TIMEOUT
+) -> dict[str, Any]:
+    """轮询任务直到终态（带超时护栏，绝不裸 sleep 赌调度）。"""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        body: dict[str, Any] = (await http.get(f"/api/tasks/{task_id}")).json()
+        if body["status"] in {"succeeded", "failed", "cancelled"}:
+            return body
+        await asyncio.sleep(0.01)
+    pytest.fail("任务未在超时内到达终态")
 
 
 def test_list_empty_registry_returns_empty_list(client: TestClient) -> None:
@@ -65,3 +95,283 @@ def test_get_unknown_wid_returns_problem_json_404(client: TestClient) -> None:
     assert body["title"] == "工作目录不存在"
     assert body["status"] == 404
     assert "detail" in body
+
+
+def test_get_imports_unknown_wid_returns_problem_json_404(
+    client: TestClient,
+) -> None:
+    """导入历史端点同样按 wid 失效语义 404。"""
+    response = client.get("/api/workdirs/no-such-wid/imports")
+
+    assert response.status_code == 404
+    assert response.json()["type"] == "workdir-not-found"
+
+
+def test_post_workdir_rejects_invalid_path_problem_json(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """登记路径不存在 → 400 problem+json（workdir-path-invalid）。"""
+    response = client.post(
+        "/api/workdirs", json={"path": str(tmp_path / "no-such-dir")}
+    )
+
+    assert response.status_code == 400
+    assert response.headers["content-type"] == "application/problem+json"
+    body = response.json()
+    assert body["type"] == "workdir-path-invalid"
+    assert body["status"] == 400
+
+
+def test_post_workdir_rejects_nested_source_problem_json(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """来源与工作目录相同 → 422 problem+json（import-source-conflict）。"""
+    target = tmp_path / "photos"
+    target.mkdir()
+
+    response = client.post(
+        "/api/workdirs",
+        json={"path": str(target), "source": str(target)},
+    )
+
+    assert response.status_code == 422
+    assert response.headers["content-type"] == "application/problem+json"
+    body = response.json()
+    assert body["type"] == "import-source-conflict"
+    assert body["title"] == "导入来源冲突"
+    assert body["status"] == 422
+
+
+def test_post_workdir_rejects_missing_source_problem_json(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """来源目录不存在 → 400 problem+json（workdir-path-invalid）。"""
+    target = tmp_path / "photos"
+    target.mkdir()
+
+    response = client.post(
+        "/api/workdirs",
+        json={"path": str(target), "source": str(tmp_path / "nope")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["type"] == "workdir-path-invalid"
+
+
+def test_post_workdir_failed_validation_leaves_no_entry(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """校验失败（来源冲突）的请求不在注册表留痕。"""
+    target = tmp_path / "photos"
+    target.mkdir()
+
+    client.post("/api/workdirs", json={"path": str(target), "source": str(target)})
+
+    assert client.get("/api/workdirs").json() == []
+
+
+def test_workdir_import_lifecycle(tmp_path: Path, temp_data_root: Path) -> None:
+    """登记 → 202 受理 → 轮询终态 → 注册表与导入记录就位（就地采用全链路）。"""
+
+    async def scenario() -> None:
+        target = tmp_path / "photos"
+        target.mkdir()
+        app = create_app(frontend_dir=tmp_path)
+        base = "http://testserver"
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=base
+        ) as http:
+            response = await http.post("/api/workdirs", json={"path": str(target)})
+
+            assert response.status_code == 202
+            assert response.headers["Retry-After"] == "2"
+            body = response.json()
+            assert body["workdir"]["path"] == str(target)
+            assert body["workdir"]["title"] == "photos"
+
+            finished = await _wait_terminal(http, body["task_id"])
+
+            assert finished["status"] == "succeeded"
+            assert finished["result"]["imported"] == []
+
+            entries = (await http.get("/api/workdirs")).json()
+            assert [entry["id"] for entry in entries] == [body["workdir"]["id"]]
+
+            history = (
+                await http.get(f"/api/workdirs/{body['workdir']['id']}/imports")
+            ).json()
+            assert len(history) == 1
+            assert history[0]["source"] == str(target)
+            assert history[0]["files"] == []
+
+    asyncio.run(scenario())
+
+
+def test_workdir_create_with_source_copies_files(
+    tmp_path: Path, temp_data_root: Path
+) -> None:
+    """带来源登记（复制导入）：任务完成后素材已复制、记录来源 = 原始目录。"""
+
+    async def scenario() -> None:
+        target = tmp_path / "photos"
+        target.mkdir()
+        source = tmp_path / "fresh"
+        source.mkdir()
+        _write(source, "cat_001.jpg", _PNG_BYTES)
+        app = create_app(frontend_dir=tmp_path)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as http:
+            response = await http.post(
+                "/api/workdirs",
+                json={"path": str(target), "source": str(source)},
+            )
+
+            assert response.status_code == 202
+            body = response.json()
+
+            finished = await _wait_terminal(http, body["task_id"])
+
+            assert finished["status"] == "succeeded"
+            assert finished["result"]["imported"] == ["cat_001.jpg"]
+            assert (target / "cat_001.jpg").read_bytes() == _PNG_BYTES
+            assert (source / "cat_001.jpg").exists()
+
+            history = (
+                await http.get(f"/api/workdirs/{body['workdir']['id']}/imports")
+            ).json()
+            assert history[0]["source"] == str(source)
+            assert history[0]["files"][0]["name"] == "cat_001.jpg"
+
+    asyncio.run(scenario())
+
+
+def test_workdir_create_reregister_reuses_wid(
+    tmp_path: Path, temp_data_root: Path
+) -> None:
+    """重复登记同一路径：wid 复用（幂等），两次任务各自成功。"""
+
+    async def scenario() -> None:
+        target = tmp_path / "photos"
+        target.mkdir()
+        app = create_app(frontend_dir=tmp_path)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as http:
+            first = (
+                await http.post("/api/workdirs", json={"path": str(target)})
+            ).json()
+            second = (
+                await http.post(
+                    "/api/workdirs", json={"path": str(target), "title": "新名"}
+                )
+            ).json()
+
+            assert second["workdir"]["id"] == first["workdir"]["id"]
+            assert second["workdir"]["title"] == "新名"
+
+            first_done = await _wait_terminal(http, first["task_id"])
+            second_done = await _wait_terminal(http, second["task_id"])
+
+            assert first_done["status"] == "succeeded"
+            assert second_done["status"] == "succeeded"
+            assert len((await http.get("/api/workdirs")).json()) == 1
+
+    asyncio.run(scenario())
+
+
+def test_import_endpoint_appends_files_and_record(
+    tmp_path: Path, temp_data_root: Path
+) -> None:
+    """补充导入：202 受理 → 完成后素材复制、记录追加到历史末尾。"""
+
+    async def scenario() -> None:
+        target = tmp_path / "photos"
+        target.mkdir()
+        entry = WorkdirRegistry.register(target, title="")
+        source = tmp_path / "more"
+        source.mkdir()
+        _write(source, "dog_001.jpg", _PNG_BYTES)
+        app = create_app(frontend_dir=tmp_path)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as http:
+            response = await http.post(
+                f"/api/workdirs/{entry.id}/imports", json={"source": str(source)}
+            )
+
+            assert response.status_code == 202
+            assert response.headers["Retry-After"] == "2"
+            body = response.json()
+
+            finished = await _wait_terminal(http, body["task_id"])
+
+            assert finished["status"] == "succeeded"
+            assert finished["result"]["imported"] == ["dog_001.jpg"]
+            assert (target / "dog_001.jpg").read_bytes() == _PNG_BYTES
+
+            history = (await http.get(f"/api/workdirs/{entry.id}/imports")).json()
+            assert len(history) == 1
+            assert history[0]["source"] == str(source)
+            assert history[0]["files"][0]["name"] == "dog_001.jpg"
+
+    asyncio.run(scenario())
+
+
+def test_import_endpoint_rejects_nested_source(
+    tmp_path: Path, temp_data_root: Path
+) -> None:
+    """补充导入来源 = 工作目录 → 422 problem+json（与登记同一条嵌套规则）。"""
+
+    async def scenario() -> None:
+        target = tmp_path / "photos"
+        target.mkdir()
+        entry = WorkdirRegistry.register(target, title="")
+        app = create_app(frontend_dir=tmp_path)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as http:
+            response = await http.post(
+                f"/api/workdirs/{entry.id}/imports", json={"source": str(target)}
+            )
+
+            assert response.status_code == 422
+            assert response.json()["type"] == "import-source-conflict"
+
+    asyncio.run(scenario())
+
+
+def test_import_endpoint_unknown_wid_returns_problem_json(
+    tmp_path: Path, temp_data_root: Path
+) -> None:
+    """补充导入对未知 wid → 404 problem+json。"""
+
+    async def scenario() -> None:
+        source = tmp_path / "more"
+        source.mkdir()
+        app = create_app(frontend_dir=tmp_path)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as http:
+            response = await http.post(
+                "/api/workdirs/no-such-wid/imports", json={"source": str(source)}
+            )
+
+            assert response.status_code == 404
+            assert response.json()["type"] == "workdir-not-found"
+
+    asyncio.run(scenario())
+
+
+def test_imports_history_empty_for_new_workdir(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """新登记（未导入过）的工作目录 → 空历史（不是 404）。"""
+    target = tmp_path / "photos"
+    target.mkdir()
+    entry = WorkdirRegistry.register(target, title="")
+
+    response = client.get(f"/api/workdirs/{entry.id}/imports")
+
+    assert response.status_code == 200
+    assert response.json() == []

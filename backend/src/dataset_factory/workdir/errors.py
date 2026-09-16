@@ -21,3 +21,7 @@ class WorkdirPathError(WorkdirError):
 
 class WorkdirMetadataCorruptedError(WorkdirError):
     """注册表或 ``state.json`` 元数据文件损坏（JSON 不合法）——HTTP 500 problem+json（workdir-metadata-corrupted）。"""
+
+
+class ImportSourceConflictError(WorkdirError):
+    """导入来源目录与工作目录相同或互为嵌套（复制会自我覆盖）——HTTP 422 problem+json（import-source-conflict）。"""

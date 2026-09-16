@@ -1,22 +1,32 @@
-"""单元测试：workdir 数据域（wid 注册表 + `.dsf/` 门面）。
+"""单元测试：workdir 数据域（wid 注册表 + `.dsf/` 门面 + 素材导入）。
 
-注册表落数据根（temp_data_root 隔离）；门面落 tmp_path 工作目录。
+注册表落数据根（temp_data_root 隔离）；门面与导入落 tmp_path 工作目录。
 """
 
 from __future__ import annotations
 
+import hashlib
+import threading
 from pathlib import Path
 
 import pytest
 
+from dataset_factory.tasks import TaskCancelledError
 from dataset_factory.workdir import (
+    ImportSourceConflictError,
+    WorkdirError,
     WorkdirMetadataCorruptedError,
     WorkdirNotFoundError,
     WorkdirPathError,
     WorkdirRegistry,
     WorkdirStore,
     ensure_dsf_layout,
+    import_assets,
 )
+from dataset_factory.workdir import importer as importer_module
+
+_PNG_BYTES = b"\x89PNG-fake-image-bytes"
+_MP4_BYTES = b"\x00\x00\x00\x18ftypmp4-fake-video-bytes"
 
 
 @pytest.fixture
@@ -188,4 +198,461 @@ def test_store_layout_properties(workdir: Path) -> None:
     assert store.strategies_dir == workdir / ".dsf" / "strategies"
     assert store.runs_dir == workdir / ".dsf" / "runs"
     assert store.imports_file == workdir / ".dsf" / "imports.jsonl"
+    assert store.tmp_dir == workdir / ".dsf" / "tmp"
     assert store.state_file.parent == store.dsf_path
+
+
+# --------------------------------------------------------------------------
+# 素材导入（importer）：窄清单 / 大小护栏 / 重复四情形 / 登记与自愈
+# --------------------------------------------------------------------------
+
+
+def _write(directory: Path, name: str, content: bytes) -> Path:
+    """在目录里放一个文件（测试素材的统一写法），返回其路径。"""
+    path = directory / name
+    path.write_bytes(content)
+    return path
+
+
+def _sha(content: bytes) -> str:
+    """测试内独立计算 SHA-256（不读实现代码，防两侧共用同一假设）。"""
+    return hashlib.sha256(content).hexdigest()
+
+
+def _read_records(workdir: Path) -> list[dict[str, object]]:
+    """读工作目录的导入记录（测试侧便捷读取）。"""
+    return WorkdirStore(workdir).read_import_records()
+
+
+@pytest.fixture
+def source(tmp_path: Path) -> Path:
+    """一个独立的来源目录。"""
+    target = tmp_path / "source"
+    target.mkdir()
+    return target
+
+
+def test_copy_import_copies_and_registers(
+    workdir: Path, source: Path, temp_data_root: Path
+) -> None:
+    """复制导入：素材复制进工作目录、原始目录不动、记录带来源与内容哈希。"""
+    _write(source, "cat_001.jpg", _PNG_BYTES)
+    _write(source, "clip_001.mp4", _MP4_BYTES)
+
+    report = import_assets(workdir, source)
+
+    assert (workdir / "cat_001.jpg").read_bytes() == _PNG_BYTES
+    assert (workdir / "clip_001.mp4").read_bytes() == _MP4_BYTES
+    assert (source / "cat_001.jpg").read_bytes() == _PNG_BYTES
+    assert report["imported"] == ["cat_001.jpg", "clip_001.mp4"]
+    records = _read_records(workdir)
+    assert len(records) == 1
+    assert records[0]["source"] == str(source)
+    assert records[0]["files"] == [
+        {"name": "cat_001.jpg", "sha256": _sha(_PNG_BYTES)},
+        {"name": "clip_001.mp4", "sha256": _sha(_MP4_BYTES)},
+    ]
+
+
+def test_in_place_adoption_registers_without_copy(
+    workdir: Path, temp_data_root: Path
+) -> None:
+    """就地采用：不复制、来源记工作目录自身、素材全量登记。"""
+    _write(workdir, "cat_001.jpg", _PNG_BYTES)
+
+    report = import_assets(workdir, None)
+
+    assert report["imported"] == ["cat_001.jpg"]
+    records = _read_records(workdir)
+    assert len(records) == 1
+    assert records[0]["source"] == str(workdir)
+    assert records[0]["files"] == [{"name": "cat_001.jpg", "sha256": _sha(_PNG_BYTES)}]
+
+
+def test_flat_scan_skips_subdirectories(
+    workdir: Path, source: Path, temp_data_root: Path
+) -> None:
+    """平铺扫描不递归：子目录里的素材不导入。"""
+    _write(source, "top.jpg", _PNG_BYTES)
+    nested = source / "nested"
+    nested.mkdir()
+    _write(nested, "deep.jpg", _PNG_BYTES)
+
+    report = import_assets(workdir, source)
+
+    assert report["imported"] == ["top.jpg"]
+    assert not (workdir / "deep.jpg").exists()
+
+
+def test_unsupported_extension_rejected(
+    workdir: Path, source: Path, temp_data_root: Path
+) -> None:
+    """白名单外扩展名：不导入、不登记、拒绝原因 = 扩展名不支持。"""
+    _write(source, "cat_001.jpg", _PNG_BYTES)
+    _write(source, "notes.txt", b"text")
+    _write(source, "photo.heic", b"heic")
+
+    report = import_assets(workdir, source)
+
+    assert report["imported"] == ["cat_001.jpg"]
+    assert not (workdir / "notes.txt").exists()
+    rejected = {item["name"]: item["reason"] for item in report["rejected"]}
+    assert rejected["notes.txt"] == "扩展名不支持"
+    assert rejected["photo.heic"] == "扩展名不支持"
+    assert _read_records(workdir)[0]["files"] == [
+        {"name": "cat_001.jpg", "sha256": _sha(_PNG_BYTES)},
+    ]
+
+
+def test_oversize_rejected_by_kind_limit(
+    workdir: Path,
+    source: Path,
+    temp_data_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """大小护栏按类型分档：图片与视频各自超限不登记，边界值（=上限）放行。"""
+    monkeypatch.setattr(importer_module, "MAX_IMAGE_BYTES", 10)
+    monkeypatch.setattr(importer_module, "MAX_VIDEO_BYTES", 8)
+    _write(source, "ok_img.jpg", b"1234567890")
+    _write(source, "big_img.jpg", b"12345678901")
+    _write(source, "ok_vid.mp4", b"12345678")
+    _write(source, "big_vid.mp4", b"123456789")
+
+    report = import_assets(workdir, source)
+
+    assert sorted(report["imported"]) == ["ok_img.jpg", "ok_vid.mp4"]
+    rejected = {item["name"]: item["reason"] for item in report["rejected"]}
+    assert rejected["big_img.jpg"] == "超出大小上限"
+    assert rejected["big_vid.mp4"] == "超出大小上限"
+
+
+def test_image_real_limit_is_20_mib(
+    workdir: Path, source: Path, temp_data_root: Path
+) -> None:
+    """真实护栏值钉死：图片恰好 20 MiB 放行、20 MiB + 1 字节拒绝。"""
+    boundary = 20 * 1024 * 1024
+    _write(source, "max.jpg", b"0" * boundary)
+
+    report = import_assets(workdir, source)
+
+    assert report["imported"] == ["max.jpg"]
+    _write(source, "over.jpg", b"0" * (boundary + 1))
+
+    report = import_assets(workdir, source)
+
+    assert report["imported"] == []
+    rejected = {item["name"]: item["reason"] for item in report["rejected"]}
+    assert rejected["over.jpg"] == "超出大小上限"
+
+
+def test_same_name_same_content_skips_but_reregisters(
+    workdir: Path, source: Path, temp_data_root: Path
+) -> None:
+    """重复导入情形一（同名同容）：幂等跳过复制，但重登记（出身刷新 + 中断自愈）。"""
+    _write(source, "cat_001.jpg", _PNG_BYTES)
+    import_assets(workdir, source)
+
+    report = import_assets(workdir, source)
+
+    assert report["imported"] == []
+    assert report["skipped_identical"] == ["cat_001.jpg"]
+    records = _read_records(workdir)
+    assert len(records) == 2
+    assert records[1]["files"] == [{"name": "cat_001.jpg", "sha256": _sha(_PNG_BYTES)}]
+
+
+def test_same_name_diff_content_never_overwrites(
+    workdir: Path, source: Path, temp_data_root: Path
+) -> None:
+    """重复导入情形二（同名异容）：不覆盖、跳过并给新旧对照（本版无替换操作）。"""
+    _write(source, "cat_001.jpg", _PNG_BYTES)
+    import_assets(workdir, source)
+    _write(source, "cat_001.jpg", b"\x89PNG-new-content")
+
+    report = import_assets(workdir, source)
+
+    assert (workdir / "cat_001.jpg").read_bytes() == _PNG_BYTES
+    assert report["skipped_conflict"] == [
+        {
+            "name": "cat_001.jpg",
+            "existing_size": len(_PNG_BYTES),
+            "incoming_size": len(b"\x89PNG-new-content"),
+            "existing_sha256": _sha(_PNG_BYTES),
+            "incoming_sha256": _sha(b"\x89PNG-new-content"),
+        },
+    ]
+    assert _read_records(workdir)[0]["files"] == [
+        {"name": "cat_001.jpg", "sha256": _sha(_PNG_BYTES)},
+    ]
+
+
+def test_diff_name_same_content_skips_by_default(
+    workdir: Path, source: Path, temp_data_root: Path
+) -> None:
+    """重复导入情形三（异名同容）：默认跳过并指明撞容条目。"""
+    _write(workdir, "a.jpg", _PNG_BYTES)
+    import_assets(workdir, None)
+    _write(source, "b.jpg", _PNG_BYTES)
+
+    report = import_assets(workdir, source)
+
+    assert report["imported"] == []
+    assert report["skipped_duplicate"] == [{"name": "b.jpg", "duplicate_of": "a.jpg"}]
+    assert not (workdir / "b.jpg").exists()
+    assert _read_records(workdir)[-1]["files"] == []
+
+
+def test_diff_name_same_content_forced_by_force_names(
+    workdir: Path, source: Path, temp_data_root: Path
+) -> None:
+    """异名同容点名强制：仍按新名导入（内容相同、名字并存是用户显式选择）。"""
+    _write(workdir, "a.jpg", _PNG_BYTES)
+    import_assets(workdir, None)
+    _write(source, "b.jpg", _PNG_BYTES)
+
+    report = import_assets(workdir, source, force_names={"b.jpg"})
+
+    assert report["imported"] == ["b.jpg"]
+    assert (workdir / "b.jpg").read_bytes() == _PNG_BYTES
+    assert _read_records(workdir)[-1]["files"] == [
+        {"name": "b.jpg", "sha256": _sha(_PNG_BYTES)},
+    ]
+
+
+def test_diff_name_diff_content_imports(
+    workdir: Path, source: Path, temp_data_root: Path
+) -> None:
+    """重复导入情形四（异名异容）：正常导入为新条目。"""
+    _write(workdir, "a.jpg", _PNG_BYTES)
+    import_assets(workdir, None)
+    _write(source, "b.jpg", b"\x89PNG-other-content")
+
+    report = import_assets(workdir, source)
+
+    assert report["imported"] == ["b.jpg"]
+    assert (workdir / "b.jpg").read_bytes() == b"\x89PNG-other-content"
+
+
+def test_stem_conflict_rejected_against_existing(
+    workdir: Path, source: Path, temp_data_root: Path
+) -> None:
+    """条目身份 = 主干：工作目录已有 cat.jpg 时导入 cat.mp4 被拒（要求重命名其一）。"""
+    _write(workdir, "cat.jpg", _PNG_BYTES)
+    import_assets(workdir, None)
+    _write(source, "cat.mp4", _MP4_BYTES)
+
+    report = import_assets(workdir, source)
+
+    assert report["imported"] == []
+    assert not (workdir / "cat.mp4").exists()
+    rejected = {item["name"]: item["reason"] for item in report["rejected"]}
+    assert "重命名其一" in rejected["cat.mp4"]
+
+
+def test_stem_conflict_rejected_within_one_batch(
+    workdir: Path, source: Path, temp_data_root: Path
+) -> None:
+    """同一批来源里同名不同扩展的两个文件：先者导入、后者拒（批内也守主干不变量）。"""
+    _write(source, "cat.jpg", _PNG_BYTES)
+    _write(source, "cat.mp4", _MP4_BYTES)
+
+    report = import_assets(workdir, source)
+
+    assert report["imported"] == ["cat.jpg"]
+    rejected = {item["name"]: item["reason"] for item in report["rejected"]}
+    assert "重命名其一" in rejected["cat.mp4"]
+
+
+def test_empty_import_still_writes_record(
+    workdir: Path, source: Path, temp_data_root: Path
+) -> None:
+    """没有可导入素材：记录照写（append-only 事件流，空记录也是一次导入尝试）。"""
+    _write(source, "notes.txt", b"text")
+
+    report = import_assets(workdir, source)
+
+    assert report["imported"] == []
+    records = _read_records(workdir)
+    assert len(records) == 1
+    assert records[0]["files"] == []
+
+
+def test_interrupted_import_self_heals_on_reimport(
+    workdir: Path, source: Path, temp_data_root: Path
+) -> None:
+    """中断重入幂等：已复制但记录未写的文件，重导时按同名同容重登记。"""
+    _write(source, "cat_001.jpg", _PNG_BYTES)
+    _write(source, "dog_001.jpg", b"\x89PNG-dog")
+    _write(workdir, "cat_001.jpg", _PNG_BYTES)
+
+    report = import_assets(workdir, source)
+
+    assert report["skipped_identical"] == ["cat_001.jpg"]
+    assert report["imported"] == ["dog_001.jpg"]
+    assert _read_records(workdir)[-1]["files"] == [
+        {"name": "cat_001.jpg", "sha256": _sha(_PNG_BYTES)},
+        {"name": "dog_001.jpg", "sha256": _sha(b"\x89PNG-dog")},
+    ]
+
+
+def test_import_cleans_stale_tmp(
+    workdir: Path, source: Path, temp_data_root: Path
+) -> None:
+    """导入开头清掉上次中断留下的 .dsf/tmp 垃圾（自愈语义）。"""
+    store = WorkdirStore(workdir)
+    store.tmp_dir.mkdir(parents=True, exist_ok=True)
+    _write(store.tmp_dir, "half-finished.jpg", b"partial")
+    _write(source, "cat_001.jpg", _PNG_BYTES)
+
+    import_assets(workdir, source)
+
+    assert store.tmp_dir.is_dir()
+    assert list(store.tmp_dir.iterdir()) == []
+
+
+def test_cancellation_stops_before_processing(
+    workdir: Path, source: Path, temp_data_root: Path
+) -> None:
+    """取消信号置位：在文件边界抛 TaskCancelledError、记录一个不写。"""
+    _write(source, "cat_001.jpg", _PNG_BYTES)
+    should_stop = threading.Event()
+    should_stop.set()
+
+    with pytest.raises(TaskCancelledError):
+        import_assets(workdir, source, should_stop=should_stop)
+
+    assert not (workdir / "cat_001.jpg").exists()
+    assert not WorkdirStore(workdir).imports_file.exists()
+
+
+def test_progress_reports_monotonic_to_one(
+    workdir: Path, source: Path, temp_data_root: Path
+) -> None:
+    """进度回调：按候选推进、首值 0.05、终值 1.0、单调不减。"""
+    _write(source, "cat_001.jpg", _PNG_BYTES)
+    _write(source, "clip_001.mp4", _MP4_BYTES)
+    seen: list[float] = []
+
+    import_assets(workdir, source, progress=seen.append)
+
+    assert seen[0] == pytest.approx(0.05)
+    assert seen[-1] == 1.0
+    assert seen == sorted(seen)
+
+
+def test_source_same_as_workdir_rejected(workdir: Path, temp_data_root: Path) -> None:
+    """复制导入校验：来源 = 工作目录自身 → ImportSourceConflictError（422 档）。"""
+    with pytest.raises(ImportSourceConflictError, match="嵌套"):
+        import_assets(workdir, workdir)
+
+
+def test_source_inside_workdir_rejected(workdir: Path, temp_data_root: Path) -> None:
+    """来源在工作目录内部 → 拒绝（复制会自我覆盖）。"""
+    inner = workdir / "inbox"
+    inner.mkdir()
+
+    with pytest.raises(ImportSourceConflictError, match="嵌套"):
+        import_assets(workdir, inner)
+
+
+def test_workdir_inside_source_rejected(
+    workdir: Path, tmp_path: Path, temp_data_root: Path
+) -> None:
+    """工作目录在来源内部 → 拒绝（互为嵌套的另一方向）。"""
+    with pytest.raises(ImportSourceConflictError, match="嵌套"):
+        import_assets(workdir, tmp_path)
+
+
+def test_source_missing_rejected(
+    workdir: Path, tmp_path: Path, temp_data_root: Path
+) -> None:
+    """来源不存在 → WorkdirPathError（400 档）。"""
+    with pytest.raises(WorkdirPathError, match="来源目录"):
+        import_assets(workdir, tmp_path / "nope")
+
+
+def test_copy_failure_fails_loud_with_filename(
+    workdir: Path,
+    source: Path,
+    temp_data_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """复制失败（磁盘 / 权限）：任务失败消息带文件名，不静默吞掉。"""
+    _write(source, "cat_001.jpg", _PNG_BYTES)
+
+    def broken_copy(store: WorkdirStore, source_file: Path, dest_name: str) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(importer_module, "_copy_into_workdir", broken_copy)
+
+    with pytest.raises(WorkdirError, match=r"cat_001\.jpg"):
+        import_assets(workdir, source)
+
+
+def test_import_records_roundtrip(workdir: Path, temp_data_root: Path) -> None:
+    """记录追加与读回：两次导入两行，读回按追加序（时间正序）。"""
+    store = WorkdirStore(workdir)
+    store.append_import_record(
+        {"imported_at": "2026-09-16T00:00:00+00:00", "source": "a", "files": []},
+    )
+    store.append_import_record(
+        {
+            "imported_at": "2026-09-16T01:00:00+00:00",
+            "source": "b",
+            "files": [{"name": "x.jpg", "sha256": "abc"}],
+        },
+    )
+
+    records = store.read_import_records()
+
+    assert [record["source"] for record in records] == ["a", "b"]
+
+
+def test_read_import_records_tolerates_incomplete_tail(
+    workdir: Path, temp_data_root: Path
+) -> None:
+    """崩溃安全读法：末尾残缺行（无换行收尾）砍掉，完整行照常读回。"""
+    store = WorkdirStore(workdir)
+    good = (
+        '{"imported_at": "t1", "source": "a", "files": []}\n'
+        '{"imported_at": "t2", "source": "b", "files": []}\n'
+    )
+    store.imports_file.write_text(
+        good + '{"imported_at": "t3", "sour', encoding="utf-8"
+    )
+
+    records = store.read_import_records()
+
+    assert [record["source"] for record in records] == ["a", "b"]
+
+
+def test_read_import_records_corrupt_middle_fails_loud(
+    workdir: Path, temp_data_root: Path
+) -> None:
+    """中间完整行损坏 → WorkdirMetadataCorruptedError（坏文件不静默兜底）。"""
+    store = WorkdirStore(workdir)
+    store.imports_file.write_text(
+        '{"imported_at": "t1", "source": "a", "files": []}\n{broken}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(WorkdirMetadataCorruptedError, match="导入记录文件损坏"):
+        store.read_import_records()
+
+
+def test_read_import_records_bad_shape_fails_loud(
+    workdir: Path, temp_data_root: Path
+) -> None:
+    """JSON 合法但形状不对（缺字段 / 类型不符）→ 同样按损坏处理。"""
+    store = WorkdirStore(workdir)
+    store.imports_file.write_text(
+        '{"imported_at": 1, "source": "a"}\n', encoding="utf-8"
+    )
+
+    with pytest.raises(WorkdirMetadataCorruptedError, match="形状不对"):
+        store.read_import_records()
+
+
+def test_read_import_records_empty_when_missing(workdir: Path) -> None:
+    """没有记录文件 → 空列表（新工作目录的空态）。"""
+    assert WorkdirStore(workdir).read_import_records() == []
