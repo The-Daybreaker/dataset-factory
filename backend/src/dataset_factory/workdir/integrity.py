@@ -39,7 +39,10 @@ def _registered_path(workdir: Path, name: str) -> Path:
 
 
 def scan_integrity(
-    workdir: Path, labeling_hashes: Mapping[str, str]
+    workdir: Path,
+    labeling_hashes: Mapping[str, str],
+    *,
+    should_stop: Event | None = None,
 ) -> list[IntegrityItem]:
     """对已登记素材逐条校验，调用方提供当前批次的成功打标哈希。
 
@@ -51,6 +54,8 @@ def scan_integrity(
     origins = registered_origins(WorkdirStore(workdir))
     result: list[IntegrityItem] = []
     for name in origins:
+        if should_stop is not None and should_stop.is_set():
+            raise TaskCancelledError()
         path = workdir / name
         item = Path(name).stem
         anchor = labeling_hashes.get(item) or None
@@ -79,6 +84,8 @@ def scan_integrity(
             status = "unreadable"
             detail = "素材不可读取或路径越界，请检查文件与权限。"
         result.append(IntegrityItem(item, name, status, current, anchor, detail))
+    if should_stop is not None and should_stop.is_set():
+        raise TaskCancelledError()
     return result
 
 

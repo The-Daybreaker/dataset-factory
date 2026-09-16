@@ -72,6 +72,7 @@ layers = [
     "dataset_factory.runs",
     "dataset_factory.labeling",
     "dataset_factory.strategies",
+    "dataset_factory.export",
     "dataset_factory.workdir",
     "dataset_factory.llm",
     "dataset_factory.prompts | dataset_factory.skills | dataset_factory.sessions | dataset_factory.tasks",
