@@ -20,12 +20,16 @@ from __future__ import annotations
 import os
 import secrets
 import threading
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
 
+from ..runs.journal import load_recent_success_hashes
+from ..strategies import get_batch, list_batches, parse_seq
 from ..tasks import RETRY_AFTER_SECONDS, TaskManager, TaskResult
 from ..workdir import (
     ImportInProgressError,
@@ -38,6 +42,7 @@ from ..workdir import (
     mime_for_suffix,
     resolve_asset,
 )
+from ..workdir.integrity import IntegrityItem, rebuild_import_records, scan_integrity
 from .schemas import (
     ImportAccepted,
     ImportRecord,
@@ -49,6 +54,53 @@ from .schemas import (
 )
 
 router = APIRouter(prefix="/api/workdirs", tags=["工作目录"])
+
+
+class BatchIntegrity(BaseModel):
+    """一个批次的完整性结果（同一素材在不同批次的打标锚点独立）。"""
+
+    batch: str
+    items: list[IntegrityItem]
+
+
+class IntegrityReport(BaseModel):
+    """本次手动校验结果；缺少导入记录时显式提示可重建。"""
+
+    checked_at: str
+    imports_available: bool
+    batches: list[BatchIntegrity]
+
+
+@router.post(
+    "/{wid}/integrity/scan",
+    response_model=IntegrityReport,
+    responses={404: {"model": Problem}},
+)
+def verify_integrity(wid: str, batch: str | None = None) -> IntegrityReport:
+    """校验全部活跃批次，或通过 batch=sN 校验指定活跃批次；不写业务状态。"""
+    workdir = Path(WorkdirRegistry.get(wid).path)
+    if not workdir.is_dir():
+        raise WorkdirPathError("工作目录不存在，请检查路径后重试。")
+    store = WorkdirStore(workdir)
+    entries = (
+        [get_batch(workdir, parse_seq(batch))]
+        if batch is not None
+        else list_batches(workdir)
+    )
+    return IntegrityReport(
+        checked_at=datetime.now(UTC).isoformat(),
+        imports_available=bool(store.read_import_records()),
+        batches=[
+            BatchIntegrity(
+                batch=f"s{entry.seq}",
+                items=scan_integrity(
+                    workdir, load_recent_success_hashes(store.runs_dir, entry.seq)
+                ),
+            )
+            for entry in entries
+            if entry.active
+        ],
+    )
 
 
 def _to_info(entry: WorkdirEntry) -> WorkdirInfo:
@@ -71,6 +123,8 @@ def _spawn_import_task(
     workdir: Path,
     source: Path | None,
     force_names: frozenset[str] | set[str] = frozenset(),
+    *,
+    rebuild: bool = False,
 ) -> str:
     """把一次导入包装成长任务受理，返回 task_id。
 
@@ -104,6 +158,8 @@ def _spawn_import_task(
             def report_progress(value: float) -> None:
                 manager.set_progress(task_id, value)
 
+            if rebuild:
+                return rebuild_import_records(workdir, should_stop=should_stop)
             return import_assets(
                 workdir,
                 source,
@@ -310,3 +366,19 @@ def get_item_asset(wid: str, item: str) -> _AssetResponse:
     entry = WorkdirRegistry.get(wid)
     path = resolve_asset(Path(entry.path), item)
     return _AssetResponse(path, media_type=mime_for_suffix(path.suffix))
+
+
+@router.post(
+    "/{wid}/imports/rebuild",
+    status_code=202,
+    response_model=ImportAccepted,
+    responses={404: {"model": Problem}},
+)
+async def rebuild_imports(wid: str, request: Request) -> JSONResponse:
+    """重建导入记录（长任务）：扫现状、来源记空；旧记录保留（append-only）。"""
+    entry = WorkdirRegistry.get(wid)
+    workdir = Path(entry.path)
+    if not workdir.is_dir():
+        raise WorkdirPathError("工作目录不存在，请检查路径后重试。")
+    task_id = _spawn_import_task(request, workdir, None, rebuild=True)
+    return _accepted_response(ImportAccepted(task_id=task_id))

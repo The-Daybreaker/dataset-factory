@@ -60,7 +60,12 @@ from ..llm.errors import (
 )
 from ..strategies.batches import get_batch, read_snapshot
 from ..strategies.snapshot import tool_version
-from ..workdir.assets import product_filename, product_has_content, scan_assets
+from ..workdir.assets import (
+    product_filename,
+    product_has_content,
+    registered_origins,
+    scan_assets,
+)
 from ..workdir.errors import WorkdirMetadataCorruptedError
 from ..workdir.importer import hash_file
 from ..workdir.locks import RunLock
@@ -688,13 +693,7 @@ def _plan_full(
         那份与实际读取送模型的那份必须是同一个文件（同主干多扩展时防两处各取各的）。
     """
     store = WorkdirStore(workdir)
-    # files[] 的形状（dict + name: str）已由 read_import_records 校验，这里只取名字。
-    registered = {
-        str(entry["name"])
-        for record in store.read_import_records()
-        for entry in cast("list[dict[str, object]]", record.get("files", []))
-        if isinstance(entry.get("name"), str)
-    }
+    registered = set(registered_origins(store))
     assets = scan_assets(workdir)
     hashes = load_recent_success_hashes(runs_dir, seq)
 

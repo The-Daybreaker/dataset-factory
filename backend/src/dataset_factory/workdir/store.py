@@ -29,7 +29,7 @@ from .errors import (
     WorkdirNotFoundError,
     WorkdirPathError,
 )
-from .locks import StateLock
+from .locks import StateLock, import_guard
 
 __all__ = [
     "WorkdirEntry",
@@ -311,7 +311,7 @@ class WorkdirStore:
         """追加一条导入记录到 ``imports.jsonl``（append-only，一行一次导入）。
 
         写入后 flush + fsync 才算落盘；进程在写入中途被杀最多留下残缺尾行，
-        读取侧按「砍掉残缺尾巴」容忍（与 sessions 事件流同一套崩溃安全读法）。
+        读取侧忽略残缺尾行；下一次追加在导入锁内截去该未完成行，完整历史不变。
 
         Args:
             record: 序列化为一条 JSON 的导入记录（imported_at / source / files）。
@@ -319,9 +319,14 @@ class WorkdirStore:
         Raises:
             OSError: 打开 / 写入 / 刷盘失败。
         """
-        line = json.dumps(record, ensure_ascii=False)
-        with self.imports_file.open("a", encoding="utf-8", newline="\n") as handle:
-            handle.write(line + "\n")
+        line = (json.dumps(record, ensure_ascii=False) + "\n").encode("utf-8")
+        with import_guard(self.dsf_path), self.imports_file.open("a+b") as handle:
+            handle.seek(0)
+            raw = handle.read()
+            if raw and not raw.endswith(b"\n"):
+                handle.truncate(raw.rfind(b"\n") + 1)
+            handle.seek(0, os.SEEK_END)
+            handle.write(line)
             handle.flush()
             os.fsync(handle.fileno())
 
@@ -341,20 +346,20 @@ class WorkdirStore:
         if not self.imports_file.exists():
             return []
         try:
-            raw = self.imports_file.read_text(encoding="utf-8")
+            raw = self.imports_file.read_bytes()
         except OSError as exc:
             raise WorkdirMetadataCorruptedError(
                 f"导入记录文件无法读取（{self.imports_file}）：{exc}",
             ) from exc
-        if raw and not raw.endswith("\n"):
-            raw = raw[: raw.rfind("\n") + 1]
+        if raw and not raw.endswith(b"\n"):
+            raw = raw[: raw.rfind(b"\n") + 1]
         records: list[dict[str, object]] = []
         for line in raw.splitlines():
             if not line.strip():
                 continue
             try:
                 data: object = json.loads(line)
-            except json.JSONDecodeError as exc:
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
                 raise WorkdirMetadataCorruptedError(
                     f"导入记录文件损坏（{self.imports_file}）——"
                     "可删除该文件后用「重建导入记录」补记，或修复后重试。",
@@ -380,6 +385,8 @@ class WorkdirStore:
         if not isinstance(data, dict):
             raise _corrupted()
         record = cast("dict[str, object]", data)
+        if record.get("kind", "import") not in ("import", "rebuild"):
+            raise _corrupted()
         if not isinstance(record.get("imported_at"), str):
             raise _corrupted()
         if not isinstance(record.get("source"), str):

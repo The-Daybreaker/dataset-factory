@@ -391,6 +391,9 @@ class ImportRecord(BaseModel):
     imported_at: str = Field(description="导入时刻（UTC ISO 8601）")
     source: str = Field(description="来源目录路径（就地采用 = 工作目录自身）")
     files: list[ImportFileRecord] = Field(description="本次登记的文件清单")
+    kind: Literal["import", "rebuild"] = Field(
+        default="import", description="普通追加导入，或重建当前登记集合的快照"
+    )
 
 
 # --------------------------------------------------------------------------

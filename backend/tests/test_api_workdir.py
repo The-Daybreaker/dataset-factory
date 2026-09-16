@@ -421,6 +421,10 @@ def test_concurrent_import_on_same_workdir_returns_409(
             assert body["type"] == "import-in-progress"
             assert body["status"] == 409
 
+            rebuild = await http.post(f"/api/workdirs/{entry.id}/imports/rebuild")
+            assert rebuild.status_code == 409
+            assert rebuild.json()["type"] == "import-in-progress"
+
             gate.set()
             finished = await _wait_terminal(http, first.json()["task_id"])
             assert finished["status"] == "succeeded"

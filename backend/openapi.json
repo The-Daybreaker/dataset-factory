@@ -91,6 +91,28 @@
         "title": "BatchCreateRequest",
         "type": "object"
       },
+      "BatchIntegrity": {
+        "description": "一个批次的完整性结果（同一素材在不同批次的打标锚点独立）。",
+        "properties": {
+          "batch": {
+            "title": "Batch",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/IntegrityItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "batch",
+          "items"
+        ],
+        "title": "BatchIntegrity",
+        "type": "object"
+      },
       "BatchUpdateRequest": {
         "additionalProperties": false,
         "description": "PATCH /api/workdirs/{wid}/batches/{sN} 的请求体：改名 / 描述。\n\n组合不可改（工作目录下的策略是库策略的应用副本，想换组合 = 新建批次）；\n未声明字段一律拒绝，让「发错字段」当场 422 而不是被静默忽略。",
@@ -751,6 +773,16 @@
             "title": "Imported At",
             "type": "string"
           },
+          "kind": {
+            "default": "import",
+            "description": "普通追加导入，或重建当前登记集合的快照",
+            "enum": [
+              "import",
+              "rebuild"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
           "source": {
             "description": "来源目录路径（就地采用 = 工作目录自身）",
             "title": "Source",
@@ -763,6 +795,93 @@
           "files"
         ],
         "title": "ImportRecord",
+        "type": "object"
+      },
+      "IntegrityItem": {
+        "description": "单个在册素材的校验结果；未知锚点不能用导入哈希冒充。",
+        "properties": {
+          "current_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Hash"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "item": {
+            "title": "Item",
+            "type": "string"
+          },
+          "labeling_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Labeling Hash"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "valid",
+              "changed",
+              "unknown",
+              "missing",
+              "unreadable"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item",
+          "name",
+          "status",
+          "current_hash",
+          "labeling_hash",
+          "detail"
+        ],
+        "title": "IntegrityItem",
+        "type": "object"
+      },
+      "IntegrityReport": {
+        "description": "本次手动校验结果；缺少导入记录时显式提示可重建。",
+        "properties": {
+          "batches": {
+            "items": {
+              "$ref": "#/components/schemas/BatchIntegrity"
+            },
+            "title": "Batches",
+            "type": "array"
+          },
+          "checked_at": {
+            "title": "Checked At",
+            "type": "string"
+          },
+          "imports_available": {
+            "title": "Imports Available",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "checked_at",
+          "imports_available",
+          "batches"
+        ],
+        "title": "IntegrityReport",
         "type": "object"
       },
       "ItemListView": {
@@ -5250,6 +5369,128 @@
           }
         },
         "summary": "Create Import",
+        "tags": [
+          "工作目录"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/imports/rebuild": {
+      "post": {
+        "description": "重建导入记录（长任务）：扫现状、来源记空；旧记录保留（append-only）。",
+        "operationId": "rebuild_imports_api_workdirs__wid__imports_rebuild_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rebuild Imports",
+        "tags": [
+          "工作目录"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/integrity/scan": {
+      "post": {
+        "description": "校验全部活跃批次，或通过 batch=sN 校验指定活跃批次；不写业务状态。",
+        "operationId": "verify_integrity_api_workdirs__wid__integrity_scan_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "batch",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Batch"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrityReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Integrity",
         "tags": [
           "工作目录"
         ]

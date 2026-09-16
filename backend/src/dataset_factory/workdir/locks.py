@@ -1,4 +1,4 @@
-"""两把锁的原语：运行锁（``run.lock``）+ 状态锁（``state.lock``）。
+"""工作目录锁原语：运行锁、状态锁与导入锁。
 
 分工（design「并发保护（两把锁）」节 + ADR「运行锁与状态锁分离」）：两件事的
 持有时长差五个数量级，各按自己的临界区定策略——
@@ -9,6 +9,8 @@
 - **状态锁**：语义「``state.json`` 的读—改—写互斥」，持有者 = 任何状态写者、
   时长 = 毫秒级临界区；抢锁**阻塞等待**（宽超时只用于诊断卡死——临界区
   只有毫秒级，排队正是目的，不该把用户挡回去）。
+- **导入锁**：保护导入与重建的完整扫描和登记过程，非阻塞竞争；与运行锁独立，
+  允许运行期间补充导入，追加记录在同线程内可重入。
 
 选型依据（两把锁同一选型）：文件锁由操作系统在进程终止时随句柄自动释放——
 进程无论正常退出、崩溃还是被强杀，都不需要人工清理；「锁文件存在即占用」
@@ -36,17 +38,40 @@ import json
 import logging
 import os
 import threading
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
 
 from filelock import FileLock, Timeout
 
 from .._fs import atomic_write_text
-from .errors import RunOccupiedError, StateLockTimeoutError
+from .errors import ImportInProgressError, RunOccupiedError, StateLockTimeoutError
 
-__all__ = ["RunLock", "StateLock", "read_occupier"]
+__all__ = ["RunLock", "StateLock", "import_guard", "read_occupier"]
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def import_guard(dsf_path: Path) -> Generator[None]:
+    """串行化目录内导入与重建，覆盖 CLI 和多个 HTTP 服务进程。
+
+    导入会先扫描再写登记集合，必须保护整段操作而不只保护追加一行。
+    与运行锁独立，补充导入不阻塞已经开始的跑批。
+    """
+    lock = _shared_file_lock(dsf_path / "imports.lock")
+    try:
+        lock.acquire(timeout=0)
+    except Timeout as exc:
+        raise ImportInProgressError(
+            "该工作目录已有导入或重建任务，请等待完成后重试。"
+        ) from exc
+    try:
+        yield
+    finally:
+        lock.release()
+
 
 _RUN_LOCK_NAME = "run.lock"
 _RUN_INFO_NAME = "run-info.json"

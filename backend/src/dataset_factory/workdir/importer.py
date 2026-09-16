@@ -36,6 +36,7 @@ from ..llm import (
 )
 from ..tasks import TaskCancelledError
 from .errors import ImportSourceConflictError, WorkdirError, WorkdirPathError
+from .locks import import_guard
 from .store import WorkdirStore
 
 __all__ = [
@@ -236,6 +237,31 @@ def _clean_tmp(store: WorkdirStore) -> None:
 
 
 def import_assets(
+    workdir: Path,
+    source: Path | None = None,
+    *,
+    force_names: frozenset[str] | set[str] = frozenset(),
+    should_stop: threading.Event | None = None,
+    progress: Callable[[float], None] | None = None,
+) -> dict[str, Any]:
+    """持目录级导入锁执行素材导入，跨 CLI 与 HTTP 进程防止登记丢失。
+
+    source 缺省为就地采用；force_names 控制异名同容文件的强制导入。
+    should_stop 与 progress 分别接收取消信号和文件级进度回调。
+    """
+    if not workdir.is_dir():
+        raise WorkdirPathError("工作目录不存在，请检查路径后重试。")
+    with import_guard(WorkdirStore(workdir).dsf_path):
+        return _import_assets(
+            workdir,
+            source,
+            force_names=force_names,
+            should_stop=should_stop,
+            progress=progress,
+        )
+
+
+def _import_assets(
     workdir: Path,
     source: Path | None = None,
     *,

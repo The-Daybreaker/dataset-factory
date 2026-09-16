@@ -1011,6 +1011,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workdirs/{wid}/imports/rebuild": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rebuild Imports
+         * @description 重建导入记录（长任务）：扫现状、来源记空；旧记录保留（append-only）。
+         */
+        post: operations["rebuild_imports_api_workdirs__wid__imports_rebuild_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/integrity/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify Integrity
+         * @description 校验全部活跃批次，或通过 batch=sN 校验指定活跃批次；不写业务状态。
+         */
+        post: operations["verify_integrity_api_workdirs__wid__integrity_scan_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workdirs/{wid}/items/{item}/asset": {
         parameters: {
             query?: never;
@@ -1089,6 +1129,16 @@ export interface components {
              * @description 新建方式：library（应用库策略）或 scratch（从零配置）
              */
             type: string;
+        };
+        /**
+         * BatchIntegrity
+         * @description 一个批次的完整性结果（同一素材在不同批次的打标锚点独立）。
+         */
+        BatchIntegrity: {
+            /** Batch */
+            batch: string;
+            /** Items */
+            items: components["schemas"]["IntegrityItem"][];
         };
         /**
          * BatchUpdateRequest
@@ -1466,10 +1516,50 @@ export interface components {
              */
             imported_at: string;
             /**
+             * Kind
+             * @description 普通追加导入，或重建当前登记集合的快照
+             * @default import
+             * @enum {string}
+             */
+            kind: "import" | "rebuild";
+            /**
              * Source
              * @description 来源目录路径（就地采用 = 工作目录自身）
              */
             source: string;
+        };
+        /**
+         * IntegrityItem
+         * @description 单个在册素材的校验结果；未知锚点不能用导入哈希冒充。
+         */
+        IntegrityItem: {
+            /** Current Hash */
+            current_hash: string | null;
+            /** Detail */
+            detail: string;
+            /** Item */
+            item: string;
+            /** Labeling Hash */
+            labeling_hash: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "valid" | "changed" | "unknown" | "missing" | "unreadable";
+        };
+        /**
+         * IntegrityReport
+         * @description 本次手动校验结果；缺少导入记录时显式提示可重建。
+         */
+        IntegrityReport: {
+            /** Batches */
+            batches: components["schemas"]["BatchIntegrity"][];
+            /** Checked At */
+            checked_at: string;
+            /** Imports Available */
+            imports_available: boolean;
         };
         /**
          * ItemListView
@@ -4688,6 +4778,88 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Problem"];
                     "application/problem+json": unknown;
+                };
+            };
+        };
+    };
+    rebuild_imports_api_workdirs__wid__imports_rebuild_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportAccepted"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    verify_integrity_api_workdirs__wid__integrity_scan_post: {
+        parameters: {
+            query?: {
+                batch?: string | null;
+            };
+            header?: never;
+            path: {
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrityReport"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

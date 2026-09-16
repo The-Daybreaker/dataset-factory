@@ -207,6 +207,8 @@ def registered_origins(store: WorkdirStore) -> dict[str, ImportOrigin]:
     """
     origins: dict[str, ImportOrigin] = {}
     for record in store.read_import_records():
+        if record.get("kind") == "rebuild":
+            origins.clear()
         source = cast(str, record["source"])
         imported_at = cast(str, record["imported_at"])
         for entry in cast("list[dict[str, object]]", record.get("files", [])):
