@@ -447,7 +447,7 @@ def delete_workdir_batch(wid: str, sN: str) -> Response:
 def add_batch_exclusions(wid: str, sN: str, body: ExclusionsRequest) -> ExclusionsView:
     """把条目加入排除打包名单（幂等去重），返回当前名单。
 
-    名单随批次元数据持久、跨会话存活；改动全程持运行锁（T36 起生效）。
+    名单随批次元数据持久、跨会话存活；改动经 mutate_state 在状态锁内完成。
     """
     seq = parse_seq(sN)
     items = add_exclusions(_workdir_path(wid), seq, body.items)

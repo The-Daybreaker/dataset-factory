@@ -22,7 +22,7 @@ import queue
 import threading
 from collections.abc import Generator
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -30,15 +30,27 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from ..runs import (
     BatchInactiveError,
     BatchRunner,
+    RetryItemNotEligibleError,
     RunEvent,
     RunFinishedEvent,
     RunNotActiveError,
+    add_retry_items,
+    clear_retry_list,
     completer_for_snapshot,
+    remove_retry_items,
+    retry_rejections,
 )
 from ..strategies import get_batch, parse_seq, read_snapshot
 from ..tasks import RETRY_AFTER_SECONDS
 from ..workdir import RunOccupiedError, WorkdirRegistry
-from .schemas import Problem, RunAccepted, RunStartRequest, RunStatusView
+from .schemas import (
+    Problem,
+    RetryListRequest,
+    RetryListView,
+    RunAccepted,
+    RunStartRequest,
+    RunStatusView,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -238,3 +250,82 @@ def stream_run(wid: str, sN: str, request: Request) -> StreamingResponse:
 def _sse(event: str, data: dict[str, object]) -> str:
     """一条 SSE 帧（event + data 两行）；JSON 不转义中文，与一期 /label/stream 同构。"""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+# -- 重试列表（两段式界面的前半段：「加入重试」只攒名单，「开始重试」走上面的
+#    POST runs mode=retry——名单在运行开始的瞬间拍快照，运行期编辑只影响下一次） ---
+
+retry_router = APIRouter(
+    prefix="/api/workdirs/{wid}/batches/{sN}/retry-list", tags=["跑批"]
+)
+
+_PROBLEM_404_BATCH: dict[int | str, dict[str, Any]] = {
+    404: {
+        "model": Problem,
+        "content": {"application/problem+json": {}},
+        "description": "wid 或批次不存在（workdir-not-found / batch-not-found）",
+    },
+}
+
+_PROBLEM_422_NOT_ELIGIBLE: dict[int | str, dict[str, Any]] = {
+    422: {
+        "model": Problem,
+        "content": {"application/problem+json": {}},
+        "description": (
+            "有不可入列的条目（problem+json: retry-item-not-eligible），"
+            "rejections 扩展字段带逐条原因；整体拒绝、不做部分入列"
+        ),
+    },
+}
+
+
+@retry_router.post(
+    "",
+    response_model=RetryListView,
+    responses={**_PROBLEM_404_BATCH, **_PROBLEM_422_NOT_ELIGIBLE},
+)
+def add_batch_retry_list(wid: str, sN: str, body: RetryListRequest) -> RetryListView:
+    """把条目加入重试列表（幂等去重），返回当前名单（名单顺序即重试顺序）。
+
+    只收「已完成」与「可重试的未完成」条目（PRD F7）——排队中无需重试、缺失要
+    先补素材、不可重试失败要先解决格式问题；资格用当刻的条目视图现判。改动经
+    mutate_state 在状态锁内完成；运行期写入照常受理（本次运行按启动时的快照执行）。
+    """
+    workdir = _workdir_path(wid)
+    seq = parse_seq(sN)
+    rejections = retry_rejections(workdir, seq, body.items)
+    if rejections:
+        raise RetryItemNotEligibleError(
+            "有 "
+            + str(len(rejections))
+            + " 个条目不可加入重试列表（已完成与可重试的未完成条目才可入列）。",
+            rejections=rejections,
+        )
+    items = add_retry_items(workdir, seq, body.items)
+    return RetryListView(id=f"s{seq}", seq=seq, items=items)
+
+
+@retry_router.delete(
+    "/{item}",
+    response_model=RetryListView,
+    responses=_PROBLEM_404_BATCH,
+)
+def remove_batch_retry_list_item(wid: str, sN: str, item: str) -> RetryListView:
+    """把一个条目移出重试列表（幂等：不在名单里时原样返回），返回当前名单。"""
+    workdir = _workdir_path(wid)
+    seq = parse_seq(sN)
+    items = remove_retry_items(workdir, seq, [item])
+    return RetryListView(id=f"s{seq}", seq=seq, items=items)
+
+
+@retry_router.delete(
+    "",
+    response_model=RetryListView,
+    responses=_PROBLEM_404_BATCH,
+)
+def clear_batch_retry_list(wid: str, sN: str) -> RetryListView:
+    """整体清空本批次的重试列表（其他批次的名单不动），返回空名单。"""
+    workdir = _workdir_path(wid)
+    seq = parse_seq(sN)
+    clear_retry_list(workdir, seq)
+    return RetryListView(id=f"s{seq}", seq=seq, items=[])

@@ -77,8 +77,11 @@ __all__ = [
     "RunReport",
     "RunStartedEvent",
     "RunTrigger",
+    "add_retry_items",
+    "clear_retry_list",
     "completer_for_snapshot",
     "read_retry_list",
+    "remove_retry_items",
 ]
 
 logger = logging.getLogger(__name__)
@@ -451,7 +454,7 @@ class BatchRunner:
             # 中断没跑到的保留（「还没补完的账」）。失败可容忍：出列没成功 =
             # 成功条目仍留在列表，下次重试幂等重打（多花一次调用，方向安全）。
             try:
-                _remove_retry_items(self._workdir, self._seq, succeeded_items)
+                remove_retry_items(self._workdir, self._seq, succeeded_items)
             except (OSError, WorkdirMetadataCorruptedError):
                 logger.warning(
                     "跑批 %s 的重试列表出列失败（成功条目仍在列表，下次重试幂等重打）",
@@ -846,22 +849,21 @@ def completer_for_snapshot(endpoint_block: dict[str, Any]) -> Completer:
 
 
 # -- 重试列表（state.json 的 retry_list 键；结构由本域定义） --------------------
+# 名单是跨批次共享的一份列表（条目带批次序号）；读 = 无锁（原子写保证不读半截），
+# 写 = 一律经 mutate_state 在状态锁内完成。资格判定（哪些条目可入列）在
+# items.retry_rejections（用条目视图现算），本节只管名单存取。
 
 
-def read_retry_list(workdir: Path, seq: int) -> list[str]:
-    """读某批次的重试列表（列表顺序即重试顺序；缺键视为空）。
-
-    形状不对 fail loud（按 state.json 损坏处理——重试列表是「还没补完的账」，
-    静默清零等于替用户丢账）。
-    """
-    raw = WorkdirStore(workdir).read_state().get(_RETRY_LIST_KEY)
+def _retry_records(state: dict[str, object]) -> list[dict[str, object]]:
+    """取重试列表原始记录（缺键视为空；形状不对 fail loud——静默清零等于丢账）。"""
+    raw = state.get(_RETRY_LIST_KEY)
     if raw is None:
         return []
     if not isinstance(raw, list):
         raise WorkdirMetadataCorruptedError(
             "工作目录状态文件的重试列表损坏——请检查 .dsf/state.json。"
         )
-    items: list[str] = []
+    records: list[dict[str, object]] = []
     for entry in cast("list[object]", raw):
         if not isinstance(entry, dict):
             raise WorkdirMetadataCorruptedError(
@@ -879,34 +881,69 @@ def read_retry_list(workdir: Path, seq: int) -> list[str]:
                 "工作目录状态文件的重试列表条目缺字段或类型不对——"
                 "请检查 .dsf/state.json。"
             )
-        if batch == seq:
-            items.append(item)
-    return items
+        records.append(record)
+    return records
 
 
-def _remove_retry_items(workdir: Path, seq: int, items: list[str]) -> None:
-    """把本次成功的条目移出重试列表（经 mutate_state 在状态锁内完成——唯一写入口）。"""
-    store = WorkdirStore(workdir)
+def read_retry_list(workdir: Path, seq: int) -> list[str]:
+    """读某批次的重试列表（列表顺序即重试顺序；缺键视为空）。"""
+    state = WorkdirStore(workdir).read_state()
+    return [
+        str(record["item"])
+        for record in _retry_records(state)
+        if record["batch"] == seq
+    ]
+
+
+def add_retry_items(workdir: Path, seq: int, items: list[str]) -> list[str]:
+    """把条目加入该批次的重试列表（幂等去重），返回当前名单。
+
+    名单是「意愿」的记录：入列后素材再变坏不影响（开始重试时拍快照、运行时
+    按失败记录处置）；所以这里只管存取、不重判资格——资格在加入的入口（api 层）
+    用当刻的条目视图判过即可。
+    """
+
+    def mutator(state: dict[str, object]) -> list[str]:
+        records = _retry_records(state)
+        current = [str(record["item"]) for record in records if record["batch"] == seq]
+        for item in items:
+            if item not in current:
+                current.append(item)
+                records.append({"batch": seq, "item": item})
+        state[_RETRY_LIST_KEY] = records
+        return current
+
+    return WorkdirStore(workdir).mutate_state(mutator)
+
+
+def remove_retry_items(workdir: Path, seq: int, items: list[str]) -> list[str]:
+    """把条目移出该批次的重试列表（幂等：不在名单里的条目忽略），返回当前名单。
+
+    两个使用者：跑批收尾的出列（本次成功的条目移出、仍失败的保留——「还没补完
+    的账」）与端点的逐条移出。其他批次的条目不动（名单共享一份、按批次隔离）。
+    """
+
+    def mutator(state: dict[str, object]) -> list[str]:
+        records = _retry_records(state)
+        removal = set(items)
+        kept = [
+            record
+            for record in records
+            if not (record["batch"] == seq and record["item"] in removal)
+        ]
+        state[_RETRY_LIST_KEY] = kept
+        return [str(record["item"]) for record in kept if record["batch"] == seq]
+
+    return WorkdirStore(workdir).mutate_state(mutator)
+
+
+def clear_retry_list(workdir: Path, seq: int) -> None:
+    """清空该批次的重试列表（整体清空；其他批次的条目不动）。"""
 
     def mutator(state: dict[str, object]) -> None:
-        raw = state.get(_RETRY_LIST_KEY)
-        if raw is None:
-            return
-        if not isinstance(raw, list):
-            raise WorkdirMetadataCorruptedError(
-                "工作目录状态文件的重试列表损坏——请检查 .dsf/state.json。"
-            )
-        removal = set(items)
-        kept: list[dict[str, object]] = []
-        for entry in cast("list[object]", raw):
-            if not isinstance(entry, dict):
-                raise WorkdirMetadataCorruptedError(
-                    "工作目录状态文件的重试列表形状不对——请检查 .dsf/state.json。"
-                )
-            record = cast("dict[str, object]", entry)
-            if record.get("batch") == seq and record.get("item") in removal:
-                continue
-            kept.append(record)
-        state[_RETRY_LIST_KEY] = kept
+        records = _retry_records(state)
+        state[_RETRY_LIST_KEY] = [
+            record for record in records if record["batch"] != seq
+        ]
 
-    store.mutate_state(mutator)
+    WorkdirStore(workdir).mutate_state(mutator)

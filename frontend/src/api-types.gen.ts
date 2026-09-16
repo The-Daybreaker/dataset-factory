@@ -743,7 +743,7 @@ export interface paths {
          * Add Batch Exclusions
          * @description 把条目加入排除打包名单（幂等去重），返回当前名单。
          *
-         *     名单随批次元数据持久、跨会话存活；改动全程持运行锁（T36 起生效）。
+         *     名单随批次元数据持久、跨会话存活；改动经 mutate_state 在状态锁内完成。
          */
         post: operations["add_batch_exclusions_api_workdirs__wid__batches__sN__exclusions_post"];
         /**
@@ -821,6 +821,54 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/batches/{sN}/retry-list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add Batch Retry List
+         * @description 把条目加入重试列表（幂等去重），返回当前名单（名单顺序即重试顺序）。
+         *
+         *     只收「已完成」与「可重试的未完成」条目（PRD F7）——排队中无需重试、缺失要
+         *     先补素材、不可重试失败要先解决格式问题；资格用当刻的条目视图现判。改动经
+         *     mutate_state 在状态锁内完成；运行期写入照常受理（本次运行按启动时的快照执行）。
+         */
+        post: operations["add_batch_retry_list_api_workdirs__wid__batches__sN__retry_list_post"];
+        /**
+         * Clear Batch Retry List
+         * @description 整体清空本批次的重试列表（其他批次的名单不动），返回空名单。
+         */
+        delete: operations["clear_batch_retry_list_api_workdirs__wid__batches__sN__retry_list_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/batches/{sN}/retry-list/{item}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Batch Retry List Item
+         * @description 把一个条目移出重试列表（幂等：不在名单里时原样返回），返回当前名单。
+         */
+        delete: operations["remove_batch_retry_list_item_api_workdirs__wid__batches__sN__retry_list__item__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1672,6 +1720,38 @@ export interface components {
              * @default
              */
             description: string;
+        };
+        /**
+         * RetryListRequest
+         * @description 重试列表加入的请求体：条目数组（素材主干）。
+         */
+        RetryListRequest: {
+            /**
+             * Items
+             * @description 条目清单（素材主干，如 cat_001）
+             */
+            items: string[];
+        };
+        /**
+         * RetryListView
+         * @description 重试列表现状（加入 / 移出 / 清空都返回全量名单，前端以响应为准）。
+         */
+        RetryListView: {
+            /**
+             * Id
+             * @description 批次标识（sN 形式）
+             */
+            id: string;
+            /**
+             * Items
+             * @description 当前重试名单（名单顺序即重试顺序）
+             */
+            items: string[];
+            /**
+             * Seq
+             * @description 序号
+             */
+            seq: number;
         };
         /**
          * RunAccepted
@@ -4146,6 +4226,138 @@ export interface operations {
                 content: {
                     "application/problem+json": unknown;
                     "text/plain": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_batch_retry_list_api_workdirs__wid__batches__sN__retry_list_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+                sN: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RetryListRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetryListView"];
+                };
+            };
+            /** @description wid 或批次不存在（workdir-not-found / batch-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description 有不可入列的条目（problem+json: retry-item-not-eligible），rejections 扩展字段带逐条原因；整体拒绝、不做部分入列 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+        };
+    };
+    clear_batch_retry_list_api_workdirs__wid__batches__sN__retry_list_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+                sN: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetryListView"];
+                };
+            };
+            /** @description wid 或批次不存在（workdir-not-found / batch-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_batch_retry_list_item_api_workdirs__wid__batches__sN__retry_list__item__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+                sN: string;
+                item: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetryListView"];
+                };
+            };
+            /** @description wid 或批次不存在（workdir-not-found / batch-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
                 };
             };
             /** @description Validation Error */

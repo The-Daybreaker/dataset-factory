@@ -42,6 +42,7 @@ from ..prompts import (
 )
 from ..runs import (
     BatchInactiveError,
+    RetryItemNotEligibleError,
     RunError,
     RunJournalCorruptedError,
     RunNotActiveError,
@@ -128,6 +129,7 @@ def create_app(frontend_dir: Path | None = None) -> FastAPI:
     app.include_router(routes_tasks.router)
     app.include_router(routes_workdir.router)
     app.include_router(routes_runs.router)
+    app.include_router(routes_runs.retry_router)
     app.include_router(routes_items.router)
     app.include_router(routes_strategies.library_router)
     app.include_router(routes_strategies.batches_router)
@@ -337,3 +339,16 @@ def _register_error_handlers(app: FastAPI) -> None:
         return problem_response(500, "run-error", "跑批数据异常", str(exc))
 
     app.add_exception_handler(RunError, run_error_handler)
+
+    def retry_not_eligible_handler(request: Request, exc: Exception) -> JSONResponse:
+        # 逐条拒绝原因进扩展字段（前端弹「哪些没进名单、为什么」用）。
+        rejections = getattr(exc, "rejections", None)
+        return problem_response(
+            422,
+            "retry-item-not-eligible",
+            "有不可加入重试列表的条目",
+            str(exc),
+            extras={"rejections": rejections} if rejections else None,
+        )
+
+    app.add_exception_handler(RetryItemNotEligibleError, retry_not_eligible_handler)

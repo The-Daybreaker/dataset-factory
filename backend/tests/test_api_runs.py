@@ -17,13 +17,15 @@ from typing import Any
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
 from dataset_factory.api import create_app
 from dataset_factory.api import routes_runs as routes_runs_module
 from dataset_factory.llm import create_config
 from dataset_factory.prompts import Prompt, save_prompt
+from dataset_factory.runs import RunJournal, add_retry_items, read_retry_list
 from dataset_factory.strategies import create_batch, set_batch_active
-from dataset_factory.workdir import WorkdirRegistry, import_assets
+from dataset_factory.workdir import WorkdirRegistry, WorkdirStore, import_assets
 
 _WAIT_TIMEOUT = 10.0
 
@@ -439,3 +441,191 @@ def test_start_run_inactive_batch_returns_409(
             assert response.json()["type"] == "batch-inactive"
 
     asyncio.run(scenario())
+
+
+# --------------------------------------------------------------------------
+# 重试列表端点（两段式的前半段：「加入重试」只攒名单；「开始重试」= 上面的
+# POST runs mode=retry。名单存取经 mutate_state 在状态锁内完成）
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def retry_client(batch_env: tuple[Path, str], tmp_path: Path) -> TestClient:
+    """重试列表端点的同步客户端（TestClient 不进 with、不触发 lifespan 播种）。"""
+    return TestClient(create_app(frontend_dir=tmp_path))
+
+
+def _mark_done(workdir: Path, stem: str) -> None:
+    """造一个「已完成」条目：产物 txt 存在且非空白（视图的判定数据源）。"""
+    (workdir / f"s1__{stem}.txt").write_text("已完成的描述", encoding="utf-8")
+
+
+def _mark_failed(workdir: Path, stem: str, reason_code: str) -> None:
+    """造一个「未完成」条目：最近一次流水是失败（原因码决定可不可重试）。"""
+    journal = RunJournal(WorkdirStore(workdir).runs_dir / "run-retry-seed")
+    journal.append_item(
+        {
+            "batch": 1,
+            "item": stem,
+            "status": "failed",
+            "attempt": 1,
+            "reason_code": reason_code,
+            "message": "测试失败原因",
+            "elapsed_ms": 100,
+        }
+    )
+
+
+def _import_then_delete_asset(workdir: Path, tmp_path: Path, name: str) -> None:
+    """造一个「缺失」条目：先真导入（登记在册）再把盘上的素材删掉。"""
+    extra = tmp_path / f"source-{name}"
+    extra.mkdir()
+    (extra / name).write_bytes(f"bytes-of-{name}".encode())
+    import_assets(workdir, extra)
+    (workdir / name).unlink()
+
+
+def test_add_retry_list_accepts_eligible_items(
+    batch_env: tuple[Path, str], retry_client: TestClient
+) -> None:
+    """已完成 + 可重试失败入列：200 返回全量名单，视图带「已排重试」标记。"""
+    workdir, wid = batch_env
+    _mark_done(workdir, "cat_001")
+    _mark_failed(workdir, "cat_002", "network")  # network 在可重试原因码清单里
+
+    added = retry_client.post(
+        f"/api/workdirs/{wid}/batches/s1/retry-list",
+        json={"items": ["cat_001", "cat_002"]},
+    )
+
+    assert added.status_code == 200
+    assert added.json() == {"id": "s1", "seq": 1, "items": ["cat_001", "cat_002"]}
+
+    view = retry_client.get(f"/api/workdirs/{wid}/batches/s1/items").json()
+    assert [row["item"] for row in view["groups"]["retry"]] == ["cat_001", "cat_002"]
+    done_row = next(row for row in view["groups"]["done"] if row["item"] == "cat_001")
+    assert done_row["in_retry"] is True
+    failed_row = next(
+        row for row in view["groups"]["failed"] if row["item"] == "cat_002"
+    )
+    assert failed_row["in_retry"] is True
+
+
+def test_add_retry_list_is_idempotent(
+    batch_env: tuple[Path, str], retry_client: TestClient
+) -> None:
+    """重复加入不产生重复条目（幂等去重）。"""
+    workdir, wid = batch_env
+    _mark_done(workdir, "cat_001")
+
+    first = retry_client.post(
+        f"/api/workdirs/{wid}/batches/s1/retry-list", json={"items": ["cat_001"]}
+    )
+    second = retry_client.post(
+        f"/api/workdirs/{wid}/batches/s1/retry-list",
+        json={"items": ["cat_001", "cat_001"]},
+    )
+
+    assert first.json()["items"] == ["cat_001"]
+    assert second.json()["items"] == ["cat_001"]
+
+
+def test_add_retry_list_rejects_ineligible_items(
+    batch_env: tuple[Path, str], retry_client: TestClient, tmp_path: Path
+) -> None:
+    """不可入列条目（不可重试失败 / 排队中 / 缺失 / 未知）整体拒绝 + 逐条原因，名单不动。"""
+    workdir, wid = batch_env
+    _mark_failed(workdir, "cat_001", "asset-unreadable")  # 不可重试类失败
+    # cat_002 不动 = 排队中
+    _import_then_delete_asset(workdir, tmp_path, "cat_003.jpg")  # 缺失
+
+    response = retry_client.post(
+        f"/api/workdirs/{wid}/batches/s1/retry-list",
+        json={"items": ["cat_001", "cat_002", "cat_003", "ghost"]},
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["type"] == "retry-item-not-eligible"
+    assert body["rejections"]["cat_001"].startswith("该失败类型不可自动重试")
+    assert body["rejections"]["cat_002"].startswith("排队中的条目无需重试")
+    assert body["rejections"]["cat_003"] == "素材缺失——先补回素材才能重打"
+    assert body["rejections"]["ghost"] == "不是本批次的条目（未导入或不存在）"
+
+    view = retry_client.get(f"/api/workdirs/{wid}/batches/s1/items").json()
+    assert view["groups"]["retry"] == []  # 整体拒绝：没有任何条目进名单
+
+
+def test_add_retry_list_unknown_batch_404(
+    batch_env: tuple[Path, str], retry_client: TestClient
+) -> None:
+    """批次不存在 → 404 problem+json（batch-not-found）。"""
+    _, wid = batch_env
+
+    response = retry_client.post(
+        f"/api/workdirs/{wid}/batches/s99/retry-list", json={"items": ["cat_001"]}
+    )
+
+    assert response.status_code == 404
+    assert response.json()["type"] == "batch-not-found"
+
+
+def test_remove_retry_list_item(
+    batch_env: tuple[Path, str], retry_client: TestClient
+) -> None:
+    """逐条移出：名单更新、其余条目不动。"""
+    workdir, wid = batch_env
+    _mark_done(workdir, "cat_001")
+    _mark_done(workdir, "cat_002")
+    retry_client.post(
+        f"/api/workdirs/{wid}/batches/s1/retry-list",
+        json={"items": ["cat_001", "cat_002"]},
+    )
+
+    removed = retry_client.delete(f"/api/workdirs/{wid}/batches/s1/retry-list/cat_001")
+
+    assert removed.status_code == 200
+    assert removed.json()["items"] == ["cat_002"]
+
+
+def test_remove_retry_list_item_idempotent(
+    batch_env: tuple[Path, str], retry_client: TestClient
+) -> None:
+    """移出不在名单里的条目：原样返回当前名单（不报错——移出是撤销意愿）。"""
+    workdir, wid = batch_env
+    _mark_done(workdir, "cat_001")
+    retry_client.post(
+        f"/api/workdirs/{wid}/batches/s1/retry-list", json={"items": ["cat_001"]}
+    )
+
+    response = retry_client.delete(f"/api/workdirs/{wid}/batches/s1/retry-list/ghost")
+
+    assert response.status_code == 200
+    assert response.json()["items"] == ["cat_001"]
+
+
+def test_clear_retry_list_only_clears_this_batch(
+    batch_env: tuple[Path, str], retry_client: TestClient
+) -> None:
+    """整体清空只清本批次：另一批次的名单原样保留（名单共享一份、按批次隔离）。"""
+    workdir, wid = batch_env
+    create_batch(
+        workdir,
+        name="二号批",
+        description="",
+        endpoint="main",
+        prompt="详细描述",
+        skills=[],
+    )
+    _mark_done(workdir, "cat_001")
+    retry_client.post(
+        f"/api/workdirs/{wid}/batches/s1/retry-list", json={"items": ["cat_001"]}
+    )
+    # s2 的名单直接经域函数搭景（cat_001 在 s2 是排队中——名单是意愿、不判资格）。
+    add_retry_items(workdir, 2, ["cat_001", "cat_002"])
+
+    cleared = retry_client.delete(f"/api/workdirs/{wid}/batches/s1/retry-list")
+
+    assert cleared.status_code == 200
+    assert cleared.json() == {"id": "s1", "seq": 1, "items": []}
+    assert read_retry_list(workdir, 2) == ["cat_001", "cat_002"]  # s2 不受影响

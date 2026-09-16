@@ -1183,6 +1183,54 @@
         "title": "PromptSaveRequest",
         "type": "object"
       },
+      "RetryListRequest": {
+        "description": "重试列表加入的请求体：条目数组（素材主干）。",
+        "properties": {
+          "items": {
+            "description": "条目清单（素材主干，如 cat_001）",
+            "items": {
+              "type": "string"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "RetryListRequest",
+        "type": "object"
+      },
+      "RetryListView": {
+        "description": "重试列表现状（加入 / 移出 / 清空都返回全量名单，前端以响应为准）。",
+        "properties": {
+          "id": {
+            "description": "批次标识（sN 形式）",
+            "title": "Id",
+            "type": "string"
+          },
+          "items": {
+            "description": "当前重试名单（名单顺序即重试顺序）",
+            "items": {
+              "type": "string"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "seq": {
+            "description": "序号",
+            "title": "Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "seq",
+          "items"
+        ],
+        "title": "RetryListView",
+        "type": "object"
+      },
       "RunAccepted": {
         "description": "跑批受理响应（202）：后台线程已受理，进度走 current / SSE。",
         "properties": {
@@ -4238,7 +4286,7 @@
         ]
       },
       "post": {
-        "description": "把条目加入排除打包名单（幂等去重），返回当前名单。\n\n名单随批次元数据持久、跨会话存活；改动全程持运行锁（T36 起生效）。",
+        "description": "把条目加入排除打包名单（幂等去重），返回当前名单。\n\n名单随批次元数据持久、跨会话存活；改动经 mutate_state 在状态锁内完成。",
         "operationId": "add_batch_exclusions_api_workdirs__wid__batches__sN__exclusions_post",
         "parameters": [
           {
@@ -4538,6 +4586,213 @@
         "summary": "Read Item Product",
         "tags": [
           "条目"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/batches/{sN}/retry-list": {
+      "delete": {
+        "description": "整体清空本批次的重试列表（其他批次的名单不动），返回空名单。",
+        "operationId": "clear_batch_retry_list_api_workdirs__wid__batches__sN__retry_list_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sN",
+            "required": true,
+            "schema": {
+              "title": "Sn",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryListView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "wid 或批次不存在（workdir-not-found / batch-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clear Batch Retry List",
+        "tags": [
+          "跑批"
+        ]
+      },
+      "post": {
+        "description": "把条目加入重试列表（幂等去重），返回当前名单（名单顺序即重试顺序）。\n\n只收「已完成」与「可重试的未完成」条目（PRD F7）——排队中无需重试、缺失要\n先补素材、不可重试失败要先解决格式问题；资格用当刻的条目视图现判。改动经\nmutate_state 在状态锁内完成；运行期写入照常受理（本次运行按启动时的快照执行）。",
+        "operationId": "add_batch_retry_list_api_workdirs__wid__batches__sN__retry_list_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sN",
+            "required": true,
+            "schema": {
+              "title": "Sn",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryListRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryListView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "wid 或批次不存在（workdir-not-found / batch-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "有不可入列的条目（problem+json: retry-item-not-eligible），rejections 扩展字段带逐条原因；整体拒绝、不做部分入列"
+          }
+        },
+        "summary": "Add Batch Retry List",
+        "tags": [
+          "跑批"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/batches/{sN}/retry-list/{item}": {
+      "delete": {
+        "description": "把一个条目移出重试列表（幂等：不在名单里时原样返回），返回当前名单。",
+        "operationId": "remove_batch_retry_list_item_api_workdirs__wid__batches__sN__retry_list__item__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sN",
+            "required": true,
+            "schema": {
+              "title": "Sn",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item",
+            "required": true,
+            "schema": {
+              "title": "Item",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryListView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "wid 或批次不存在（workdir-not-found / batch-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Batch Retry List Item",
+        "tags": [
+          "跑批"
         ]
       }
     },

@@ -44,6 +44,7 @@ __all__ = [
     "ItemRow",
     "ItemView",
     "build_item_view",
+    "retry_rejections",
 ]
 
 #: 排队中：还没打过（或产物异常待重打），也没有失败记录。
@@ -293,3 +294,47 @@ def _build_unimported_rows(workdir: Path, registered: set[str]) -> list[ItemRow]
         )
         for entry in unimported_files(workdir, registered)
     ]
+
+
+def retry_rejections(workdir: Path, seq: int, items: list[str]) -> dict[str, str]:
+    """判定哪些条目不可加入重试列表（加入端点的资格关，PRD F7）。
+
+    可入列 = ``can_retry``（已完成、可重试类失败）；不可入列给一条人读原因——
+    排队中（下一次全量跑批本来就会打它）、缺失（要先补回素材，验收 13）、
+    不可重试失败（要先解决格式等问题）。已在名单里的条目不在此判定
+    （加入幂等，重复加入不是拒绝理由）。
+
+    Returns:
+        「条目 → 不可入列原因」；空字典 = 全部可入列。
+
+    Raises:
+        BatchNotFoundError: 批次不存在（strategies 域异常冒泡）。
+    """
+    view = build_item_view(workdir, seq)
+    rows = {
+        row.item: row
+        for group in (
+            GROUP_QUEUED,
+            GROUP_DONE,
+            GROUP_FAILED,
+            GROUP_MISSING,
+        )
+        for row in view.groups[group]
+    }
+    rejections: dict[str, str] = {}
+    for item in items:
+        row = rows.get(item)
+        if row is None:
+            rejections[item] = "不是本批次的条目（未导入或不存在）"
+        elif not row.can_retry:
+            rejections[item] = _rejection_reason(row)
+    return rejections
+
+
+def _rejection_reason(row: ItemRow) -> str:
+    """把不可入列的三种情形翻成给人看的原因（与界面的置灰提示同一口径）。"""
+    if row.status == GROUP_MISSING:
+        return "素材缺失——先补回素材才能重打"
+    if row.status == GROUP_FAILED:
+        return f"该失败类型不可自动重试（{row.reason_code}）——需先解决格式等问题"
+    return "排队中的条目无需重试——下一次全量跑批本来就会打它"

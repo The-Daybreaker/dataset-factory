@@ -7,10 +7,12 @@
   ItemView / ItemRow / 六分组键
 - 运行流水回读：load_recent_success_hashes（续跑跳过判定的哈希锚点）/
   load_latest_item_records（每条素材最近一次尝试的结果）
-- 重试列表（state.json 的 retry_list 键，结构由本域定义）：read_retry_list；
-  可重试类原因码清单 RETRYABLE_REASON_CODES（F5 两类清单的单一事实源）
-- 异常：RunError 基类 + BatchInactiveError / RunNotActiveError / RunJournalCorruptedError
-  （运行锁与状态锁原语、run-occupied 占用异常都在 workdir 域，经 workdir.locks 取用）
+- 重试列表（state.json 的 retry_list 键，结构由本域定义）：read / add / remove /
+  clear（加入的资格判定 retry_rejections 用条目视图现算，PRD F7）；可重试类原因码
+  清单 RETRYABLE_REASON_CODES（F5 两类清单的单一事实源）
+- 异常：RunError 基类 + BatchInactiveError / RunNotActiveError / RunJournalCorruptedError /
+  RetryItemNotEligibleError（运行锁与状态锁原语、run-occupied 占用异常都在 workdir 域，
+  经 workdir.locks 取用）
 
 依赖方向（design「模块归属」）：runs → workdir（经 WorkdirStore 读写 ``.dsf/``、
 经 assets 解析素材与产物、经 locks 取两把锁原语）、strategies（读快照与批次元数据）、
@@ -19,6 +21,7 @@ labeling（逐条调用纯素材路径）、llm（异常分类）。
 
 from .errors import (
     BatchInactiveError,
+    RetryItemNotEligibleError,
     RunError,
     RunJournalCorruptedError,
     RunNotActiveError,
@@ -34,6 +37,7 @@ from .items import (
     ItemRow,
     ItemView,
     build_item_view,
+    retry_rejections,
 )
 from .journal import (
     ItemRecord,
@@ -51,8 +55,11 @@ from .runner import (
     RunReport,
     RunStartedEvent,
     RunTrigger,
+    add_retry_items,
+    clear_retry_list,
     completer_for_snapshot,
     read_retry_list,
+    remove_retry_items,
 )
 
 __all__ = [
@@ -70,6 +77,7 @@ __all__ = [
     "ItemRow",
     "ItemUpdatedEvent",
     "ItemView",
+    "RetryItemNotEligibleError",
     "RunError",
     "RunEvent",
     "RunFinishedEvent",
@@ -80,9 +88,13 @@ __all__ = [
     "RunReport",
     "RunStartedEvent",
     "RunTrigger",
+    "add_retry_items",
     "build_item_view",
+    "clear_retry_list",
     "completer_for_snapshot",
     "load_latest_item_records",
     "load_recent_success_hashes",
     "read_retry_list",
+    "remove_retry_items",
+    "retry_rejections",
 ]

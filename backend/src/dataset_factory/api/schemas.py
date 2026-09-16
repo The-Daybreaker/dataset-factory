@@ -587,6 +587,20 @@ class RunStatusView(BaseModel):
     error: str | None = Field(description="启动失败的原因；正常运行为 null")
 
 
+class RetryListRequest(BaseModel):
+    """重试列表加入的请求体：条目数组（素材主干）。"""
+
+    items: list[str] = Field(description="条目清单（素材主干，如 cat_001）")
+
+
+class RetryListView(BaseModel):
+    """重试列表现状（加入 / 移出 / 清空都返回全量名单，前端以响应为准）。"""
+
+    id: str = Field(description="批次标识（sN 形式）")
+    seq: int = Field(description="序号")
+    items: list[str] = Field(description="当前重试名单（名单顺序即重试顺序）")
+
+
 # --------------------------------------------------------------------------
 # 条目视图（打标页左列六分组）
 # --------------------------------------------------------------------------

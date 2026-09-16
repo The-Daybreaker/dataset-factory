@@ -29,3 +29,20 @@ class RunJournalCorruptedError(RunError):
     续跑判定要读历史流水取「最近一次成功打标的素材哈希」；坏行 fail loud，
     用户可用「清理运行记录」移除损坏的那次运行后重试。
     """
+
+
+class RetryItemNotEligibleError(RunError):
+    """请求加入重试列表的条目里有不可入列的——HTTP 422 problem+json（retry-item-not-eligible）。
+
+    资格口径见 PRD F7（已完成与可重试类失败可入列）；整体拒绝、不做部分入列——
+    界面本就只允许勾选可入列条目，请求里出现不可入列条目 = 界面状态过期或客户端
+    异常，部分入列会把「哪进了名单」变糊涂。
+
+    Attributes:
+        rejections: 条目 → 不可入列原因（人读），进 problem+json 扩展字段。
+    """
+
+    def __init__(self, message: str, *, rejections: dict[str, str]) -> None:
+        """带逐条拒绝原因构造。"""
+        super().__init__(message)
+        self.rejections = rejections

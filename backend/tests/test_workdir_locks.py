@@ -196,7 +196,12 @@ def test_state_lock_survives_holder_process_kill(workdir: Path) -> None:
 
 
 def test_run_lock_survives_holder_process_kill(workdir: Path) -> None:
-    """运行锁同理：持锁子进程被强杀后，重新抢锁 + 写占用者信息照常成功。"""
+    """运行锁同理：持锁子进程被强杀后，重新抢锁 + 写占用者信息照常成功。
+
+    收尾抢锁带超时护栏地轮询：子进程被 TerminateProcess 后，OS 释放锁句柄有
+    微小延迟，非阻塞单次尝试偶发撞上——被测性质是「无需人工清理即可继续」，
+    短暂的内核释放延迟不违背它（10 秒内自然到手）。
+    """
     dsf = WorkdirStore(workdir).dsf_path
     marker = workdir / "run-lock-marker.txt"
     child = _spawn_holder(_HOLD_RUN_LOCK_SCRIPT, dsf, marker)
@@ -212,7 +217,15 @@ def test_run_lock_survives_holder_process_kill(workdir: Path) -> None:
         child.wait(15)
 
     lock = RunLock(dsf)
-    lock.acquire({"pid": 9999, "batch": "s2"})
+    deadline = time.monotonic() + 10.0
+    while True:
+        try:
+            lock.acquire({"pid": 9999, "batch": "s2"})
+            break
+        except RunOccupiedError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.05)
     try:
         info = json.loads((dsf / "run-info.json").read_text(encoding="utf-8"))
         assert info["pid"] == 9999  # 残留的 run-info 被新持有者覆盖
