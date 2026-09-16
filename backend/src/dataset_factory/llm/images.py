@@ -10,8 +10,9 @@ import base64
 
 from .errors import ImageTooLargeError, UnsupportedImageError
 
-# 单图字节上限，对齐常见 OpenAI 兼容端点；可调。
-_MAX_IMAGE_BYTES = 20 * 1024 * 1024
+# 单图字节上限，对齐常见 OpenAI 兼容端点；可调。公开常量——二期批量跑批的运行时
+# 护栏与 workdir 导入护栏共用此单一事实源（防止各处各写一个 20 MiB 悄悄漂移）。
+MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
 _SUPPORTED_FORMATS = "png / jpeg / webp / gif"
 
@@ -30,8 +31,8 @@ def encode_image_data_url(data: bytes) -> str:
         ImageTooLargeError: 字节数超过上限。
     """
     subtype = _sniff_image_subtype(data)
-    if len(data) > _MAX_IMAGE_BYTES:
-        limit_mib = _MAX_IMAGE_BYTES // (1024 * 1024)
+    if len(data) > MAX_IMAGE_BYTES:
+        limit_mib = MAX_IMAGE_BYTES // (1024 * 1024)
         actual_mib = len(data) / (1024 * 1024)
         raise ImageTooLargeError(
             f"图片过大（{actual_mib:.1f} MiB，上限 {limit_mib} MiB）；请压缩后重试。"

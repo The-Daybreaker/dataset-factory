@@ -28,7 +28,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ..llm import VIDEO_EXTENSIONS
+from ..llm import (
+    IMAGE_EXTENSIONS,
+    MAX_IMAGE_BYTES,
+    MAX_VIDEO_BYTES,
+    VIDEO_EXTENSIONS,
+)
 from ..tasks import TaskCancelledError
 from .errors import ImportSourceConflictError, WorkdirError, WorkdirPathError
 from .store import WorkdirStore
@@ -44,19 +49,12 @@ __all__ = [
     "import_assets",
 ]
 
-#: 图片扩展名窄清单（OpenAI 兼容端点事实标准 + torchvision 训练生态；design 项 12）。
-IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif"})
-
-#: 视频扩展名单一事实源 = llm.VIDEO_EXTENSIONS（mp4/m4v/mov/webm/avi/mkv，一期已验收语义；
-#: workdir 与 labeling 同层、llm 在其下，直接复用防口径漂移——audit 2026-09-14 收敛结论）。
+#: 图片 / 视频扩展名与大小护栏的单一事实源都在 llm（IMAGE_EXTENSIONS /
+#: VIDEO_EXTENSIONS / MAX_IMAGE_BYTES / MAX_VIDEO_BYTES）——workdir 导入与 labeling
+#: 纯素材路径共用，防两处各写一份清单或上限悄悄漂移（audit 2026-09-14 收敛口径的延伸）。
 
 #: 全部可导入扩展名 = 图片 ∪ 视频。
 ASSET_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
-
-#: 大小护栏：图片 ≤ 20 MiB（沿用一期单图上限）；视频 ≤ 100 MiB（二期新增，批量
-#: 无人值守必须本地限制——GB 级视频会复制、整读进内存、base64 再胀 1.33 倍）。
-MAX_IMAGE_BYTES = 20 * 1024 * 1024
-MAX_VIDEO_BYTES = 100 * 1024 * 1024
 
 #: 「未导入」原因的标准措辞（界面按原因呈现，字符串即契约）。
 REASON_UNSUPPORTED_EXTENSION = "扩展名不支持"

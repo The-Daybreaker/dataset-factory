@@ -20,6 +20,17 @@ VIDEO_MIME_BY_SUFFIX: dict[str, str] = {
 }
 VIDEO_EXTENSIONS = frozenset(VIDEO_MIME_BY_SUFFIX)
 
+# 图片扩展名窄清单（OpenAI 兼容端点事实标准 + torchvision 训练生态；design 项 12）——
+# 与视频扩展名同为媒体格式事实，二期起集中在此作单一事实源（workdir 导入与 labeling
+# 纯素材路径共用，防两处各写一份清单悄悄漂移）。
+IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif"})
+
+# 视频字节上限（二期新增）：批量无人值守必须本地限制——GB 级视频会整读进内存、
+# base64 再胀 1.33 倍。与 MAX_IMAGE_BYTES 同为「运行时读取前再验」的单一事实源
+# （design「素材扫描窄清单与大小护栏」）；低于 OpenAI 官方 512 MB payload 上限，
+# 为第三方兼容网关与内存峰值留余量。
+MAX_VIDEO_BYTES = 100 * 1024 * 1024
+
 
 @dataclass(frozen=True)
 class TextPart:

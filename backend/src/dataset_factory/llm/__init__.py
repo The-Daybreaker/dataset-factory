@@ -8,6 +8,7 @@
   validated_request_params / DEFAULT_CONFIG_NAME / SUPPORTED_API_FORMAT
 - 补全接口与客户端：Completer / OpenAIChatClient / build_completer
 - 消息模型：Message / Role / TextPart / ImagePart / ContentPart
+- 媒体护栏常量（单一事实源）：MAX_IMAGE_BYTES / MAX_VIDEO_BYTES / VIDEO_MIME_BY_SUFFIX / VIDEO_EXTENSIONS
 - 异常：LLMError 基类 + 分类子类（鉴权 / 限流 / 超时 / 连接 / 请求非法 / 未找到 / 服务端 / 意外）+ UnsupportedImageError / ImageTooLargeError
 """
 
@@ -59,7 +60,10 @@ from .errors import (
     LLMUnexpectedError,
     UnsupportedImageError,
 )
+from .images import MAX_IMAGE_BYTES
 from .messages import (
+    IMAGE_EXTENSIONS,
+    MAX_VIDEO_BYTES,
     VIDEO_EXTENSIONS,
     VIDEO_MIME_BY_SUFFIX,
     ContentPart,
@@ -74,6 +78,9 @@ from .messages import (
 __all__ = [
     "DEFAULT_CONFIG_NAME",
     "ENV_API_KEY",
+    "IMAGE_EXTENSIONS",
+    "MAX_IMAGE_BYTES",
+    "MAX_VIDEO_BYTES",
     "SUPPORTED_API_FORMAT",
     "VIDEO_EXTENSIONS",
     "VIDEO_MIME_BY_SUFFIX",

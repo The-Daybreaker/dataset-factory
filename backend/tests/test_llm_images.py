@@ -51,7 +51,7 @@ def test_encode_rejects_empty_bytes() -> None:
 
 def test_encode_rejects_oversize(monkeypatch: pytest.MonkeyPatch) -> None:
     """超过大小上限 → ImageTooLargeError；调小上限避免真造大图。"""
-    monkeypatch.setattr(images, "_MAX_IMAGE_BYTES", 8)
+    monkeypatch.setattr(images, "MAX_IMAGE_BYTES", 8)
 
     with pytest.raises(ImageTooLargeError, match="过大"):
         images.encode_image_data_url(_PNG)

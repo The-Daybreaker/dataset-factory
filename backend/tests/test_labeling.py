@@ -1,12 +1,15 @@
 """集成 + 端到端测试：labeling 编排引擎（组装一轮打标、设置切换、历史回放、信封落盘、恢复）。
 
 集成测试编排 prompts + skills + sessions + llm 四模块（fake_completer 断言「引擎拼了什么」，
-不真调 API）；端到端测试整条打标流程（建提示词 → 导入 skill → 发图打标 → 恢复会话）。
+不真调 API）；端到端测试整条打标流程（建提示词 → 导入 skill → 发图打标 → 恢复会话）；
+二期追加纯素材路径（label_material：无会话零写盘 + 运行时护栏 + 处理时刻哈希）。
 全部离线、用 temp_data_root fixture 隔离数据根。
 """
 
 from __future__ import annotations
 
+import hashlib
+import re
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 
@@ -16,12 +19,15 @@ from dataset_factory.labeling import (
     AttachmentReadError,
     EmptyTurnError,
     LabelingEngine,
+    MaterialOversizeError,
+    MaterialReadError,
     PromptNotSelectedError,
     SessionSettings,
     SettingsFormatError,
     StreamFinished,
     StreamStarted,
 )
+from dataset_factory.labeling import engine as labeling_engine_module
 from dataset_factory.llm import (
     ImagePart,
     LLMError,
@@ -638,5 +644,164 @@ def test_corrupt_skill_package_selected_fails_loud(
 
     with pytest.raises(SkillFormatError, match="未闭合"):
         engine.label(prompt_name="h3", skill_names=["bad"], instruction="打标")
+
+    assert list_sessions() == []
+
+
+# ---------------------------------------------------------------------------
+# 纯素材输入路径（label_material，二期 T35）：无会话零写盘 + 运行时护栏 + 处理时刻哈希
+# ---------------------------------------------------------------------------
+
+
+def test_material_image_labels_without_session(
+    temp_data_root: Path, tmp_path: Path, fake_completer: FakeCompleter
+) -> None:
+    """纯素材打标图片：拼装同会话路径、返回 caption 与素材哈希、全程不建会话。
+
+    零写盘是无人值守路径的根基约定：没有事件流、信封与附件副本。
+    """
+    image = _make_image(tmp_path / "cat_001.jpg", b"png!")
+    engine = LabelingEngine(fake_completer, _MODEL)
+
+    result = engine.label_material(
+        image,
+        prompt_body="你是打标助手，输出一句话描述。",
+        skill_texts=["快照里的 skill 全文"],
+    )
+
+    assert result.caption == "打标结果"
+    assert result.asset_hash == hashlib.sha256(b"png!").hexdigest()
+    assert len(fake_completer.calls) == 1
+    system, user = fake_completer.calls[0]
+    assert system == Message(
+        role="system", parts=(TextPart("你是打标助手，输出一句话描述。"),)
+    )
+    assert user.parts == (
+        TextPart("<skill>\n快照里的 skill 全文\n</skill>"),
+        ImagePart(b"png!"),
+    )
+    assert list_sessions() == []
+
+
+def test_material_video_part_uses_suffix_mime_and_params(
+    temp_data_root: Path, tmp_path: Path, fake_completer: FakeCompleter
+) -> None:
+    """纯素材打标视频：MIME 按扩展名映射（.mov → video/quicktime）。
+
+    fps / 帧上限随调用下发，哈希同样返回。
+    """
+    video = tmp_path / "clip_001.mov"
+    video.write_bytes(b"fake-mov-bytes")
+    engine = LabelingEngine(fake_completer, _MODEL)
+
+    result = engine.label_material(
+        video,
+        prompt_body="你是打标助手。",
+        video_fps=3,
+        video_max_frames=8,
+    )
+
+    assert result.asset_hash == hashlib.sha256(b"fake-mov-bytes").hexdigest()
+    assert fake_completer.calls[0][1].parts == (
+        VideoPart(b"fake-mov-bytes", mime="video/quicktime", fps=3, max_frames=8),
+    )
+
+
+def test_material_missing_file_raises_read_error(
+    temp_data_root: Path, tmp_path: Path, fake_completer: FakeCompleter
+) -> None:
+    """素材不存在（缺失条目的运行时表现）：MaterialReadError，且不调模型。"""
+    engine = LabelingEngine(fake_completer, _MODEL)
+
+    with pytest.raises(MaterialReadError, match=re.escape("cat_001.jpg")):
+        engine.label_material(tmp_path / "cat_001.jpg", prompt_body="你是打标助手。")
+
+    assert fake_completer.calls == []
+
+
+def test_material_image_oversize_raises(
+    temp_data_root: Path,
+    tmp_path: Path,
+    fake_completer: FakeCompleter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """图片超出运行时护栏（导入后被换成超大文件的情形）：读取前拦截 MaterialOversizeError。"""
+    monkeypatch.setattr(labeling_engine_module, "MAX_IMAGE_BYTES", 8)
+    image = _make_image(tmp_path / "big.jpg", b"0123456789")
+    engine = LabelingEngine(fake_completer, _MODEL)
+
+    with pytest.raises(MaterialOversizeError, match="上限"):
+        engine.label_material(image, prompt_body="你是打标助手。")
+
+    assert fake_completer.calls == []
+
+
+def test_material_video_oversize_raises(
+    temp_data_root: Path,
+    tmp_path: Path,
+    fake_completer: FakeCompleter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """视频超出运行时护栏（100 MiB 上限的运行时再验）：读取前拦截 MaterialOversizeError。"""
+    monkeypatch.setattr(labeling_engine_module, "MAX_VIDEO_BYTES", 4)
+    video = tmp_path / "big.mp4"
+    video.write_bytes(b"0123456789")
+    engine = LabelingEngine(fake_completer, _MODEL)
+
+    with pytest.raises(MaterialOversizeError, match="上限"):
+        engine.label_material(video, prompt_body="你是打标助手。")
+
+    assert fake_completer.calls == []
+
+
+def test_material_blank_prompt_body_raises(
+    temp_data_root: Path, tmp_path: Path, fake_completer: FakeCompleter
+) -> None:
+    """策略快照的基础提示词为空白：ValueError 拒绝（一轮打标必须有 system 底座）。"""
+    image = _make_image(tmp_path / "cat.jpg")
+    engine = LabelingEngine(fake_completer, _MODEL)
+
+    with pytest.raises(ValueError, match="prompt_body"):
+        engine.label_material(image, prompt_body="   ")
+
+    assert fake_completer.calls == []
+
+
+def test_material_unsupported_extension_raises(
+    temp_data_root: Path, tmp_path: Path, fake_completer: FakeCompleter
+) -> None:
+    """扩展名不在窄清单（素材被改名等运行时条件）：ValueError 拒绝，不读不调。"""
+    stray = tmp_path / "notes.txt"
+    stray.write_text("不是素材", encoding="utf-8")
+    engine = LabelingEngine(fake_completer, _MODEL)
+
+    with pytest.raises(ValueError, match="白名单"):
+        engine.label_material(stray, prompt_body="你是打标助手。")
+
+    assert fake_completer.calls == []
+
+
+def test_material_llm_error_propagates_without_writes(
+    temp_data_root: Path, tmp_path: Path
+) -> None:
+    """模型调用失败：异常冒泡给调用方（按运行流水处置），且同样零写盘、无会话残留。"""
+    image = _make_image(tmp_path / "cat.jpg")
+
+    class FailingCompleter:
+        """只会失败的假客户端（模拟端点错误）。"""
+
+        def complete(self, messages: Sequence[Message]) -> str:
+            """总是抛 LLMError。"""
+            raise LLMError("端点故障")
+
+        def stream(self, messages: Sequence[Message]) -> Iterator[StreamDelta]:
+            """纯素材路径不使用流式；为满足协议而给出。"""
+            raise LLMError("端点故障")
+            yield StreamDelta(kind="content", text="")  # pragma: no cover
+
+    engine = LabelingEngine(FailingCompleter(), _MODEL)
+
+    with pytest.raises(LLMError):
+        engine.label_material(image, prompt_body="你是打标助手。")
 
     assert list_sessions() == []

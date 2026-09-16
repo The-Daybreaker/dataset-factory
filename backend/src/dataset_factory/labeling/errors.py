@@ -25,3 +25,11 @@ class AttachmentReadError(LabelingError):
 
 class SettingsFormatError(LabelingError):
     """会话设置事件的结构非法（正常写入不会产生，通常是会话文件被手改坏）。"""
+
+
+class MaterialReadError(LabelingError):
+    """纯素材打标读取素材文件失败（素材缺失、已被删或无法读取——无人值守运行时的素材条件）。"""
+
+
+class MaterialOversizeError(LabelingError):
+    """素材超出大小上限（运行时读取前再验——素材导入后可能被绕过工具换成超大文件）。"""

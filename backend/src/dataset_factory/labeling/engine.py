@@ -7,10 +7,17 @@ sessions 落盘（设置变更 → 用户消息 → 请求信封 → 模型回�
 JSON 的来回转换收敛在本模块（sessions 只把
 设置与信封当任意 JSON 忠实存取，守分层）。历史不缓存、每轮回放 events.jsonl 重建——新进程
 （如 CLI 续接）与崩溃重启后天然续上同一会话。
+
+二期追加一条**纯素材输入的调用路径**（``label_material``）：批量跑批无 UI、无人值守、
+不建会话——素材直接给文件路径，提示词与 skill 全文由调用方传入（来自策略快照，不是库名
+引用，快照隔离），全程零写盘；顺手对实际读取的素材字节算一次 SHA-256（「处理时刻的输入
+哈希」，运行流水判定产物时效的锚点）。两条路径共用同一套拼装（``_assemble``），
+「一轮怎么拼」仍然只有一处。
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -20,7 +27,11 @@ from typing import cast
 
 from .._obs import ms_since
 from ..llm import (
+    IMAGE_EXTENSIONS,
+    MAX_IMAGE_BYTES,
+    MAX_VIDEO_BYTES,
     VIDEO_EXTENSIONS,
+    VIDEO_MIME_BY_SUFFIX,
     Completer,
     ImagePart,
     Message,
@@ -48,6 +59,8 @@ from ..skills import SkillNotFoundError, list_skills, read_skill
 from .errors import (
     AttachmentReadError,
     EmptyTurnError,
+    MaterialOversizeError,
+    MaterialReadError,
     PromptNotSelectedError,
     SettingsFormatError,
 )
@@ -117,6 +130,21 @@ class LabelResult:
 
     session_id: str
     caption: str
+
+
+@dataclass(frozen=True)
+class MaterialLabelResult:
+    """一次纯素材打标的结果（无会话路径）。
+
+    Attributes:
+        caption: 模型产出的打标文本。
+        asset_hash: 本次实际读取并发送的素材字节的 SHA-256——「处理时刻的输入哈希」，
+            运行流水记下它才能判定「这份产物对应当前素材，还是素材在打标后被换过」
+            （design「素材完整性校验（哈希）」的唯一锚点）。
+    """
+
+    caption: str
+    asset_hash: str
 
 
 class LabelingEngine:
@@ -326,6 +354,89 @@ class LabelingEngine:
         )
         yield StreamFinished(result=LabelResult(session_id=session_id, caption=caption))
 
+    def label_material(
+        self,
+        material: Path,
+        *,
+        prompt_body: str,
+        skill_texts: Sequence[str] = (),
+        instruction: str = "",
+        video_fps: int = 2,
+        video_max_frames: int = 16,
+    ) -> MaterialLabelResult:
+        """纯素材打标：读一个素材文件、拼一轮请求、调模型，返回 caption 与素材哈希。
+
+        批量跑批（runs 执行器）的调用路径——与 label() 的三点不同：**不建会话**（零写盘，
+        没有事件流、信封与附件副本，无 UI 无人值守不需要复盘现场）；**提示词与 skill 按
+        全文传入**（调用方从策略快照读全文，不经库按名解析——快照隔离：库端事后被编辑
+        或删除都不影响本批）；**结果带素材哈希**（读文件与算哈希同一次读取完成，零额外
+        IO——见 :class:`MaterialLabelResult`）。图片与视频按扩展名区分，一次一个素材。
+
+        运行时护栏在读取前先验（防素材导入后被绕过工具换掉）：文件存在性与大小上限
+        （图片 20 MiB / 视频 100 MiB，单一事实源在 llm 层）。
+
+        Args:
+            material: 素材文件路径（图片或视频，按扩展名窄清单判定；白名单与上限
+                与导入护栏同源）。
+            prompt_body: 基础提示词全文（进 system 消息；来自策略快照）。
+            skill_texts: 要注入的 skill 全文序列（来自策略快照，按注入序）。
+            instruction: 附加指令（批量打标通常为空——任务说明在基础提示词里）。
+            video_fps: 视频抽帧 fps（素材是视频时生效）。
+            video_max_frames: 视频抽帧帧数上限（素材是视频时生效）。
+
+        Returns:
+            MaterialLabelResult：caption + 本次实际读取的素材字节哈希。
+
+        Raises:
+            ValueError: prompt_body 为空白（一轮打标必须有基础提示词作 system 底座）；
+                或素材扩展名不在白名单内（调用方应只喂窄清单素材；导入后被改名也在此拦下）。
+            MaterialReadError: 素材不存在、不是文件或读取失败。
+            MaterialOversizeError: 素材超出大小上限（图片 20 MiB / 视频 100 MiB）。
+            LLMError: 模型调用失败（本路径不落盘，异常直接冒泡给调用方按运行流水处置）。
+        """
+        start = perf_counter()
+        if not prompt_body.strip():
+            raise ValueError(
+                "prompt_body 不能为空白——一轮打标必须有一个基础提示词作 system 底座；"
+                "请检查策略快照的基础提示词是否为空。"
+            )
+        sent_bytes = _read_material(material)
+        asset_hash = hashlib.sha256(sent_bytes).hexdigest()
+
+        suffix = material.suffix.lower()
+        is_video = suffix in VIDEO_EXTENSIONS
+        # 信封视图在本路径弃用（runs 的运行流水只记结果与哈希，无信封落盘）。
+        messages, _ = _assemble(
+            prompt_body=prompt_body,
+            skill_texts=skill_texts,
+            history=(),
+            instruction=instruction,
+            image_bytes=None if is_video else sent_bytes,
+            video_bytes=sent_bytes if is_video else None,
+            video_mime=VIDEO_MIME_BY_SUFFIX.get(suffix, "video/mp4"),
+            video_fps=video_fps,
+            video_max_frames=video_max_frames,
+            attachment=material.name,
+        )
+        assemble_ms = ms_since(start)
+
+        llm_start = perf_counter()
+        try:
+            caption = self._completer.complete(messages)
+        finally:
+            llm_ms = ms_since(llm_start)
+            logger.info(
+                "纯素材打标模型调用结束：%.0fms（素材 %s）", llm_ms, material.name
+            )
+        logger.info(
+            "纯素材打标完成：组装 %.0fms、模型 %.0fms、合计 %.0fms（素材 %s）",
+            assemble_ms,
+            llm_ms,
+            ms_since(start),
+            material.name,
+        )
+        return MaterialLabelResult(caption=caption, asset_hash=asset_hash)
+
     def restore(self, session_id: str) -> SessionSnapshot:
         """恢复一个会话：当前设置 + 对话历史（入口层重启 / CLI 续接的起点）。
 
@@ -472,6 +583,52 @@ def _read_attachment(session_id: str, name: str) -> bytes:
     except OSError as exc:
         raise AttachmentReadError(
             f"无法读取会话 {session_id!r} 的附件 {name!r}：{exc.strerror or exc}"
+        ) from exc
+
+
+def _read_material(material: Path) -> bytes:
+    """读取素材文件字节（纯素材路径专用）：先过运行时护栏，再整读返回。
+
+    运行时再验（design「素材扫描窄清单与大小护栏」）：导入时已验过一次，但素材可能
+    在导入后被绕过工具替换——读取前 stat 一下零成本拦住，避免整读进内存才发现。
+    扩展名决定图片 / 视频与对应上限；白名单外直接拒绝（导入护栏与运行时护栏共用
+    llm 层的窄清单与上限，单一事实源）。
+
+    Raises:
+        MaterialReadError: 素材不存在、不是文件或读取失败。
+        MaterialOversizeError: 超出该类素材的大小上限（图片 20 MiB / 视频 100 MiB）。
+        ValueError: 扩展名不在窄清单内。
+    """
+    suffix = material.suffix.lower()
+    if suffix in IMAGE_EXTENSIONS:
+        limit = MAX_IMAGE_BYTES
+        kind = "图片"
+    elif suffix in VIDEO_EXTENSIONS:
+        limit = MAX_VIDEO_BYTES
+        kind = "视频"
+    else:
+        raise ValueError(
+            f"素材「{material.name}」的扩展名 {suffix!r} 不在白名单内；只接受图片"
+            " jpg/jpeg/png/webp/gif 与视频 mp4/m4v/mov/webm/avi/mkv（导入时已按此"
+            "窄清单把关，素材可能已被改名）。"
+        )
+    try:
+        size = material.stat().st_size
+    except OSError as exc:
+        raise MaterialReadError(
+            f"无法读取{kind}素材「{material.name}」：{exc.strerror or exc}"
+        ) from exc
+    if size > limit:
+        raise MaterialOversizeError(
+            f"{kind}素材「{material.name}」超出大小上限"
+            f"（{size / (1024 * 1024):.1f} MiB，上限 {limit // (1024 * 1024)} MiB）；"
+            "请压缩或替换后重试。"
+        )
+    try:
+        return material.read_bytes()
+    except OSError as exc:
+        raise MaterialReadError(
+            f"无法读取{kind}素材「{material.name}」：{exc.strerror or exc}"
         ) from exc
 
 
