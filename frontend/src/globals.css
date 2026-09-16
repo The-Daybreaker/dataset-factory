@@ -1,77 +1,158 @@
 /*
- * 全局样式与设计令牌（design.md「UI 设计规范」节）——shadcn/ui 令牌体系 + 蓝色主色预设。
+ * 全局样式与设计令牌——实现侧令牌副本（自包含，随公开仓走）。
  *
- * 数值口径：主色与中性面取 shadcn 官方 blue 预设；画布与侧栏取视觉定稿的「灰画布 + 白
- * 面板 + 竖装饰线」三层分离值（画布浅冷灰、侧栏再深一档、卡片白色圆角面板）；暗色模式
- * 主色取同色相亮变体、不反白。主色的透明度派生（/10 选中底、/22 气泡边、/55 焦点环）
- * 在组件里按需使用，不新增色值。
+ * 唯一事实源 = 协作层 `context/design/ui-system.css`（可执行取值）+ `ui-spec.md`（规范正文）；
+ * 本文件按 T30（2026-09-16）同步其 v4–v20 口径：--n-* 中性阶 16 档、语义色三件组（底/边/字）、
+ * --on-ink、shadcn 语义槽对齐。改视觉先改 ui-system.css，再同步到这里——两边取值保持一字不差。
+ *
+ * 亮暗切换走 class 策略（<html class="dark">），由 useTheme 钩子管理（跟随系统 + 手动记忆）。
+ * 暗色 = 刻度整体翻转：槽位一律指向 --n-* / 语义色令牌，只有「亮色字面值 + 暗色重定义」的
+ * 画布、侧栏交互态、暗色主钮文字三处按 ui-system.css 原样写字面值。
  */
 @import "tailwindcss";
 @import "tw-animate-css";
 
-/* 亮暗切换走 class 策略（<html class="dark">），由 useTheme 钩子管理（跟随系统 + 手动记忆）。 */
 @custom-variant dark (&:is(.dark *));
 
+/* ==========================================================================
+   1 · 原始刻度（primitive）——与 ui-system.css §1 一字不差
+   ========================================================================== */
 :root {
-  /* 画布（页面底）与前景 */
-  --background: 220 13% 96.5%;
-  --foreground: 240 10% 3.9%;
-  /* 卡片 = 白色圆角面板 */
-  --card: 0 0% 100%;
-  --card-foreground: 240 10% 3.9%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 240 10% 3.9%;
-  /* 品牌主色（shadcn blue 预设 · 亮） */
-  --primary: 221.2 83.2% 53.3%;
-  --primary-foreground: 210 40% 98%;
-  --secondary: 240 4.8% 95.9%;
-  --secondary-foreground: 240 5.9% 10%;
-  --muted: 240 4.8% 95.9%;
-  --muted-foreground: 240 4% 35%;
-  --accent: 240 4.8% 95.9%;
-  --accent-foreground: 240 5.9% 10%;
-  --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 0 0% 98%;
-  --success: 142.1 70.6% 45.3%;
-  --success-foreground: 0 0% 98%;
-  --border: 240 5.9% 90%;
-  /* 控件描边：与白面板 / 灰画布对比度均 >=3:1（WCAG 非文本对比要求）。 */
-  --input: 240 4% 55%;
-  --ring: 221.2 83.2% 53.3%;
-  /* 侧栏：比画布再深一档，与内容区分层 */
-  --sidebar: 220 13% 94.3%;
-  --sidebar-foreground: 240 10% 3.9%;
+  /* 中性阶（静白蓝灰，色相 213~220、低饱和）16 档：三层底 = --background(#F8F8F8) /
+     --n-75(#ECECEE 侧栏) / --card(纯白)；层级靠明度阶梯 + hairline */
+  --n-0: 0 0% 100%;
+  --n-25: 220 33% 99%;
+  --n-50: 210 27% 98%;
+  --n-75: 240 5.5% 92.9%;
+  --n-100: 214 25% 96%;
+  --n-150: 216 20% 93%;
+  --n-200: 216 16% 91%;
+  --n-250: 217 15% 86%;
+  --n-300: 217 16% 84%;
+  --n-400: 217 12% 65%;
+  --n-500: 213 13% 46%;
+  --n-600: 214 18% 34%;
+  --n-700: 215 23% 27%;
+  --n-800: 213 33% 14%;
+  --n-900: 221 39% 11%;
+  --n-1000: 221 43% 8%;
+
+  /* 语义色（低饱和 tint，每组三件：底 / 边 / 字）+ 实底章档与状态点档 */
+  --ok-bg: 152 49% 96%;
+  --ok-bd: 152 44% 86%;
+  --ok-ink: 152 70% 30%;
+  --warn-bg: 47 100% 96%;
+  --warn-bd: 44 94% 77%;
+  --warn-ink: 24 91% 37%;
+  --bad-bg: 7 86% 97%;
+  --bad-bd: 7 88% 94%;
+  --bad-ink: 4 74% 49%;
+  --bad-ink-soft: 4 56% 50%; /* 大面积破坏性按钮档（降饱和的沉稳红） */
+  --bad-ink-strong: 4 73% 36%; /* danger 实底 hover 深红 */
+  --info-bg: 210 100% 97%;
+  --info-bd: 208 100% 85%;
+  --info-ink: 217 79% 51%;
+  --ok-dot: 152 74% 37%;
+  --warn-dot: 33 95% 50%;
+  --bad-dot: 358 84% 60%;
+  --info-dot: 217 91% 60%;
+}
+
+/* ==========================================================================
+   2 · 语义槽（shadcn 对齐）——与 ui-system.css §2 一字不差
+   ========================================================================== */
+:root {
+  --background: 0 0% 97.3%; /* 页面底 = 画布 #F8F8F8（用户拍板 HEX 字面值；暗色在 .dark 重定义） */
+  --foreground: var(--n-900);
+
+  --card: var(--n-0);
+  --card-foreground: var(--n-900);
+  --popover: var(--n-0);
+  --popover-foreground: var(--n-900);
+
+  /* 主色 = 蓝 #2563EB；hover / press 三态齐备 */
+  --primary: 221 83% 53%;
+  --primary-hover: 221 83% 45%;
+  --primary-press: 221 83% 38%;
+  --primary-foreground: var(--n-0);
+
+  --secondary: var(--n-100);
+  --secondary-foreground: var(--n-900);
+  --muted: var(--n-100);
+  --muted-foreground: var(--n-700);
+  --accent: var(--n-50);
+  --accent-foreground: var(--n-900);
+
+  /* 侧栏内交互态专用（比侧栏底 --n-75 深半档 / 一档，避免亮底上选中态消失） */
+  --nav-hover: 240 5.5% 90.5%;
+  --nav-active: 240 5.5% 88%;
+
+  --destructive: var(--bad-ink);
+  --destructive-foreground: var(--n-0);
+  /* 画在语义实底（状态章 / 实底钮）上的文字与图形：亮取白，暗随 n-0 翻近黑 */
+  --on-ink: var(--n-0);
+
+  --border: var(--n-200);
+  --input: var(--n-250);
+  --success: var(--ok-ink);
+  --success-foreground: var(--n-0);
+  --ring: var(--primary);
+
+  /* 侧栏：比画布深一档（#ECECEE），与内容区分层 */
+  --sidebar: var(--n-75);
+  --sidebar-foreground: var(--n-900);
   --radius: 0.5rem;
 }
 
+/* 暗色：刻度整体翻转（与 ui-system.css .dark 一字不差）；槽位随指向自动翻转，
+   只有亮色字面值的三处在此重定义。 */
 .dark {
-  --background: 240 6% 5.8%;
-  --foreground: 0 0% 98%;
-  --card: 240 5.9% 8%;
-  --card-foreground: 0 0% 98%;
-  --popover: 240 5.9% 8%;
-  --popover-foreground: 0 0% 98%;
-  /* 暗色主色 = 同色相亮变体（不反白，与亮模式同一「品牌色」印象） */
-  --primary: 217.2 91.2% 59.8%;
-  --primary-foreground: 222.2 47.4% 11.2%;
-  --secondary: 240 3.7% 15.9%;
-  --secondary-foreground: 0 0% 98%;
-  --muted: 240 3.7% 15.9%;
-  --muted-foreground: 240 5% 68%;
-  --accent: 240 3.7% 15.9%;
-  --accent-foreground: 0 0% 98%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 0 0% 98%;
-  --success: 142.1 70.6% 45.3%;
-  --success-foreground: 0 0% 98%;
-  --border: 240 3.7% 15.9%;
-  --input: 240 4% 40%;
-  --ring: 224.3 76.3% 48%;
-  --sidebar: 240 6% 4.6%;
-  --sidebar-foreground: 0 0% 98%;
+  --n-0: 220 6% 8%;
+  --n-25: 220 6% 10%;
+  --n-50: 220 7% 5.5%;
+  --n-75: 220 5% 9%;
+  --n-100: 220 6% 11.5%;
+  --n-150: 220 6% 13.5%;
+  --n-200: 220 6% 16%;
+  --n-250: 220 5% 19%;
+  --n-300: 220 5% 25%;
+  --n-400: 220 4% 35%;
+  --n-500: 220 4% 50%;
+  --n-600: 220 5% 64%;
+  --n-700: 220 6% 78%;
+  --n-800: 220 8% 84%;
+  --n-900: 220 10% 90%;
+  --n-1000: 220 10% 95%;
+
+  --ok-bg: 152 30% 14%;
+  --ok-bd: 152 25% 24%;
+  --ok-ink: 152 55% 70%;
+  --warn-bg: 40 45% 15%;
+  --warn-bd: 40 40% 26%;
+  --warn-ink: 36 92% 66%;
+  --bad-bg: 5 40% 16%;
+  --bad-bd: 5 35% 27%;
+  --bad-ink: 5 85% 72%;
+  --bad-ink-soft: 4 60% 62%;
+  --bad-ink-strong: 5 85% 62%;
+  --info-bg: 212 55% 15%;
+  --info-bd: 211 55% 30%;
+  --info-ink: 208 100% 74%;
+
+  /* 暗色主色蓝提亮一档；蓝底按钮文字两态都取纯白（不随正文压暗），章类字色走 --on-ink */
+  --primary: 217 91% 60%;
+  --primary-hover: 213 94% 67%;
+  --primary-press: 210 98% 73%;
+  --primary-foreground: 0 0% 100%;
+
+  /* 亮色画布是字面值不自动翻转，暗色画布回刻度 */
+  --background: var(--n-0);
+  --nav-hover: 220 6% 11.5%; /* 比侧栏 n-75（9%）亮一档 */
+  --nav-active: 220 6% 13.5%; /* 选中再亮一档 */
 }
 
-/* 把 HSL 令牌映射成 Tailwind 的颜色工具类（bg-background / text-muted-foreground / …）。 */
+/* 把 HSL 令牌映射成 Tailwind 的颜色工具类（bg-background / text-muted-foreground /
+   bg-n-75 / text-ok-ink / bg-bad-ink / …）。指向 --n-* 与语义色的映射随 .dark 自动翻转。 */
 @theme inline {
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
@@ -80,6 +161,8 @@
   --color-popover: hsl(var(--popover));
   --color-popover-foreground: hsl(var(--popover-foreground));
   --color-primary: hsl(var(--primary));
+  --color-primary-hover: hsl(var(--primary-hover));
+  --color-primary-press: hsl(var(--primary-press));
   --color-primary-foreground: hsl(var(--primary-foreground));
   --color-secondary: hsl(var(--secondary));
   --color-secondary-foreground: hsl(var(--secondary-foreground));
@@ -87,15 +170,54 @@
   --color-muted-foreground: hsl(var(--muted-foreground));
   --color-accent: hsl(var(--accent));
   --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-nav-hover: hsl(var(--nav-hover));
+  --color-nav-active: hsl(var(--nav-active));
   --color-destructive: hsl(var(--destructive));
   --color-destructive-foreground: hsl(var(--destructive-foreground));
   --color-success: hsl(var(--success));
   --color-success-foreground: hsl(var(--success-foreground));
+  --color-on-ink: hsl(var(--on-ink));
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
   --color-sidebar: hsl(var(--sidebar));
   --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  /* 中性阶 16 档 */
+  --color-n-0: hsl(var(--n-0));
+  --color-n-25: hsl(var(--n-25));
+  --color-n-50: hsl(var(--n-50));
+  --color-n-75: hsl(var(--n-75));
+  --color-n-100: hsl(var(--n-100));
+  --color-n-150: hsl(var(--n-150));
+  --color-n-200: hsl(var(--n-200));
+  --color-n-250: hsl(var(--n-250));
+  --color-n-300: hsl(var(--n-300));
+  --color-n-400: hsl(var(--n-400));
+  --color-n-500: hsl(var(--n-500));
+  --color-n-600: hsl(var(--n-600));
+  --color-n-700: hsl(var(--n-700));
+  --color-n-800: hsl(var(--n-800));
+  --color-n-900: hsl(var(--n-900));
+  --color-n-1000: hsl(var(--n-1000));
+  /* 语义色三件组（底 / 边 / 字）+ 破坏性按钮档 + 状态点档 */
+  --color-ok-bg: hsl(var(--ok-bg));
+  --color-ok-bd: hsl(var(--ok-bd));
+  --color-ok-ink: hsl(var(--ok-ink));
+  --color-warn-bg: hsl(var(--warn-bg));
+  --color-warn-bd: hsl(var(--warn-bd));
+  --color-warn-ink: hsl(var(--warn-ink));
+  --color-bad-bg: hsl(var(--bad-bg));
+  --color-bad-bd: hsl(var(--bad-bd));
+  --color-bad-ink: hsl(var(--bad-ink));
+  --color-bad-ink-soft: hsl(var(--bad-ink-soft));
+  --color-bad-ink-strong: hsl(var(--bad-ink-strong));
+  --color-info-bg: hsl(var(--info-bg));
+  --color-info-bd: hsl(var(--info-bd));
+  --color-info-ink: hsl(var(--info-ink));
+  --color-ok-dot: hsl(var(--ok-dot));
+  --color-warn-dot: hsl(var(--warn-dot));
+  --color-bad-dot: hsl(var(--bad-dot));
+  --color-info-dot: hsl(var(--info-dot));
   /* 圆角阶梯：卡片 8px（lg）、控件 6px（md）、气泡 10px（xl） */
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
