@@ -311,6 +311,7 @@ def retry_rejections(workdir: Path, seq: int, items: list[str]) -> dict[str, str
         BatchNotFoundError: 批次不存在（strategies 域异常冒泡）。
     """
     view = build_item_view(workdir, seq)
+    listed = set(read_retry_list(workdir, seq))
     rows = {
         row.item: row
         for group in (
@@ -323,6 +324,8 @@ def retry_rejections(workdir: Path, seq: int, items: list[str]) -> dict[str, str
     }
     rejections: dict[str, str] = {}
     for item in items:
+        if item in listed:
+            continue  # 已在名单：加入幂等，不重复判资格（名单是意愿、不是状态）
         row = rows.get(item)
         if row is None:
             rejections[item] = "不是本批次的条目（未导入或不存在）"

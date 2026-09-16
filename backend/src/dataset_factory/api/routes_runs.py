@@ -314,6 +314,7 @@ def remove_batch_retry_list_item(wid: str, sN: str, item: str) -> RetryListView:
     """把一个条目移出重试列表（幂等：不在名单里时原样返回），返回当前名单。"""
     workdir = _workdir_path(wid)
     seq = parse_seq(sN)
+    get_batch(workdir, seq)  # 批次不存在当场 404（契约声明与 POST 一致）
     items = remove_retry_items(workdir, seq, [item])
     return RetryListView(id=f"s{seq}", seq=seq, items=items)
 
@@ -327,5 +328,6 @@ def clear_batch_retry_list(wid: str, sN: str) -> RetryListView:
     """整体清空本批次的重试列表（其他批次的名单不动），返回空名单。"""
     workdir = _workdir_path(wid)
     seq = parse_seq(sN)
+    get_batch(workdir, seq)  # 批次不存在当场 404（契约声明与 POST 一致）
     clear_retry_list(workdir, seq)
     return RetryListView(id=f"s{seq}", seq=seq, items=[])

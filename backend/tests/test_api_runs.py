@@ -629,3 +629,61 @@ def test_clear_retry_list_only_clears_this_batch(
     assert cleared.status_code == 200
     assert cleared.json() == {"id": "s1", "seq": 1, "items": []}
     assert read_retry_list(workdir, 2) == ["cat_001", "cat_002"]  # s2 不受影响
+
+
+def test_retry_list_delete_endpoints_unknown_batch_404(
+    batch_env: tuple[Path, str], retry_client: TestClient
+) -> None:
+    """DELETE 两端点对不存在的批次同样 404（契约声明与 POST 一致）。"""
+    _, wid = batch_env
+
+    removed = retry_client.delete(f"/api/workdirs/{wid}/batches/s99/retry-list/cat_001")
+    cleared = retry_client.delete(f"/api/workdirs/{wid}/batches/s99/retry-list")
+
+    assert removed.status_code == 404
+    assert removed.json()["type"] == "batch-not-found"
+    assert cleared.status_code == 404
+    assert cleared.json()["type"] == "batch-not-found"
+
+
+def test_add_retry_list_skips_items_already_listed(
+    batch_env: tuple[Path, str], retry_client: TestClient, tmp_path: Path
+) -> None:
+    """已在名单里的条目不重复判资格：入列后素材缺失，重复加入仍幂等受理。"""
+    workdir, wid = batch_env
+    _mark_done(workdir, "cat_001")
+    retry_client.post(
+        f"/api/workdirs/{wid}/batches/s1/retry-list", json={"items": ["cat_001"]}
+    )
+    (workdir / "cat_001.jpg").unlink()  # 素材随后缺失（名单是意愿、不回滚）
+
+    again = retry_client.post(
+        f"/api/workdirs/{wid}/batches/s1/retry-list", json={"items": ["cat_001"]}
+    )
+
+    assert again.status_code == 200
+    assert again.json()["items"] == ["cat_001"]
+
+
+def test_delete_batch_clears_its_retry_records(
+    batch_env: tuple[Path, str], retry_client: TestClient
+) -> None:
+    """删除批次连带出清该批次的重试名单（其他批次的名单不动）。"""
+    workdir, wid = batch_env
+    create_batch(
+        workdir,
+        name="二号批",
+        description="",
+        endpoint="main",
+        prompt="详细描述",
+        skills=[],
+    )
+    _mark_done(workdir, "cat_001")
+    add_retry_items(workdir, 1, ["cat_001", "cat_002"])
+    add_retry_items(workdir, 2, ["cat_001"])
+
+    deleted = retry_client.delete(f"/api/workdirs/{wid}/batches/s1")
+
+    assert deleted.status_code == 204
+    assert read_retry_list(workdir, 1) == []  # s1 的名单随批次出清
+    assert read_retry_list(workdir, 2) == ["cat_001"]  # s2 不受影响

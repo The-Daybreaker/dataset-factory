@@ -712,9 +712,11 @@ export interface paths {
         post?: never;
         /**
          * Delete Workdir Batch
-         * @description 删除批次：该策略全部产物 txt + 快照 + state.json 记录 + 排除名单一并移除。
+         * @description 删除批次：产物 + 快照 + state 记录与排除名单一并移除、重试名单出清。
          *
-         *     删前告知条数由界面负责（批次视图的 product_count 即数据源）。
+         *     重试名单的结构归 runs 域（strategies 不能反向依赖），删除动作在入口层编排
+         *     两个域——将来 CLI 的 batch delete 同样要带上这一步。删前告知条数由界面负责
+         *     （批次视图的 product_count 即数据源）。
          */
         delete: operations["delete_workdir_batch_api_workdirs__wid__batches__sN__delete"];
         options?: never;

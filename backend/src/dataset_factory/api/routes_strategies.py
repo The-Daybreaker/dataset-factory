@@ -19,7 +19,7 @@ from typing import cast
 
 from fastapi import APIRouter, Request, Response
 
-from ..runs import BatchRunner
+from ..runs import BatchRunner, clear_retry_list
 from ..strategies import (
     BatchEntry,
     LibraryStrategy,
@@ -425,11 +425,16 @@ def unhide_batch(wid: str, sN: str) -> BatchView:
     },
 )
 def delete_workdir_batch(wid: str, sN: str) -> Response:
-    """删除批次：该策略全部产物 txt + 快照 + state.json 记录 + 排除名单一并移除。
+    """删除批次：产物 + 快照 + state 记录与排除名单一并移除、重试名单出清。
 
-    删前告知条数由界面负责（批次视图的 product_count 即数据源）。
+    重试名单的结构归 runs 域（strategies 不能反向依赖），删除动作在入口层编排
+    两个域——将来 CLI 的 batch delete 同样要带上这一步。删前告知条数由界面负责
+    （批次视图的 product_count 即数据源）。
     """
-    delete_batch(_workdir_path(wid), parse_seq(sN))
+    workdir = _workdir_path(wid)
+    seq = parse_seq(sN)
+    delete_batch(workdir, seq)
+    clear_retry_list(workdir, seq)
     return Response(status_code=204)
 
 
