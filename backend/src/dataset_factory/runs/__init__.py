@@ -15,6 +15,7 @@ from .errors import (
     BatchInactiveError,
     RunError,
     RunJournalCorruptedError,
+    RunNotActiveError,
     RunOccupiedError,
 )
 from .journal import RunJournal, load_recent_success_hashes
@@ -28,6 +29,7 @@ from .runner import (
     RunReport,
     RunStartedEvent,
     RunTrigger,
+    completer_for_snapshot,
     read_retry_list,
 )
 
@@ -42,10 +44,12 @@ __all__ = [
     "RunJournalCorruptedError",
     "RunLock",
     "RunMode",
+    "RunNotActiveError",
     "RunOccupiedError",
     "RunReport",
     "RunStartedEvent",
     "RunTrigger",
+    "completer_for_snapshot",
     "load_recent_success_hashes",
     "read_occupier",
     "read_retry_list",

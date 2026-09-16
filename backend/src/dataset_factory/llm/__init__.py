@@ -25,7 +25,9 @@ from .config import (
     EndpointConfig,
     RequestConfig,
     describe_config,
+    parse_request_params,
     read_config,
+    resolve_api_key,
 )
 from .endpoints import (
     DEFAULT_CONFIG_NAME,
@@ -121,10 +123,12 @@ __all__ = [
     "has_config",
     "has_stored_key",
     "list_configs",
+    "parse_request_params",
     "probe_endpoint",
     "read_config",
     "read_config_data",
     "read_stored_api_key",
+    "resolve_api_key",
     "set_active_config",
     "update_config",
     "validated_request_params",

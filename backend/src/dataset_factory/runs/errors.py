@@ -27,6 +27,13 @@ class RunOccupiedError(RunError):
         self.occupier = occupier
 
 
+class RunNotActiveError(RunError):
+    """该批次当前没有进行中的跑批（current / stop / stream 找不到运行）。
+
+    HTTP 404 problem+json（run-not-active）。
+    """
+
+
 class BatchInactiveError(RunError):
     """批次处于停用（隐藏）状态，不允许启动跑批——HTTP 409 problem+json（batch-inactive）。"""
 

@@ -36,6 +36,16 @@ from typing import Any, Literal, cast
 
 from .._fs import atomic_write_text
 from ..labeling import LabelingEngine, MaterialOversizeError, MaterialReadError
+from ..llm import (
+    SUPPORTED_API_FORMAT,
+    Completer,
+    EndpointConfig,
+    build_completer,
+    parse_request_params,
+    read_stored_api_key,
+    resolve_api_key,
+)
+from ..llm.endpoints import ConfigError
 from ..llm.errors import (
     LLMAuthError,
     LLMBadRequestError,
@@ -65,6 +75,7 @@ __all__ = [
     "RunReport",
     "RunStartedEvent",
     "RunTrigger",
+    "completer_for_snapshot",
     "read_retry_list",
 ]
 
@@ -84,6 +95,10 @@ _JITTER_RATIO = 0.2
 _STATUS_RUNNING = "running"
 _STATUS_COMPLETED = "completed"
 _STATUS_INTERRUPTED = "interrupted"
+#: 进度快照（current 端点）的运行前状态：已受理、后台线程尚未跑起来。
+_STATUS_PENDING = "pending"
+#: 进度快照的失败终态：跑批没能启动（如跨进程锁被占 / 快照在启动前被删）。
+_STATUS_FAILED = "failed"
 
 # state.json 的重试列表键（结构由本域定义，WorkdirStore 只忠实存取；缺键视为空）。
 _RETRY_LIST_KEY = "retry_list"
@@ -234,6 +249,33 @@ class BatchRunner:
         self._sleep = sleeper if sleeper is not None else time.sleep
         self._stop_event = threading.Event()
         self._subscribers: list[Callable[[RunEvent], None]] = []
+        # 进度快照（current 端点的数据源）：run_id 构造时预分配（POST 受理响应要
+        # 立即返回它；目录创建仍在持锁后进行——跨进程同秒撞名时输家抢不到锁、
+        # 不会真建目录）。counters 全程持有一份运行中镜像，供无锁读取。
+        self._run_id = _new_run_id(WorkdirStore(workdir).runs_dir)
+        self._status = _STATUS_PENDING
+        self._error: str | None = None
+        self._current_item: str | None = None
+        self._counters: dict[str, int] = {
+            "planned": 0,
+            "attempted": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "skipped": 0,
+        }
+
+    # -- 进度快照（current 端点数据源；跨线程无锁读——单键读写原子性够用） ----
+
+    def snapshot(self) -> dict[str, Any]:
+        """当前运行进度快照：run_id / mode / status / counters / 当前条目 / 失败信息。"""
+        return {
+            "run_id": self._run_id,
+            "mode": self._mode,
+            "status": self._status,
+            "counters": dict(self._counters),
+            "current_item": self._current_item,
+            "error": self._error,
+        }
 
     # -- 停止与事件订阅（供入口层跨线程调用） --------------------------------
 
@@ -260,6 +302,10 @@ class BatchRunner:
     def run(self) -> RunReport:
         """执行一次跑批（阻塞到结束 / 停止），返回最终报告。
 
+        启动失败的异常（跨进程锁被占、批次在受理后被删等）在此收口：状态置
+        ``failed``、错误信息进进度快照、向订阅者发一条 failed 的 run-finished
+        事件后原样重抛——HTTP 受理已返回 202，失败原因只能走 SSE / current 呈现。
+
         Raises:
             BatchNotFoundError: 批次不存在（strategies 域异常冒泡）。
             BatchInactiveError: 批次已停用（隐藏），不允许跑批。
@@ -267,6 +313,24 @@ class BatchRunner:
             RunOccupiedError: 工作目录已有跑批在运行（运行锁被占用）。
             RunJournalCorruptedError: 历史运行流水损坏（full 模式续跑判定要读它）。
         """
+        self._status = _STATUS_RUNNING
+        try:
+            return self._run()
+        except Exception as exc:
+            self._status = _STATUS_FAILED
+            self._error = str(exc)
+            self._emit(
+                RunFinishedEvent(
+                    run_id=self._run_id,
+                    batch=self._seq,
+                    status=_STATUS_FAILED,
+                    counters=self._counters,
+                )
+            )
+            raise
+
+    def _run(self) -> RunReport:
+        """run() 的原始执行体（锁的获取与释放都在这里）。"""
         entry = get_batch(self._workdir, self._seq)
         if not entry.active:
             raise BatchInactiveError(
@@ -295,13 +359,7 @@ class BatchRunner:
         计划构建放在创建运行目录**之前**：计划阶段失败（历史流水损坏等）零痕迹，
         不留下空 run 目录。
         """
-        counters = {
-            "planned": 0,
-            "attempted": 0,
-            "succeeded": 0,
-            "failed": 0,
-            "skipped": 0,
-        }
+        counters = self._counters
         planned_stems: list[str] = []
         if self._mode == "retry":
             planned_stems = list(read_retry_list(self._workdir, self._seq))
@@ -311,8 +369,7 @@ class BatchRunner:
             )
             counters["skipped"] = len(skip_stems)
 
-        run_id = _new_run_id(store.runs_dir)
-        journal = RunJournal(store.runs_dir / run_id)
+        journal = RunJournal(store.runs_dir / self._run_id)
         started_at = _utc_now_iso()
         model = cast(str, snapshot.endpoint["model"])
         engine = LabelingEngine(self._completer, model)
@@ -320,7 +377,7 @@ class BatchRunner:
         counters["planned"] = len(planned_stems)
         strategy_hash = _snapshot_file_hash(store, self._seq)
         run_meta: dict[str, object] = {
-            "run_id": run_id,
+            "run_id": self._run_id,
             "batch": self._seq,
             "mode": self._mode,
             "trigger": self._trigger,
@@ -341,7 +398,7 @@ class BatchRunner:
         )
         self._emit(
             RunStartedEvent(
-                run_id=run_id,
+                run_id=self._run_id,
                 mode=self._mode,
                 batch=self._seq,
                 planned=counters["planned"],
@@ -354,6 +411,7 @@ class BatchRunner:
             if self._stop_event.is_set():
                 interrupted = True
                 break
+            self._current_item = item
             if self._label_one(journal, engine, snapshot, item, counters):
                 succeeded_items.append(item)
 
@@ -362,6 +420,7 @@ class BatchRunner:
             if interrupted or self._stop_event.is_set()
             else _STATUS_COMPLETED
         )
+        self._status = status
         counters["attempted"] = counters["succeeded"] + counters["failed"]
         finished_at = _utc_now_iso()
         run_meta["status"] = status
@@ -379,11 +438,11 @@ class BatchRunner:
         )
         self._emit(
             RunFinishedEvent(
-                run_id=run_id, batch=self._seq, status=status, counters=counters
+                run_id=self._run_id, batch=self._seq, status=status, counters=counters
             )
         )
         return RunReport(
-            run_id=run_id,
+            run_id=self._run_id,
             status=status,
             mode=self._mode,
             counters=dict(counters),
@@ -674,6 +733,46 @@ def _snapshot_file_hash(store: WorkdirStore, seq: int) -> str:
     """快照文件的 SHA-256（run.json 的策略哈希锚点——快照被手改可被发现）。"""
     data = (store.strategies_dir / f"s{seq}.json").read_bytes()
     return hashlib.sha256(data).hexdigest()
+
+
+# -- 客户端装配（快照 → Completer） ---------------------------------------------
+
+
+def completer_for_snapshot(endpoint_block: dict[str, Any]) -> Completer:
+    """从策略快照的端点块装配打标客户端。
+
+    三要素的取处刻意不同：base_url / model / 请求参数取**快照**（快照隔离——库端
+    事后改配置不影响本批）；密钥**现读**数据根（密钥是运行时凭据不是内容资产，
+    绝不进快照，且可能被轮换——双通道判定与 config 层同一份）。API 格式只支持
+    当前期唯一格式（快照来自旧版本工具时 fail loud，不静默用错协议）。
+
+    Args:
+        endpoint_block: 快照 JSON 的 endpoint 块（name / base_url / model /
+            api_format / request_params）。
+
+    Returns:
+        实现 Completer 协议的客户端。
+
+    Raises:
+        ConfigError: API 格式不支持，或该配置的密钥两个通道都拿不到。
+    """
+    api_format = str(endpoint_block.get("api_format") or SUPPORTED_API_FORMAT)
+    if api_format != SUPPORTED_API_FORMAT:
+        raise ConfigError(
+            f"快照的 API 格式「{api_format}」暂不支持（当前仅支持 "
+            f"{SUPPORTED_API_FORMAT}）；请新建批次重新应用策略。"
+        )
+    config_name = str(endpoint_block["name"])
+    api_key = resolve_api_key(read_stored_api_key(config_name))
+    params = cast("dict[str, object]", endpoint_block.get("request_params") or {})
+    return build_completer(
+        EndpointConfig(
+            base_url=cast(str, endpoint_block["base_url"]),
+            model=cast(str, endpoint_block["model"]),
+            api_key=api_key,
+            request=parse_request_params(params),
+        )
+    )
 
 
 # -- 重试列表（state.json 的 retry_list 键；结构由本域定义） --------------------

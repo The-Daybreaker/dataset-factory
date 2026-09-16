@@ -40,6 +40,13 @@ from ..prompts import (
     PromptTooLargeError,
     seed_builtin_presets,
 )
+from ..runs import (
+    BatchInactiveError,
+    RunError,
+    RunJournalCorruptedError,
+    RunNotActiveError,
+    RunOccupiedError,
+)
 from ..sessions import (
     SessionError,
     SessionEventError,
@@ -76,6 +83,7 @@ from . import (
     routes_endpoints,
     routes_labeling,
     routes_prompts,
+    routes_runs,
     routes_service,
     routes_skills,
     routes_strategies,
@@ -102,6 +110,10 @@ def create_app(frontend_dir: Path | None = None) -> FastAPI:
     # 导入槽位表：同一工作目录同时只允许一个导入任务（routes_workdir 检查与释放）。
     app.state.import_slots = {}
     app.state.import_slots_guard = threading.Lock()
+    # 跑批运行注册表：工作目录 realpath → 运行中的 BatchRunner（内存态、重启即丢；
+    # 磁盘运行锁是跨进程权威，注册表只做进程内快速拒绝与 current/stop/stream 的寻址）。
+    app.state.run_registry = {}
+    app.state.run_registry_guard = threading.Lock()
     app.include_router(routes_labeling.router)
     app.include_router(routes_prompts.router)
     app.include_router(routes_skills.router)
@@ -110,6 +122,7 @@ def create_app(frontend_dir: Path | None = None) -> FastAPI:
     app.include_router(routes_service.router)
     app.include_router(routes_tasks.router)
     app.include_router(routes_workdir.router)
+    app.include_router(routes_runs.router)
     app.include_router(routes_strategies.library_router)
     app.include_router(routes_strategies.batches_router)
     directory = frontend_dir if frontend_dir is not None else _default_frontend_dir()
@@ -262,3 +275,38 @@ def _register_error_handlers(app: FastAPI) -> None:
         return problem_response(500, "strategy-error", "策略数据异常", str(exc))
 
     app.add_exception_handler(StrategyError, strategy_error_handler)
+
+    def run_occupied_handler(request: Request, exc: Exception) -> JSONResponse:
+        # occupier 进 RFC 9457 扩展字段（前端提示「谁在占用」用）；跨进程残留信息
+        # 损坏时为 None，detail 已有笼统文案兜底。
+        occupier = getattr(exc, "occupier", None)
+        return problem_response(
+            409,
+            "run-occupied",
+            "工作目录已有跑批在运行",
+            str(exc),
+            extras={"occupier": occupier} if occupier else None,
+        )
+
+    app.add_exception_handler(RunOccupiedError, run_occupied_handler)
+
+    def batch_inactive_handler(request: Request, exc: Exception) -> JSONResponse:
+        return problem_response(409, "batch-inactive", "批次已停用", str(exc))
+
+    app.add_exception_handler(BatchInactiveError, batch_inactive_handler)
+
+    def run_not_active_handler(request: Request, exc: Exception) -> JSONResponse:
+        return problem_response(404, "run-not-active", "当前没有进行中的跑批", str(exc))
+
+    app.add_exception_handler(RunNotActiveError, run_not_active_handler)
+
+    def run_journal_corrupted_handler(request: Request, exc: Exception) -> JSONResponse:
+        return problem_response(500, "run-journal-corrupted", "运行流水损坏", str(exc))
+
+    app.add_exception_handler(RunJournalCorruptedError, run_journal_corrupted_handler)
+
+    def run_error_handler(request: Request, exc: Exception) -> JSONResponse:
+        # runs 域基类兜底：500 档，消息已可操作。
+        return problem_response(500, "run-error", "跑批数据异常", str(exc))
+
+    app.add_exception_handler(RunError, run_error_handler)

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..llm import SUPPORTED_API_FORMAT
@@ -548,3 +550,37 @@ class ExclusionsView(BaseModel):
     id: str = Field(description="批次标识（sN 形式）")
     seq: int = Field(description="序号")
     items: list[str] = Field(description="当前排除名单（追加序）")
+
+
+# --------------------------------------------------------------------------
+# 跑批（runs 执行器的 HTTP 面）
+# --------------------------------------------------------------------------
+
+
+class RunStartRequest(BaseModel):
+    """启动跑批的请求体。"""
+
+    mode: Literal["full", "retry"] = Field(
+        description="full = 全量打未完成的条目；retry = 只打重试列表快照"
+    )
+
+
+class RunAccepted(BaseModel):
+    """跑批受理响应（202）：后台线程已受理，进度走 current / SSE。"""
+
+    run_id: str = Field(description="运行 id（.dsf/runs/ 下的目录名）")
+
+
+class RunStatusView(BaseModel):
+    """当前运行的进度快照（GET current 的响应体）。"""
+
+    run_id: str = Field(description="运行 id")
+    mode: str = Field(description="full | retry")
+    status: str = Field(
+        description="running | completed | interrupted | failed（failed = 启动失败）"
+    )
+    counters: dict[str, int] = Field(
+        description="计数（planned / attempted / succeeded / failed / skipped）"
+    )
+    current_item: str | None = Field(description="正在（或最近一次）处理的素材主干")
+    error: str | None = Field(description="启动失败的原因；正常运行为 null")

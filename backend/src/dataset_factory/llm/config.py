@@ -122,7 +122,7 @@ def read_config() -> EndpointConfig:
     return EndpointConfig(
         base_url=base_url,
         model=model,
-        api_key=_resolve_api_key(file_key),
+        api_key=resolve_api_key(file_key),
         request=_parse_request_config(name, data),
     )
 
@@ -169,9 +169,6 @@ def describe_config() -> ConfigDescription:
 def _parse_request_config(name: str, data: Mapping[str, object]) -> RequestConfig:
     """解析 config.json 里可选的请求参数（没配就用内置默认）。
 
-    类型校验复用存储层的 validated_request_params（唯一校验点——界面概要与请求装配
-    看到的是同一份判定）；这里只做「有值就用、没值回默认」与数值收窄。
-
     Args:
         name: 配置名（仅用于报错信息）。
         data: config.json 解析出的顶层对象。
@@ -182,7 +179,25 @@ def _parse_request_config(name: str, data: Mapping[str, object]) -> RequestConfi
     Raises:
         ConfigError: 某个参数字段存在但类型不对。
     """
-    params = validated_request_params(data, name)
+    return parse_request_params(validated_request_params(data, name))
+
+
+def parse_request_params(params: Mapping[str, object]) -> RequestConfig:
+    """把「已过类型校验的请求参数键值」装配成 RequestConfig（没配的键用内置默认）。
+
+    公开出口——二期跑批从策略快照的 request_params 块装配请求参数时复用同一份
+    收窄逻辑（快照装配时已校验过类型，这里只做「有值就用、没值回默认」）。
+
+    Args:
+        params: 只含实际存在的参数键的字典（temperature / top_p / max_tokens /
+            extra_body / timeout_seconds / max_retries）。
+
+    Returns:
+        RequestConfig。
+
+    Raises:
+        ConfigError: 某个参数键存在但类型不对（bool 不算数字 / 整数）。
+    """
     timeout = params.get("timeout_seconds")
     retries = params.get("max_retries")
     extra_body = params.get("extra_body")
@@ -212,11 +227,13 @@ def _as_opt_int(raw: object | None) -> int | None:
     return cast(int, raw) if raw is not None else None
 
 
-def _resolve_api_key(file_key: SecretValue | None) -> SecretValue:
-    """按双通道解析 API 密钥：环境变量 DSF_API_KEY 优先，其次当前配置的 credentials 文件。
+def resolve_api_key(file_key: SecretValue | None) -> SecretValue:
+    """按双通道解析 API 密钥：环境变量 DSF_API_KEY 优先，其次 credentials 文件密钥。
+
+    公开出口——二期跑批从策略快照装配客户端时复用同一份双通道判定。
 
     Args:
-        file_key: 当前配置 credentials 文件里的密钥（读不到为 None）。
+        file_key: credentials 文件里的密钥（读不到为 None）。
 
     Returns:
         包好的密钥（SecretValue，字符串化时脱敏）。

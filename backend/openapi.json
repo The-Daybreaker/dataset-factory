@@ -997,6 +997,102 @@
         "title": "PromptSaveRequest",
         "type": "object"
       },
+      "RunAccepted": {
+        "description": "跑批受理响应（202）：后台线程已受理，进度走 current / SSE。",
+        "properties": {
+          "run_id": {
+            "description": "运行 id（.dsf/runs/ 下的目录名）",
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "title": "RunAccepted",
+        "type": "object"
+      },
+      "RunStartRequest": {
+        "description": "启动跑批的请求体。",
+        "properties": {
+          "mode": {
+            "description": "full = 全量打未完成的条目；retry = 只打重试列表快照",
+            "enum": [
+              "full",
+              "retry"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "RunStartRequest",
+        "type": "object"
+      },
+      "RunStatusView": {
+        "description": "当前运行的进度快照（GET current 的响应体）。",
+        "properties": {
+          "counters": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "计数（planned / attempted / succeeded / failed / skipped）",
+            "title": "Counters",
+            "type": "object"
+          },
+          "current_item": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "正在（或最近一次）处理的素材主干",
+            "title": "Current Item"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "启动失败的原因；正常运行为 null",
+            "title": "Error"
+          },
+          "mode": {
+            "description": "full | retry",
+            "title": "Mode",
+            "type": "string"
+          },
+          "run_id": {
+            "description": "运行 id",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "description": "running | completed | interrupted | failed（failed = 启动失败）",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "mode",
+          "status",
+          "counters",
+          "current_item",
+          "error"
+        ],
+        "title": "RunStatusView",
+        "type": "object"
+      },
       "ServiceLogs": {
         "description": "GET /api/service/logs 的响应体：运行日志尾部。",
         "properties": {
@@ -4081,6 +4177,270 @@
         "summary": "Hide Batch",
         "tags": [
           "批次（策略实例）"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/batches/{sN}/runs": {
+      "post": {
+        "description": "受理一次跑批：同步预检 + 登记注册表 + 后台线程执行，202 立即返回。\n\n预检在受理之前完成（批次存在 / 活跃 / 快照可读 / 客户端可装配），把能在\n请求内确定的错误同步报给客户端；真正的运行锁在后台线程里抢——跨进程占用\n（如 CLI 正在跑同一工作目录）在受理后才暴露，失败原因经 SSE / current 呈现\n（进度快照 status=failed + 一条 failed 的 run-finished 事件）。",
+        "operationId": "start_run_api_workdirs__wid__batches__sN__runs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sN",
+            "required": true,
+            "schema": {
+              "title": "Sn",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "wid / 批次 / 快照不存在（problem+json）"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "批次已停用或工作目录已有跑批在运行（problem+json: batch-inactive / run-occupied）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Run",
+        "tags": [
+          "跑批"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/batches/{sN}/runs/current": {
+      "get": {
+        "description": "当前运行进度快照（轮询用；SSE 断线重连后的全量刷新同款数据）。",
+        "operationId": "current_run_api_workdirs__wid__batches__sN__runs_current_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sN",
+            "required": true,
+            "schema": {
+              "title": "Sn",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunStatusView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "该批次当前没有进行中的跑批（problem+json: run-not-active）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Current Run",
+        "tags": [
+          "跑批"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/batches/{sN}/runs/stop": {
+      "post": {
+        "description": "请求停止当前跑批（协作取消）：置位信号即返回，当前条目在安全点停下。",
+        "operationId": "stop_run_api_workdirs__wid__batches__sN__runs_stop_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sN",
+            "required": true,
+            "schema": {
+              "title": "Sn",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "该批次当前没有进行中的跑批（problem+json: run-not-active）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stop Run",
+        "tags": [
+          "跑批"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/batches/{sN}/runs/stream": {
+      "get": {
+        "description": "SSE 业务事件流：run-started → item-updated… → run-finished（收到终态即关流）。\n\n订阅之前已发生的事件不补发（前端断线约定：重连先全量拉条目视图刷新界面）；\n事件经线程安全队列从跑批线程转发到流。",
+        "operationId": "stream_run_api_workdirs__wid__batches__sN__runs_stream_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sN",
+            "required": true,
+            "schema": {
+              "title": "Sn",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "该批次当前没有进行中的跑批（problem+json: run-not-active）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stream Run",
+        "tags": [
+          "跑批"
         ]
       }
     },
