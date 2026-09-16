@@ -262,10 +262,10 @@ def test_create_batch_invalid_type_returns_422(
     assert response.status_code == 422
 
 
-def test_patch_batch_partial_combo_returns_problem_json(
+def test_patch_batch_rejects_combo_fields_with_422(
     client: TestClient, assets: None, wid: str
 ) -> None:
-    """组合只给一部分 → 400 problem+json（strategy-refs-invalid，同时提供语义）。"""
+    """组合不可改（批次 = 库策略的只读副本）：PATCH 带组合字段 → 422（extra=forbid）。"""
     client.post(
         f"/api/workdirs/{wid}/batches",
         json={
@@ -275,40 +275,13 @@ def test_patch_batch_partial_combo_returns_problem_json(
             "prompt": "详细描述",
         },
     )
-
-    response = client.patch(
-        f"/api/workdirs/{wid}/batches/s1", json={"prompt": "详细描述"}
-    )
-
-    assert response.status_code == 400
-    assert response.json()["type"] == "strategy-refs-invalid"
-
-
-def test_patch_batch_combo_rebuilds_snapshot(
-    client: TestClient, assets: None, wid: str, tmp_path: Path
-) -> None:
-    """组合整体替换 → 快照重新装配（正文刷新），批次元数据不变。"""
-    client.post(
-        f"/api/workdirs/{wid}/batches",
-        json={
-            "type": "scratch",
-            "name": "从零来",
-            "endpoint": "main",
-            "prompt": "详细描述",
-        },
-    )
-    save_prompt(Prompt(name="另一条", description="", body="另一套正文"))
 
     response = client.patch(
         f"/api/workdirs/{wid}/batches/s1",
         json={"endpoint": "main", "prompt": "另一条", "skills": []},
     )
 
-    assert response.status_code == 200
-    assert response.json()["name"] == "从零来"
-    snapshot_file = tmp_path / "photos" / ".dsf" / "strategies" / "s1.json"
-    assert snapshot_file.is_file()
-    assert "另一套正文" in snapshot_file.read_text(encoding="utf-8")
+    assert response.status_code == 422
 
 
 def test_hide_unhide_and_delete_unknown_batch_problem_json(

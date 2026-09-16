@@ -92,7 +92,8 @@
         "type": "object"
       },
       "BatchUpdateRequest": {
-        "description": "PATCH /api/workdirs/{wid}/batches/{sN} 的请求体：顶部「保存策略」。\n\n组合三件要么全提供（整体替换、重新装配快照）要么全不提供（只改元数据）。",
+        "additionalProperties": false,
+        "description": "PATCH /api/workdirs/{wid}/batches/{sN} 的请求体：改名 / 描述。\n\n组合不可改（工作目录下的策略是库策略的应用副本，想换组合 = 新建批次）；\n未声明字段一律拒绝，让「发错字段」当场 422 而不是被静默忽略。",
         "properties": {
           "description": {
             "anyOf": [
@@ -106,18 +107,6 @@
             "description": "说明文字；缺省 = 不变",
             "title": "Description"
           },
-          "endpoint": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "端点配置名（组合整体替换时必填）",
-            "title": "Endpoint"
-          },
           "name": {
             "anyOf": [
               {
@@ -129,33 +118,6 @@
             ],
             "description": "显示名；缺省 = 不变",
             "title": "Name"
-          },
-          "prompt": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "基础提示词名（组合整体替换时必填）",
-            "title": "Prompt"
-          },
-          "skills": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Skill 清单（组合整体替换时必填）",
-            "title": "Skills"
           }
         },
         "title": "BatchUpdateRequest",
@@ -3782,7 +3744,7 @@
         ]
       },
       "patch": {
-        "description": "配置补丁（打标页顶部「保存策略」）：名称 / 描述 / 组合整体替换。",
+        "description": "改名 / 描述（纯显示元数据）。\n\n组合不可改——工作目录下的策略是库策略的应用副本（copy-on-apply），\n库端编辑不传染、已应用批次不提供就地改组合；想换组合 = 新建批次。\n「保存策略」钮的落点是策略库（PUT /api/strategies/{id}），不是这里。",
         "operationId": "patch_batch_api_workdirs__wid__batches__sN__patch",
         "parameters": [
           {
@@ -3825,17 +3787,6 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
-              "application/problem+json": {}
-            },
-            "description": "组合替换不完整 / 新引用不存在（strategy-refs-invalid）"
-          },
           "404": {
             "content": {
               "application/json": {
@@ -3851,11 +3802,12 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Problem"
                 }
-              }
+              },
+              "application/problem+json": {}
             },
-            "description": "Validation Error"
+            "description": "请求体含未声明字段（组合不可改，extra=forbid）"
           }
         },
         "summary": "Patch Batch",

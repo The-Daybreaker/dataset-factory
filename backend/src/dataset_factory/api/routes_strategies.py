@@ -4,7 +4,8 @@
 - ``library_router``（/api/strategies）：库 CRUD / copy / rebind（同提示词库的
   直连管理方式）；
 - ``batches_router``（/api/workdirs/{wid}/batches）：新建（library copy-on-apply /
-  scratch）、配置补丁（顶部「保存策略」）、停用召回、删除、排除打包名单。
+  scratch）、改名 / 描述（组合不可改——批次是库策略的应用副本）、停用召回、
+  删除、排除打包名单。
 
 新建批次为 201 + Location；其余写操作返回操作后的现状视图。错误一律
 problem+json（404 strategy/batch/workdir 不存在、400 名字 / 引用不合法、
@@ -310,29 +311,31 @@ def create_workdir_batch(wid: str, body: BatchCreateRequest) -> Response:
     "/{sN}",
     response_model=BatchView,
     responses={
-        400: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "组合替换不完整 / 新引用不存在（strategy-refs-invalid）",
-        },
         404: {
             "model": Problem,
             "content": {"application/problem+json": {}},
             "description": "wid 或批次不存在（workdir-not-found / batch-not-found）",
         },
+        422: {
+            "model": Problem,
+            "content": {"application/problem+json": {}},
+            "description": "请求体含未声明字段（组合不可改，extra=forbid）",
+        },
     },
 )
 def patch_batch(wid: str, sN: str, body: BatchUpdateRequest) -> BatchView:
-    """配置补丁（打标页顶部「保存策略」）：名称 / 描述 / 组合整体替换。"""
+    """改名 / 描述（纯显示元数据）。
+
+    组合不可改——工作目录下的策略是库策略的应用副本（copy-on-apply），
+    库端编辑不传染、已应用批次不提供就地改组合；想换组合 = 新建批次。
+    「保存策略」钮的落点是策略库（PUT /api/strategies/{id}），不是这里。
+    """
     workdir = _workdir_path(wid)
     entry = update_batch(
         workdir,
         parse_seq(sN),
         name=body.name,
         description=body.description,
-        endpoint=body.endpoint,
-        prompt=body.prompt,
-        skills=body.skills,
     )
     return _to_batch_view(wid, entry)
 

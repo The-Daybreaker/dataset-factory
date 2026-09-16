@@ -9,10 +9,9 @@
 - ``.dsf/strategies/s<N>.json``：每套策略一份应用时刻全文快照（snapshot.py 装配）。
 
 新建 = 应用（apply）：从库策略 copy-on-apply（记来源：库 ID + 应用时刻组合哈希）
-或从零配置直接装配；此后库里的改动 / 删除不影响已应用批次。配置补丁（PATCH，
-打标页顶部「保存策略」的落点）改名称 / 描述只动 state.json；改组合则**重新装配
-快照**（现读资产全文、刷新哈希与时刻——快照只在用户显式保存时变化，库资产
-被编辑不会自动传染进批次）。
+或从零配置直接装配；此后库里的改动 / 删除不影响已应用批次。**组合不可改**
+（2026-09-16 用户澄清）：工作目录下的策略是库策略的只读副本，配置补丁只支持
+改名 / 描述（纯显示元数据）；想换组合 = 新建批次（序号递增）。
 
 排除名单 = 用户排除出本次打包的条目清单，随批次元数据持久、跨会话存活；
 只被读来看（打包资格判定在 export 包），不参与运行判定。
@@ -286,33 +285,16 @@ def update_batch(
     *,
     name: str | None = None,
     description: str | None = None,
-    endpoint: str | None = None,
-    prompt: str | None = None,
-    skills: list[str] | None = None,
 ) -> BatchEntry:
-    """配置补丁（打标页顶部「保存策略」）：改名称 / 描述、或整体替换组合。
+    """配置补丁：改名 / 描述（纯显示元数据，快照不动）。
 
-    组合三件（endpoint / prompt / skills）要么全提供（整体替换、重新装配快照）、
-    要么全不提供（只改元数据）——部分替换的合并语义含糊，不提供。
-    重新装配保留原应用来源（来源记的是「从哪来」，组合改了「从哪来」不变）。
+    组合不可改——工作目录下的策略是库策略的应用副本，想换组合 = 新建批次。
     """
     entry = get_batch(workdir, seq)
     if name is not None:
         entry.name = name
     if description is not None:
         entry.description = description
-    if endpoint is not None or prompt is not None or skills is not None:
-        if endpoint is None or prompt is None or skills is None:
-            raise StrategyRefsError(
-                "更换组合需要同时提供端点配置、基础提示词与 Skill 清单——"
-                "不支持只替换其中一部分。"
-            )
-        require_refs_exist(endpoint, prompt, skills)
-        snapshot = build_snapshot(
-            endpoint, prompt, skills, built_at=_now_iso(), source=None
-        )
-        snapshot.source = read_snapshot(workdir, seq).source
-        _write_snapshot(WorkdirStore(workdir), seq, snapshot)
     entries = list_batches(workdir)
     _write_batches(
         workdir, _replace_entry(entries, entry), _read_next_seq(workdir, entries)

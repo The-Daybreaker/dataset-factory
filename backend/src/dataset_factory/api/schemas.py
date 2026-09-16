@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..llm import SUPPORTED_API_FORMAT
 
@@ -524,22 +524,16 @@ class BatchCreateRequest(BaseModel):
 
 
 class BatchUpdateRequest(BaseModel):
-    """PATCH /api/workdirs/{wid}/batches/{sN} 的请求体：顶部「保存策略」。
+    """PATCH /api/workdirs/{wid}/batches/{sN} 的请求体：改名 / 描述。
 
-    组合三件要么全提供（整体替换、重新装配快照）要么全不提供（只改元数据）。
+    组合不可改（工作目录下的策略是库策略的应用副本，想换组合 = 新建批次）；
+    未声明字段一律拒绝，让「发错字段」当场 422 而不是被静默忽略。
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, description="显示名；缺省 = 不变")
     description: str | None = Field(default=None, description="说明文字；缺省 = 不变")
-    endpoint: str | None = Field(
-        default=None, description="端点配置名（组合整体替换时必填）"
-    )
-    prompt: str | None = Field(
-        default=None, description="基础提示词名（组合整体替换时必填）"
-    )
-    skills: list[str] | None = Field(
-        default=None, description="Skill 清单（组合整体替换时必填）"
-    )
 
 
 class ExclusionsRequest(BaseModel):

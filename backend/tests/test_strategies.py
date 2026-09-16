@@ -347,47 +347,6 @@ def test_update_batch_metadata_keeps_snapshot(workdir: Path, assets: None) -> No
     assert after.built_at == before.built_at
 
 
-def test_update_batch_combo_rebuilds_snapshot(workdir: Path, assets: None) -> None:
-    """组合整体替换：重新装配快照（新正文 / 新哈希 / 新时刻），来源保留。"""
-    save_prompt(Prompt(name="另一条", description="", body="另一套正文"))
-    entry = apply_library_strategy(
-        workdir,
-        create_strategy(
-            name="库策略", endpoint="main", prompt="详细描述", skills=[]
-        ).id,
-    )
-
-    updated = update_batch(
-        workdir,
-        entry.seq,
-        endpoint="main",
-        prompt="另一条",
-        skills=[_SKILL_NAME],
-    )
-
-    assert updated.name == "库策略"
-    snapshot = read_snapshot(workdir, entry.seq)
-    assert snapshot.prompt["body"] == "另一套正文"
-    assert snapshot.prompt["sha256"] == _sha("另一套正文")
-    assert [skill["name"] for skill in snapshot.skills] == [_SKILL_NAME]
-    assert snapshot.source is not None  # 来源记的是「从哪来」，组合改了也不变
-
-
-def test_update_batch_partial_combo_rejected(workdir: Path, assets: None) -> None:
-    """组合只给一部分 → StrategyRefsError（部分替换语义含糊，不提供）。"""
-    entry = create_batch(
-        workdir,
-        name="策略",
-        description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
-    )
-
-    with pytest.raises(StrategyRefsError, match="同时提供"):
-        update_batch(workdir, entry.seq, prompt="详细描述")
-
-
 def test_hide_and_unhide_batch(workdir: Path, assets: None) -> None:
     """停用 / 召回：active 翻转，列表仍含停用批次（设置页要能召回）。"""
     entry = create_batch(
