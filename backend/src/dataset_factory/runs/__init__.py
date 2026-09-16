@@ -9,12 +9,12 @@
   load_latest_item_records（每条素材最近一次尝试的结果）
 - 重试列表（state.json 的 retry_list 键，结构由本域定义）：read_retry_list；
   可重试类原因码清单 RETRYABLE_REASON_CODES（F5 两类清单的单一事实源）
-- 异常：RunError 基类 + RunOccupiedError（带占用者信息）/ BatchInactiveError /
-  RunJournalCorruptedError（下游各域异常直接冒泡，见 errors 模块说明）
+- 异常：RunError 基类 + BatchInactiveError / RunNotActiveError / RunJournalCorruptedError
+  （运行锁与状态锁原语、run-occupied 占用异常都在 workdir 域，经 workdir.locks 取用）
 
 依赖方向（design「模块归属」）：runs → workdir（经 WorkdirStore 读写 ``.dsf/``、
-经 assets 解析素材与产物）、strategies（读快照与批次元数据）、labeling（逐条调用
-纯素材路径）、llm（异常分类）。
+经 assets 解析素材与产物、经 locks 取两把锁原语）、strategies（读快照与批次元数据）、
+labeling（逐条调用纯素材路径）、llm（异常分类）。
 """
 
 from .errors import (
@@ -22,7 +22,6 @@ from .errors import (
     RunError,
     RunJournalCorruptedError,
     RunNotActiveError,
-    RunOccupiedError,
 )
 from .items import (
     GROUP_DONE,
@@ -42,7 +41,6 @@ from .journal import (
     load_latest_item_records,
     load_recent_success_hashes,
 )
-from .lock import RunLock, read_occupier
 from .runner import (
     RETRYABLE_REASON_CODES,
     BatchRunner,
@@ -77,10 +75,8 @@ __all__ = [
     "RunFinishedEvent",
     "RunJournal",
     "RunJournalCorruptedError",
-    "RunLock",
     "RunMode",
     "RunNotActiveError",
-    "RunOccupiedError",
     "RunReport",
     "RunStartedEvent",
     "RunTrigger",
@@ -88,6 +84,5 @@ __all__ = [
     "completer_for_snapshot",
     "load_latest_item_records",
     "load_recent_success_hashes",
-    "read_occupier",
     "read_retry_list",
 ]

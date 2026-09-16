@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from dataset_factory.llm import create_config
 from dataset_factory.prompts import Prompt, delete_prompt, save_prompt
 from dataset_factory.skills import import_skill
 from dataset_factory.strategies import (
+    BatchEntry,
     BatchNotFoundError,
     StrategyError,
     StrategyNameError,
@@ -274,6 +276,86 @@ def test_seq_increments_and_never_reused(workdir: Path, assets: None) -> None:
     )
 
     assert [batch.seq for batch in list_batches(workdir)] == [1, 3]
+
+
+def test_concurrent_create_batches_allocate_distinct_seqs(
+    workdir: Path, assets: None
+) -> None:
+    """并发建批（Web 与 CLI 各建一个）：序号不撞、两个批次都登记在册（状态锁收口）。"""
+    barrier = threading.Barrier(2)
+    results: list[BatchEntry] = []
+    errors: list[Exception] = []
+
+    def create(name: str) -> None:
+        try:
+            barrier.wait(5)
+            results.append(
+                create_batch(
+                    workdir,
+                    name=name,
+                    description="",
+                    endpoint="main",
+                    prompt="详细描述",
+                    skills=[],
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — 线程内兜底收集，主线程断言
+            errors.append(exc)
+
+    threads = [threading.Thread(target=create, args=(n,)) for n in ("甲", "乙")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(15)
+
+    assert errors == []
+    assert sorted(entry.seq for entry in results) == [1, 2]
+    assert [entry.seq for entry in list_batches(workdir)] == [1, 2]
+    assert {entry.name for entry in list_batches(workdir)} == {"甲", "乙"}
+
+
+def test_concurrent_update_batches_keep_both_changes(
+    workdir: Path, assets: None
+) -> None:
+    """并发改两个批次的名字（丢更新场景）：两个改动都落盘，谁也不覆盖谁。"""
+    first = create_batch(
+        workdir,
+        name="一",
+        description="",
+        endpoint="main",
+        prompt="详细描述",
+        skills=[],
+    )
+    second = create_batch(
+        workdir,
+        name="二",
+        description="",
+        endpoint="main",
+        prompt="详细描述",
+        skills=[],
+    )
+    barrier = threading.Barrier(2)
+    errors: list[Exception] = []
+
+    def rename(seq: int, name: str) -> None:
+        try:
+            barrier.wait(5)
+            update_batch(workdir, seq, name=name)
+        except Exception as exc:  # noqa: BLE001 — 线程内兜底收集，主线程断言
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=rename, args=(first.seq, "一改")),
+        threading.Thread(target=rename, args=(second.seq, "二改")),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(15)
+
+    assert errors == []
+    names = {entry.seq: entry.name for entry in list_batches(workdir)}
+    assert names == {first.seq: "一改", second.seq: "二改"}
 
 
 def test_apply_library_records_copy_on_apply_source(

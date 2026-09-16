@@ -33,12 +33,11 @@ from ..runs import (
     RunEvent,
     RunFinishedEvent,
     RunNotActiveError,
-    RunOccupiedError,
     completer_for_snapshot,
 )
 from ..strategies import get_batch, parse_seq, read_snapshot
 from ..tasks import RETRY_AFTER_SECONDS
-from ..workdir import WorkdirRegistry
+from ..workdir import RunOccupiedError, WorkdirRegistry
 from .schemas import Problem, RunAccepted, RunStartRequest, RunStatusView
 
 logger = logging.getLogger(__name__)

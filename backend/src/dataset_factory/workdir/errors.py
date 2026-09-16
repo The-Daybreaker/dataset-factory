@@ -6,9 +6,33 @@ type slug 的对应关系写在本模块各类的 docstring 里。
 
 from __future__ import annotations
 
+from typing import Any
+
 
 class WorkdirError(Exception):
     """工作目录域错误的基类；消息只描述「哪里错、怎么修」。"""
+
+
+class RunOccupiedError(WorkdirError):
+    """同一工作目录已有跑批在运行（运行锁被占用）——HTTP 409 problem+json（run-occupied）。
+
+    Attributes:
+        occupier: 占用者信息（pid / started_at / hostname / batch）；残留信息损坏时
+            为 None，此时只给笼统提示。
+    """
+
+    def __init__(self, message: str, *, occupier: dict[str, Any] | None = None) -> None:
+        """带占用者信息构造（occupier 供 problem+json 扩展字段与界面提示）。"""
+        super().__init__(message)
+        self.occupier = occupier
+
+
+class StateLockTimeoutError(WorkdirError):
+    """状态锁等锁超时（宽超时内没等到 ``state.json`` 的毫秒级临界区）——HTTP 500 problem+json（state-lock-timeout）。
+
+    这是诊断信号不是常规拒绝路径：临界区只有毫秒级，等满宽超时说明有进程
+    异常卡住（正常崩溃 / 强杀会让 OS 立即释放锁，不会造成等待）。
+    """
 
 
 class WorkdirNotFoundError(WorkdirError):

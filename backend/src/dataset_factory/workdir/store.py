@@ -18,6 +18,7 @@ import json
 import os
 import secrets
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -28,6 +29,7 @@ from .errors import (
     WorkdirNotFoundError,
     WorkdirPathError,
 )
+from .locks import StateLock
 
 __all__ = [
     "WorkdirEntry",
@@ -203,8 +205,8 @@ def ensure_dsf_layout(workdir_path: Path) -> Path:
     - ``.dsf/strategies/``（策略快照全文）
     - ``.dsf/runs/``（每次运行一个子目录）
 
-    ``state.json`` / ``imports.jsonl`` / ``run.lock`` / ``run-info.json`` 由各自
-    写入方在首次写时创建，本函数只保证目录结构。
+    ``state.json`` / ``imports.jsonl`` / ``run.lock`` / ``state.lock`` / ``run-info.json``
+    由各自写入方在首次写时创建，本函数只保证目录结构。
     """
     dsf = workdir_path / _DSF_DIR_NAME
     (dsf / "strategies").mkdir(parents=True, exist_ok=True)
@@ -258,7 +260,9 @@ class WorkdirStore:
     def read_state(self) -> dict[str, object]:
         """读 ``state.json``。不存在或空 → 空状态字典（不含任何键）。
 
-        文件损坏抛 RegistryCorruptedError（fail loud——坏文件不静默兜底）。
+        读不需要状态锁：写入侧只有 ``mutate_state`` 一个入口 + 原子写，读到的
+        要么是完整旧版、要么是完整新版，不存在半截文件。文件损坏抛
+        WorkdirMetadataCorruptedError（fail loud——坏文件不静默兜底）。
         """
         if not self.state_file.exists():
             return {}
@@ -270,12 +274,38 @@ class WorkdirStore:
                 f"工作目录状态文件损坏（{self.state_file}），请重建或删除该文件后重试。",
             ) from exc
 
-    def write_state(self, state: dict[str, object]) -> None:
-        """原子写 ``state.json``（读—改—写全程持锁由调用方保证）。"""
-        atomic_write_text(
-            self.state_file,
-            json.dumps(state, ensure_ascii=False, indent=2),
-        )
+    def mutate_state[T](self, mutator: Callable[[dict[str, object]], T]) -> T:
+        """``state.json`` 的唯一写入口：读—改—写三步全在状态锁内完成。
+
+        调用方只交一个 mutator：**原地修改**传入的 state 字典（不要整体替换——
+        落盘的始终是传入的这个字典），返回值原样透传给调用方（新 state 本身或
+        需要带出的值，如建批分配到的序号）。相比「暴露一个锁上下文管理器让大家
+        自己包」，单一写入口结构性地杜绝漏包——写点分散在 strategies 与 runs
+        两个域，靠自觉必然漏（Web 与 CLI 是两个进程，原子写防不住跨进程的
+        读—读—写—写丢更新，见 design「并发保护」节）。
+
+        非状态资源的 IO（如建批先写快照文件）留在锁外由调用方自己安排——
+        临界区越短，排队越不可感。
+
+        Args:
+            mutator: 拿到旧 state、原地修改、返回透传值的函数。mutator 内抛出的
+                异常原样冒泡（锁随 finally 释放），state.json 保持改前原样。
+
+        Returns:
+            mutator 的返回值。
+        """
+        lock = StateLock(self._dsf)
+        lock.acquire()
+        try:
+            state = self.read_state()
+            result = mutator(state)
+            atomic_write_text(
+                self.state_file,
+                json.dumps(state, ensure_ascii=False, indent=2),
+            )
+            return result
+        finally:
+            lock.release()
 
     def append_import_record(self, record: dict[str, object]) -> None:
         """追加一条导入记录到 ``imports.jsonl``（append-only，一行一次导入）。

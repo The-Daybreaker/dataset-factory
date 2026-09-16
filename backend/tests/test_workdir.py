@@ -171,15 +171,80 @@ def test_ensure_dsf_layout_creates_idempotent(workdir: Path) -> None:
     assert (first / "runs").is_dir()
 
 
-def test_store_state_roundtrip(workdir: Path) -> None:
-    """state.json 读写往返：不存在 → 空字典；写入后原样读回（原子写）。"""
+def test_store_mutate_state_roundtrip(workdir: Path) -> None:
+    """mutate_state 唯一写入口：空起写入、读回一致（原子写、全程状态锁内）。"""
     store = WorkdirStore(workdir)
 
     assert store.read_state() == {}
-    store.write_state({"batches": [{"seq": 1}]})
+    store.mutate_state(lambda state: state.update({"batches": [{"seq": 1}]}))
 
     assert store.read_state() == {"batches": [{"seq": 1}]}
     assert store.state_file == workdir / ".dsf" / "state.json"
+
+
+def test_store_mutate_state_passthrough(workdir: Path) -> None:
+    """mutator 原地改 + 返回值透传：改动落盘、返回值原样带回调用方。"""
+    store = WorkdirStore(workdir)
+
+    def grow(state: dict[str, object]) -> int:
+        state["n"] = 1
+        return 41
+
+    assert store.mutate_state(grow) == 41
+    assert store.read_state() == {"n": 1}
+
+
+def test_store_mutate_state_releases_lock_when_mutator_raises(workdir: Path) -> None:
+    """mutator 抛错：异常冒泡、状态保持改前原样、锁随 finally 释放。"""
+    store = WorkdirStore(workdir)
+
+    def boom(state: dict[str, object]) -> None:
+        state["dirty"] = True
+        raise RuntimeError("炸一个")
+
+    with pytest.raises(RuntimeError, match="炸一个"):
+        store.mutate_state(boom)
+
+    assert store.read_state() == {}
+    store.mutate_state(lambda state: state.update({"k": "v"}))
+    assert store.read_state() == {"k": "v"}
+
+
+def test_store_mutate_state_no_lost_update_across_threads(workdir: Path) -> None:
+    """两线程并发读—改—写：各自追加的条目全部落盘（goal B2 的不丢更新）。"""
+    store = WorkdirStore(workdir)
+    barrier = threading.Barrier(2)
+    errors: list[Exception] = []
+
+    def append(prefix: str) -> None:
+        try:
+            barrier.wait(5)
+            for index in range(20):
+                tag = f"{prefix}{index}"
+
+                def mutator(state: dict[str, object], tag: str = tag) -> None:
+                    items = cast("list[object]", state.get("items", []))
+                    items.append(tag)
+                    state["items"] = items
+
+                store.mutate_state(mutator)
+        except Exception as exc:  # noqa: BLE001 — 线程内兜底收集，主线程断言
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=append, args=("甲",)),
+        threading.Thread(target=append, args=("乙",)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+
+    assert errors == []
+    items = cast("list[object]", store.read_state().get("items", []))
+    assert sorted(str(item) for item in items) == sorted(
+        f"{prefix}{index}" for prefix in ("甲", "乙") for index in range(20)
+    )
 
 
 def test_store_corrupted_state_fails_loud(workdir: Path) -> None:

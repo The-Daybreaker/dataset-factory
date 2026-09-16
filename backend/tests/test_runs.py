@@ -27,7 +27,6 @@ from dataset_factory.runs import (
     BatchRunner,
     RunEvent,
     RunJournalCorruptedError,
-    RunOccupiedError,
     read_retry_list,
 )
 from dataset_factory.strategies import (
@@ -35,7 +34,7 @@ from dataset_factory.strategies import (
     create_batch,
     set_batch_active,
 )
-from dataset_factory.workdir import WorkdirStore, import_assets
+from dataset_factory.workdir import RunOccupiedError, WorkdirStore, import_assets
 
 _PROMPT_BODY = "你是打标助手。"
 
@@ -127,11 +126,13 @@ def _last_run_dir(workdir: Path) -> Path:
 
 
 def _put_retry_list(workdir: Path, entries: list[dict[str, object]]) -> None:
-    """直接把重试列表写进 state.json（T38 之前没有端点，测试从存储层搭景）。"""
+    """直接把重试列表写进 state.json（T38 端点本体之前，测试从存储层搭景）。"""
     store = WorkdirStore(workdir)
-    state = store.read_state()
-    state["retry_list"] = entries
-    store.write_state(state)
+
+    def seed(state: dict[str, object]) -> None:
+        state["retry_list"] = entries
+
+    store.mutate_state(seed)
 
 
 # --------------------------------------------------------------------------
@@ -297,7 +298,7 @@ def test_run_info_write_failure_does_not_leak_lock(
 
     锁在结束时正常释放——该工作目录不会死锁到进程重启。
     """
-    from dataset_factory.runs import lock as runs_lock_module
+    from dataset_factory.workdir import locks as runs_lock_module
 
     def _broken_write(path: Path, text: str) -> None:
         raise OSError("磁盘满（模拟）")

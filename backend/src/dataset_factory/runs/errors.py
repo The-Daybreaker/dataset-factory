@@ -1,30 +1,15 @@
 """runs 域的异常类型：类型化 + 可操作消息；problem+json 映射关系写在各类 docstring。
 
 素材级失败（模型报错 / 素材读不出）不是异常——它们是运行的正常结果之一，逐条记进
-运行流水；这里只放「运行根本没跑起来 / 跑不下去」的结构性错误。
+运行流水；这里只放「运行根本没跑起来 / 跑不下去」的结构性错误。运行锁占用
+（run-occupied）归 workdir 域（锁原语在 workdir.locks）。
 """
 
 from __future__ import annotations
 
-from typing import Any
-
 
 class RunError(Exception):
     """runs 域错误的基类；消息只描述「哪里错、怎么修」。"""
-
-
-class RunOccupiedError(RunError):
-    """同一工作目录已有跑批在运行（运行锁被占用）——HTTP 409 problem+json（run-occupied）。
-
-    Attributes:
-        occupier: 占用者信息（pid / started_at / hostname / batch）；残留信息损坏时
-            为 None，此时只给笼统提示。
-    """
-
-    def __init__(self, message: str, *, occupier: dict[str, Any] | None = None) -> None:
-        """带占用者信息构造（occupier 供 problem+json 扩展字段与界面提示）。"""
-        super().__init__(message)
-        self.occupier = occupier
 
 
 class RunNotActiveError(RunError):

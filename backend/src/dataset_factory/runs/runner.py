@@ -63,10 +63,10 @@ from ..strategies.snapshot import tool_version
 from ..workdir.assets import product_filename, product_has_content, scan_assets
 from ..workdir.errors import WorkdirMetadataCorruptedError
 from ..workdir.importer import hash_file
+from ..workdir.locks import RunLock
 from ..workdir.store import WorkdirStore
 from .errors import BatchInactiveError
 from .journal import RunJournal, load_recent_success_hashes
-from .lock import RunLock
 
 __all__ = [
     "RETRYABLE_REASON_CODES",
@@ -446,7 +446,8 @@ class BatchRunner:
         # 落盘的终态推翻成快照里的 failed（机制读到的终态必须唯一）。
         journal.write_run_json(run_meta)
         if self._mode == "retry" and succeeded_items:
-            # 出列在锁内做（运行全程持锁）：本次成功的条目移出重试列表，仍失败与
+            # 出列经 mutate_state 在状态锁内完成（调度线程持运行锁 → 短暂取状态锁，
+            # 锁序 run.lock → state.lock）：本次成功的条目移出重试列表，仍失败与
             # 中断没跑到的保留（「还没补完的账」）。失败可容忍：出列没成功 =
             # 成功条目仍留在列表，下次重试幂等重打（多花一次调用，方向安全）。
             try:
@@ -884,26 +885,28 @@ def read_retry_list(workdir: Path, seq: int) -> list[str]:
 
 
 def _remove_retry_items(workdir: Path, seq: int, items: list[str]) -> None:
-    """把本次成功的条目移出重试列表（读—改—写全程持锁由执行器保证）。"""
+    """把本次成功的条目移出重试列表（经 mutate_state 在状态锁内完成——唯一写入口）。"""
     store = WorkdirStore(workdir)
-    state = store.read_state()
-    raw = state.get(_RETRY_LIST_KEY)
-    if raw is None:
-        return
-    if not isinstance(raw, list):
-        raise WorkdirMetadataCorruptedError(
-            "工作目录状态文件的重试列表损坏——请检查 .dsf/state.json。"
-        )
-    removal = set(items)
-    kept: list[dict[str, object]] = []
-    for entry in cast("list[object]", raw):
-        if not isinstance(entry, dict):
+
+    def mutator(state: dict[str, object]) -> None:
+        raw = state.get(_RETRY_LIST_KEY)
+        if raw is None:
+            return
+        if not isinstance(raw, list):
             raise WorkdirMetadataCorruptedError(
-                "工作目录状态文件的重试列表形状不对——请检查 .dsf/state.json。"
+                "工作目录状态文件的重试列表损坏——请检查 .dsf/state.json。"
             )
-        record = cast("dict[str, object]", entry)
-        if record.get("batch") == seq and record.get("item") in removal:
-            continue
-        kept.append(record)
-    state[_RETRY_LIST_KEY] = kept
-    store.write_state(state)
+        removal = set(items)
+        kept: list[dict[str, object]] = []
+        for entry in cast("list[object]", raw):
+            if not isinstance(entry, dict):
+                raise WorkdirMetadataCorruptedError(
+                    "工作目录状态文件的重试列表形状不对——请检查 .dsf/state.json。"
+                )
+            record = cast("dict[str, object]", entry)
+            if record.get("batch") == seq and record.get("item") in removal:
+                continue
+            kept.append(record)
+        state[_RETRY_LIST_KEY] = kept
+
+    store.mutate_state(mutator)

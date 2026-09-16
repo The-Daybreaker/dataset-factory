@@ -125,15 +125,22 @@ def _entry_from_dict(data: object) -> BatchEntry:
 def list_batches(workdir: Path) -> list[BatchEntry]:
     """列出工作目录全部批次（按序号升序；含停用的——设置页要能召回）。"""
     store = WorkdirStore(workdir)
-    return sorted(
-        (_entry_from_dict(item) for item in _batches_raw(store.read_state())),
-        key=lambda entry: entry.seq,
-    )
+    return sorted(_entries_from_state(store.read_state()), key=lambda entry: entry.seq)
 
 
 def get_batch(workdir: Path, seq: int) -> BatchEntry:
     """按序号查批次；不存在抛 BatchNotFoundError。"""
-    for entry in list_batches(workdir):
+    return _require_entry(list_batches(workdir), seq)
+
+
+def _entries_from_state(state: dict[str, object]) -> list[BatchEntry]:
+    """从 state 字典取批次列表（缺键视为空；形状不对 fail loud）。"""
+    return [_entry_from_dict(item) for item in _batches_raw(state)]
+
+
+def _require_entry(entries: list[BatchEntry], seq: int) -> BatchEntry:
+    """按序号取批次条目；不存在抛 BatchNotFoundError（读路径与锁内判定共用）。"""
+    for entry in entries:
         if entry.seq == seq:
             return entry
     raise BatchNotFoundError(
@@ -141,22 +148,19 @@ def get_batch(workdir: Path, seq: int) -> BatchEntry:
     )
 
 
-def _read_next_seq(workdir: Path, entries: list[BatchEntry]) -> int:
-    """读序号计数（缺键时用现有批次最大序号 + 1 兜底——老 state 的兼容读法）。"""
-    next_seq = WorkdirStore(workdir).read_state().get("next_seq")
-    if isinstance(next_seq, int) and not isinstance(next_seq, bool):
-        return next_seq
-    return max((entry.seq for entry in entries), default=0) + 1
+def _entries_into_state(
+    state: dict[str, object],
+    entries: list[BatchEntry],
+    *,
+    seq_floor: int = 0,
+) -> None:
+    """把批次列表写回 state 字典；序号计数只增不减。
 
-
-def _write_batches(workdir: Path, entries: list[BatchEntry], next_seq: int) -> None:
-    """原子写回批次列表与序号计数（读—改—写全程持锁由调用方保证——T36 起）。
-
-    序号计数只增不减：无论调用方传入什么，落盘值不低于「现有批次最大序号 + 1」，
-    防止删除路径把计数写回去导致序号复用。
+    ``next_seq`` 落盘值不低于「现有批次最大序号 + 1」与 ``seq_floor`` 的较大者，
+    防止删除路径把计数写回去导致序号复用。``seq_floor`` 供删除路径传「移除前」
+    的最大序号 + 1：legacy state（无 next_seq 键）按最大序号兜底时，被删的那个
+    序号也已烧掉、删完不回退。
     """
-    store = WorkdirStore(workdir)
-    state = store.read_state()
     state["batches"] = [
         {
             "seq": entry.seq,
@@ -168,10 +172,15 @@ def _write_batches(workdir: Path, entries: list[BatchEntry], next_seq: int) -> N
         }
         for entry in entries
     ]
-    state["next_seq"] = max(
-        next_seq, max((entry.seq for entry in entries), default=0) + 1
+    current = state.get("next_seq")
+    current_floor = (
+        current if isinstance(current, int) and not isinstance(current, bool) else 0
     )
-    store.write_state(state)
+    state["next_seq"] = max(
+        current_floor,
+        max((entry.seq for entry in entries), default=0) + 1,
+        seq_floor,
+    )
 
 
 def _replace_entry(entries: list[BatchEntry], entry: BatchEntry) -> list[BatchEntry]:
@@ -193,6 +202,41 @@ def _write_snapshot(store: WorkdirStore, seq: int, snapshot: StrategySnapshot) -
     )
 
 
+def _reserve_seq(store: WorkdirStore) -> int:
+    """在状态锁内分配并预占下一个序号（只增不复用），返回分配到的序号。
+
+    预占与登记分两段：序号在锁内定死（防 Web 与 CLI 并发建批撞号），快照文件
+    随后在**锁外**写（非状态 IO 不进临界区，design「并发保护」），最后才在锁内
+    登记条目。两段之间崩溃最坏烧掉一个序号——与删批烧号同性质、无观察者；
+    换来的是 state.json 里的批次条目必有快照文件在手，不会出现「登记了却
+    读不到快照」的批次。
+    """
+
+    def mutator(state: dict[str, object]) -> int:
+        entries = _entries_from_state(state)
+        raw = state.get("next_seq")
+        if isinstance(raw, int) and not isinstance(raw, bool):
+            seq = raw
+        else:
+            seq = max((entry.seq for entry in entries), default=0) + 1
+        state["next_seq"] = seq + 1
+        return seq
+
+    return store.mutate_state(mutator)
+
+
+def _append_batch_entry(store: WorkdirStore, entry: BatchEntry) -> BatchEntry:
+    """在状态锁内把批次条目登记进 state.json（调用前快照文件已落盘）。"""
+
+    def mutator(state: dict[str, object]) -> BatchEntry:
+        entries = _entries_from_state(state)
+        entries.append(entry)
+        _entries_into_state(state, entries)
+        return entry
+
+    return store.mutate_state(mutator)
+
+
 def create_batch(
     workdir: Path,
     *,
@@ -203,7 +247,7 @@ def create_batch(
     skills: list[str],
     source: dict[str, object] | None = None,
 ) -> BatchEntry:
-    """从零配置新建一个批次：校验引用 → 装配快照 → 分配序号 → 落盘。
+    """从零配置新建一个批次：校验引用 → 锁内预占序号 → 锁外写快照 → 锁内登记。
 
     Raises:
         StrategyRefsError: 引用的端点 / 提示词 / Skill 不存在。
@@ -213,30 +257,19 @@ def create_batch(
     now = _now_iso()
     snapshot = build_snapshot(endpoint, prompt, skills, built_at=now, source=source)
     store = WorkdirStore(workdir)
-    seq, entries = _allocate_seq(workdir)
+    seq = _reserve_seq(store)
     _write_snapshot(store, seq, snapshot)
-    entry = BatchEntry(
-        seq=seq,
-        name=name,
-        description=description,
-        snapshot=f"s{seq}.json",
-        active=True,
-        created_at=now,
+    return _append_batch_entry(
+        store,
+        BatchEntry(
+            seq=seq,
+            name=name,
+            description=description,
+            snapshot=f"s{seq}.json",
+            active=True,
+            created_at=now,
+        ),
     )
-    _write_batches(workdir, [*entries, entry], seq + 1)
-    return entry
-
-
-def _allocate_seq(workdir: Path) -> tuple[int, list[BatchEntry]]:
-    """分配下一个序号（只增不复用）并返回（序号, 现有批次列表）。"""
-    store = WorkdirStore(workdir)
-    entries = [_entry_from_dict(item) for item in _batches_raw(store.read_state())]
-    next_seq = store.read_state().get("next_seq")
-    if isinstance(next_seq, int) and not isinstance(next_seq, bool):
-        seq = next_seq
-    else:
-        seq = max((entry.seq for entry in entries), default=0) + 1
-    return seq, entries
 
 
 def apply_library_strategy(
@@ -246,7 +279,7 @@ def apply_library_strategy(
     name: str | None = None,
     description: str | None = None,
 ) -> BatchEntry:
-    """应用库策略到工作目录（copy-on-apply）：分配序号、记来源、装配快照。
+    """应用库策略到工作目录（copy-on-apply）：锁内预占序号、记来源、装配快照。
 
     库策略引用已缺失（置灰）时拒绝应用——应用出来的批次会带病运行。
     之后库里的改动 / 删除不影响本批次（批次持有内容副本）。
@@ -269,20 +302,22 @@ def apply_library_strategy(
             "strategy_sha256": strategy_content_hash(library_entry),
         },
     )
-    seq, entries = _allocate_seq(workdir)
-    _write_snapshot(WorkdirStore(workdir), seq, snapshot)
-    entry = BatchEntry(
-        seq=seq,
-        name=name if name is not None else library_entry.name,
-        description=description
-        if description is not None
-        else library_entry.description,
-        snapshot=f"s{seq}.json",
-        active=True,
-        created_at=now,
+    store = WorkdirStore(workdir)
+    seq = _reserve_seq(store)
+    _write_snapshot(store, seq, snapshot)
+    return _append_batch_entry(
+        store,
+        BatchEntry(
+            seq=seq,
+            name=name if name is not None else library_entry.name,
+            description=description
+            if description is not None
+            else library_entry.description,
+            snapshot=f"s{seq}.json",
+            active=True,
+            created_at=now,
+        ),
     )
-    _write_batches(workdir, [*entries, entry], seq + 1)
-    return entry
 
 
 def update_batch(
@@ -295,32 +330,42 @@ def update_batch(
     """配置补丁：改名 / 描述（纯显示元数据，快照不动）。
 
     组合不可改——工作目录下的策略是库策略的应用副本，想换组合 = 新建批次。
+    读—改—写在状态锁内一次完成（``WorkdirStore.mutate_state`` 唯一写入口）。
     """
-    entry = get_batch(workdir, seq)
-    if name is not None:
-        entry.name = name
-    if description is not None:
-        entry.description = description
-    entries = list_batches(workdir)
-    _write_batches(
-        workdir, _replace_entry(entries, entry), _read_next_seq(workdir, entries)
-    )
-    return entry
+    store = WorkdirStore(workdir)
+
+    def mutator(state: dict[str, object]) -> BatchEntry:
+        entries = _entries_from_state(state)
+        entry = _require_entry(entries, seq)
+        if name is not None:
+            entry.name = name
+        if description is not None:
+            entry.description = description
+        _entries_into_state(state, _replace_entry(entries, entry))
+        return entry
+
+    return store.mutate_state(mutator)
 
 
 def set_batch_active(workdir: Path, seq: int, active: bool) -> BatchEntry:
     """停用（隐藏）/ 召回批次。停用正在运行的策略需中断运行——T36 运行器落地。"""
-    entry = get_batch(workdir, seq)
-    entry.active = active
-    entries = list_batches(workdir)
-    _write_batches(
-        workdir, _replace_entry(entries, entry), _read_next_seq(workdir, entries)
-    )
-    return entry
+    store = WorkdirStore(workdir)
+
+    def mutator(state: dict[str, object]) -> BatchEntry:
+        entries = _entries_from_state(state)
+        entry = _require_entry(entries, seq)
+        entry.active = active
+        _entries_into_state(state, _replace_entry(entries, entry))
+        return entry
+
+    return store.mutate_state(mutator)
 
 
 def delete_batch(workdir: Path, seq: int) -> int:
     """删除批次：产物 txt + 快照 + state.json 记录 + 排除名单一并移除。
+
+    state.json 的两处改动（批次条目 + 排除名单）合并进状态锁内的**一次**读—改—写；
+    产物与快照是非状态资源，按既有顺序留在锁外先删。
 
     Returns:
         删除的产物 txt 数（历史 runs/ 保留）。
@@ -336,20 +381,26 @@ def delete_batch(workdir: Path, seq: int) -> int:
         count += 1
     snapshot_path = store.strategies_dir / f"s{seq}.json"
     snapshot_path.unlink(missing_ok=True)
-    # 计数在移除条目**之前**读：legacy state（无 next_seq 键）回退 max+1 时
-    # 才能算上被删的那个序号，删完不回退（配合 _write_batches 的只增不减钳制）。
-    entries = list_batches(workdir)
-    next_seq = _read_next_seq(workdir, entries)
-    _write_batches(workdir, [item for item in entries if item.seq != seq], next_seq)
-    exclusions = _read_exclusions(workdir)
-    exclusions.pop(str(seq), None)
-    _write_exclusions(workdir, exclusions)
-    return count
+
+    def mutator(state: dict[str, object]) -> int:
+        entries = _entries_from_state(state)
+        seq_floor = max((item.seq for item in entries), default=0) + 1
+        _entries_into_state(
+            state,
+            [item for item in entries if item.seq != seq],
+            seq_floor=seq_floor,
+        )
+        exclusions = _exclusions_from_state(state)
+        exclusions.pop(str(seq), None)
+        state["exclusions"] = exclusions
+        return count
+
+    return store.mutate_state(mutator)
 
 
-def _read_exclusions(workdir: Path) -> dict[str, list[str]]:
-    """读各批次排除名单（缺键视为空；形状不对 fail loud）。"""
-    value = WorkdirStore(workdir).read_state().get("exclusions")
+def _exclusions_from_state(state: dict[str, object]) -> dict[str, list[str]]:
+    """从 state 字典取各批次排除名单（缺键视为空；形状不对 fail loud）。"""
+    value = state.get("exclusions")
     if value is None:
         return {}
     if not isinstance(value, dict):
@@ -366,35 +417,37 @@ def _read_exclusions(workdir: Path) -> dict[str, list[str]]:
     return result
 
 
-def _write_exclusions(workdir: Path, exclusions: dict[str, list[str]]) -> None:
-    """原子写排除名单（读—改—写全程持锁由调用方保证——T36 起）。"""
-    store = WorkdirStore(workdir)
-    state = store.read_state()
-    state["exclusions"] = exclusions
-    store.write_state(state)
-
-
 def add_exclusions(workdir: Path, seq: int, items: list[str]) -> list[str]:
     """把条目加入该批次的排除名单（幂等去重），返回当前名单。"""
-    get_batch(workdir, seq)  # 批次不存在先报错
-    exclusions = _read_exclusions(workdir)
-    current = exclusions.setdefault(str(seq), [])
-    for item in items:
-        if item not in current:
-            current.append(item)
-    _write_exclusions(workdir, exclusions)
-    return list(current)
+    store = WorkdirStore(workdir)
+
+    def mutator(state: dict[str, object]) -> list[str]:
+        _require_entry(_entries_from_state(state), seq)  # 批次不存在先报错
+        exclusions = _exclusions_from_state(state)
+        current = exclusions.setdefault(str(seq), [])
+        for item in items:
+            if item not in current:
+                current.append(item)
+        state["exclusions"] = exclusions
+        return list(current)
+
+    return store.mutate_state(mutator)
 
 
 def remove_exclusions(workdir: Path, seq: int, items: list[str]) -> list[str]:
     """把条目移出该批次的排除名单（撤销排除），返回当前名单。"""
-    get_batch(workdir, seq)
-    exclusions = _read_exclusions(workdir)
-    removal = set(items)
-    current = [item for item in exclusions.get(str(seq), []) if item not in removal]
-    exclusions[str(seq)] = current
-    _write_exclusions(workdir, exclusions)
-    return list(current)
+    store = WorkdirStore(workdir)
+
+    def mutator(state: dict[str, object]) -> list[str]:
+        _require_entry(_entries_from_state(state), seq)
+        exclusions = _exclusions_from_state(state)
+        removal = set(items)
+        current = [item for item in exclusions.get(str(seq), []) if item not in removal]
+        exclusions[str(seq)] = current
+        state["exclusions"] = exclusions
+        return list(current)
+
+    return store.mutate_state(mutator)
 
 
 def read_snapshot(workdir: Path, seq: int) -> StrategySnapshot:

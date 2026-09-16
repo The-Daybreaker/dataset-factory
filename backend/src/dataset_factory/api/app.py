@@ -45,7 +45,6 @@ from ..runs import (
     RunError,
     RunJournalCorruptedError,
     RunNotActiveError,
-    RunOccupiedError,
 )
 from ..sessions import (
     SessionError,
@@ -77,6 +76,8 @@ from ..workdir import (
     ImportInProgressError,
     ImportSourceConflictError,
     ProductNotFoundError,
+    RunOccupiedError,
+    StateLockTimeoutError,
     WorkdirMetadataCorruptedError,
     WorkdirNotFoundError,
     WorkdirPathError,
@@ -240,6 +241,12 @@ def _register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(
         WorkdirMetadataCorruptedError, workdir_metadata_corrupted_handler
     )
+
+    def state_lock_timeout_handler(request: Request, exc: Exception) -> JSONResponse:
+        # 状态锁等满宽超时 = 诊断信号（临界区毫秒级，正常永不触发）：500 档。
+        return problem_response(500, "state-lock-timeout", "状态锁等待超时", str(exc))
+
+    app.add_exception_handler(StateLockTimeoutError, state_lock_timeout_handler)
 
     def asset_not_found_handler(request: Request, exc: Exception) -> JSONResponse:
         return problem_response(404, "asset-not-found", "素材不存在", str(exc))
