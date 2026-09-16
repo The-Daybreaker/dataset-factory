@@ -6,6 +6,7 @@ requires-python = "==3.12.*"
 license = "MIT"
 dependencies = [
     "fastapi>=0.141.1",
+    "filelock>=3.32.6",
     "openai>=3.13.0",
     "python-multipart>=0.0.32",
     "pyyaml>=6.0.3",
@@ -63,11 +64,12 @@ show_missing = true
 root_packages = ["dataset_factory"]
 
 [[tool.importlinter.contracts]]
-name = "分层：cli（启动器）> api（HTTP 入口）> 编排 > 策略 > 工作目录 > 能力 > 数据域（单向；核心禁止 import 入口层）"
+name = "分层：cli（启动器）> api（HTTP 入口）> runs（跑批编排）> labeling（单张打标）> 策略 > 工作目录 > 能力 > 数据域（单向；核心禁止 import 入口层）"
 type = "layers"
 layers = [
     "dataset_factory.cli",
     "dataset_factory.api",
+    "dataset_factory.runs",
     "dataset_factory.labeling",
     "dataset_factory.strategies",
     "dataset_factory.workdir",

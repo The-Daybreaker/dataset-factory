@@ -389,6 +389,26 @@ def _extract_text(response: ChatCompletion) -> str:
     return content
 
 
+def _extract_retry_after(exc: openai.APIError) -> float | None:
+    """从限流响应头提取 Retry-After 的等待秒数（批量跑批退避优先遵循它）。
+
+    Args:
+        exc: SDK 的限流异常（HTTP 状态类异常带 response.headers）。
+
+    Returns:
+        Retry-After 秒数；端点没给、格式非数字（如 HTTP-date）或属性不可达时 None。
+    """
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    raw = headers.get("retry-after") if headers is not None else None
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _translate_sdk_error(exc: openai.APIError, secret: str | None = None) -> LLMError:
     """把 openai SDK 的分类异常翻译成项目自己的类型化异常。
 
@@ -423,7 +443,8 @@ def _translate_sdk_error(exc: openai.APIError, secret: str | None = None) -> LLM
         return LLMAuthError("无权访问该端点或模型；请检查密钥权限。" + suffix)
     if isinstance(exc, openai.RateLimitError):
         return LLMRateLimitError(
-            "触发限流（请求过多或额度用尽）；请稍后重试或检查配额。" + suffix
+            "触发限流（请求过多或额度用尽）；请稍后重试或检查配额。" + suffix,
+            retry_after=_extract_retry_after(exc),
         )
     if isinstance(exc, openai.NotFoundError):
         return LLMNotFoundError(

@@ -46,6 +46,7 @@ __all__ = [
     "REASON_OVERSIZE",
     "REASON_UNSUPPORTED_EXTENSION",
     "ensure_importable_source",
+    "hash_file",
     "import_assets",
 ]
 
@@ -129,8 +130,12 @@ def _scan_assets(directory: Path) -> tuple[list[_Candidate], list[dict[str, str]
     return candidates, rejected
 
 
-def _hash_file(path: Path) -> str:
-    """分块计算一个文件的 SHA-256（不整读进内存）。"""
+def hash_file(path: Path) -> str:
+    """分块计算一个文件的 SHA-256（不整读进内存）。
+
+    导入记录与续跑判定的素材哈希共用（runs 执行器的断点续跑跳过判定也用它）——
+    「素材哈希」全项目只有一种算法口径。
+    """
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         while chunk := handle.read(_CHUNK_BYTES):
@@ -206,7 +211,7 @@ class _Baseline:
     def hash_of(self, name: str) -> str:
         """取基线文件的内容哈希（带缓存）。"""
         if name not in self._hashes:
-            self._hashes[name] = _hash_file(self._files[name])
+            self._hashes[name] = hash_file(self._files[name])
         return self._hashes[name]
 
 
@@ -316,12 +321,12 @@ def import_assets(
         # 同名检查对**物理存在**的白名单文件生效（含超限的手工文件）——绝不静默覆盖。
         same_name = all_files.get(name)
         if same_name is not None:
-            incoming_hash = _hash_file(candidate.path)
+            incoming_hash = hash_file(candidate.path)
             if baseline.path_of(name) is not None:
                 existing_hash = baseline.hash_of(name)
             else:
                 # 同名但非法（超限）：内容不可能相等（同容必同尺寸同档），直接按冲突处理。
-                existing_hash = _hash_file(same_name)
+                existing_hash = hash_file(same_name)
             if incoming_hash == existing_hash:
                 # 同名同容：不重复复制（幂等），但重登记——中断重入时已复制的
                 # 文件由此回到记录里（自愈）；正常重导只是出身刷新到最近一次。
@@ -348,7 +353,7 @@ def import_assets(
                 },
             )
             continue
-        incoming_hash = _hash_file(candidate.path)
+        incoming_hash = hash_file(candidate.path)
         # 异名同容：与基线（工作目录已有）和本批已接受者全量比对。
         duplicate_of = _find_duplicate_content(
             baseline, incoming_hash, candidate.size

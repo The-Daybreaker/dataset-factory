@@ -21,9 +21,19 @@ class LLMAuthError(LLMError):
 
 
 class LLMRateLimitError(LLMError):
-    """触发限流或额度用尽；退避后可重试。"""
+    """触发限流或额度用尽；退避后可重试。
+
+    Attributes:
+        retry_after: 端点响应头 Retry-After 给出的等待秒数（None = 端点没给或不可解析；
+            二期批量跑批的退避优先遵循它，端点没给再用本地退避节奏）。
+    """
 
     retryable = True
+
+    def __init__(self, message: str, *, retry_after: float | None = None) -> None:
+        """带可选的 Retry-After 秒数构造（一期调用点不传即沿用原语义）。"""
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 class LLMTimeoutError(LLMError):

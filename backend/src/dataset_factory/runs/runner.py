@@ -1,0 +1,741 @@
+"""跑批执行器：串行逐条调用 labeling 纯素材路径，产出运行日志三件套与业务事件。
+
+线程与并发模型（design 定案，串行 = 并发度 1 的同一条代码路径）：``run()`` 在调用
+线程里完整执行（Web 层开线程跑、CLI 前台直跑），运行锁归这条线程；条目结果统一由
+它落盘（日志单写入者）；``stop()`` 可从其他线程置位协作取消信号（threading.Event），
+跑批在条目边界停下——已完成部分保留，批次随时可继续。
+
+full 模式：计划 = 工作目录现状 ∩ 导入登记（批次成员由登记界定）；启动时对「有产物」
+条目现算素材哈希、与最近一次成功打标的哈希比对（E1），一致才跳过——「处理时刻的
+输入哈希」是判定「变在打标前还是打标后」的唯一锚点。
+retry 模式：计划 = 重试列表快照（运行开始的瞬间拍下，运行期编辑只影响下一次）；
+结束后成功的条目出列、仍失败的保留（「还没补完的账」）。
+
+失败重试（F5）：可重试类（network / timeout / rate-limit / 5xx / llm-content）首次
+尝试 + 最多重试 3 次（1s / 2s / 4s 退避乘随机抖动；429 优先遵循端点 Retry-After；
+单条最多 4 次请求）；不可重试类（bad-request / config / asset-unreadable）不重试，
+记为失败跳过。失败条目不产生产物，逐条进运行流水。
+"""
+
+from __future__ import annotations
+
+import hashlib
+import logging
+import os
+import platform
+import random
+import threading
+import time
+from collections.abc import Callable
+from contextlib import suppress
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from time import perf_counter
+from typing import Any, Literal, cast
+
+from .._fs import atomic_write_text
+from ..labeling import LabelingEngine, MaterialOversizeError, MaterialReadError
+from ..llm.errors import (
+    LLMAuthError,
+    LLMBadRequestError,
+    LLMConnectionError,
+    LLMError,
+    LLMNotFoundError,
+    LLMRateLimitError,
+    LLMServerError,
+    LLMTimeoutError,
+    LLMUnexpectedError,
+    UnsupportedImageError,
+)
+from ..strategies.batches import get_batch, read_snapshot
+from ..strategies.snapshot import tool_version
+from ..workdir.errors import WorkdirMetadataCorruptedError
+from ..workdir.importer import ASSET_EXTENSIONS, hash_file
+from ..workdir.store import WorkdirStore
+from .errors import BatchInactiveError
+from .journal import RunJournal, load_recent_success_hashes
+from .lock import RunLock
+
+__all__ = [
+    "BatchRunner",
+    "ItemUpdatedEvent",
+    "RunFinishedEvent",
+    "RunMode",
+    "RunReport",
+    "RunStartedEvent",
+    "RunTrigger",
+    "read_retry_list",
+]
+
+logger = logging.getLogger(__name__)
+
+#: 跑批模式：full = 全量（未完成的都打）；retry = 只打重试列表快照。
+RunMode = Literal["full", "retry"]
+#: 触发来源（进 run.json 的出身记录）。
+RunTrigger = Literal["web", "cli"]
+
+# 失败重试的节奏（F5）：首次尝试 + 最多 3 次重试 = 单条最多 4 次请求。
+_MAX_ATTEMPTS = 4
+_BACKOFF_BASE_SECONDS = 1.0
+_JITTER_RATIO = 0.2
+
+#: run.json 里 status 的取值：骨架写 running，正常结束写 completed，被停止写 interrupted。
+_STATUS_RUNNING = "running"
+_STATUS_COMPLETED = "completed"
+_STATUS_INTERRUPTED = "interrupted"
+
+# state.json 的重试列表键（结构由本域定义，WorkdirStore 只忠实存取；缺键视为空）。
+_RETRY_LIST_KEY = "retry_list"
+
+
+@dataclass(frozen=True)
+class RunReport:
+    """一次运行的最终报告（run() 的返回值；CLI 汇报与 Web 收尾的数据源）。
+
+    Attributes:
+        run_id: 运行 id（= ``.dsf/runs/`` 下的目录名）。
+        status: ``completed``（跑完计划）或 ``interrupted``（被手动停止）。
+        mode: 本次运行模式。
+        counters: 计数（planned / attempted / succeeded / failed / skipped）。
+        run_dir: 运行目录绝对路径（run.log 对外展示用）。
+    """
+
+    run_id: str
+    status: str
+    mode: str
+    counters: dict[str, int]
+    run_dir: Path
+
+
+@dataclass(frozen=True)
+class RunStartedEvent:
+    """run-started：运行已启动、计划已定（SSE 首帧）。"""
+
+    run_id: str
+    mode: str
+    batch: int
+    planned: int
+
+    @property
+    def kind(self) -> str:
+        """SSE 事件类型名。"""
+        return "run-started"
+
+    def to_payload(self) -> dict[str, Any]:
+        """序列化为 SSE data 载荷。"""
+        return {
+            "run_id": self.run_id,
+            "mode": self.mode,
+            "batch": self.batch,
+            "planned": self.planned,
+        }
+
+
+@dataclass(frozen=True)
+class ItemUpdatedEvent:
+    """item-updated：条目状态变化（started = 开始打标；succeeded / failed = 终态）。"""
+
+    item: str
+    batch: int
+    status: str
+    attempt: int
+    reason_code: str | None = None
+    message: str | None = None
+
+    @property
+    def kind(self) -> str:
+        """SSE 事件类型名。"""
+        return "item-updated"
+
+    def to_payload(self) -> dict[str, Any]:
+        """序列化为 SSE data 载荷。"""
+        return {
+            "item": self.item,
+            "batch": self.batch,
+            "status": self.status,
+            "attempt": self.attempt,
+            "reason_code": self.reason_code,
+            "message": self.message,
+        }
+
+
+@dataclass(frozen=True)
+class RunFinishedEvent:
+    """run-finished：运行结束（completed / interrupted），带最终计数。"""
+
+    run_id: str
+    batch: int
+    status: str
+    counters: dict[str, int]
+
+    @property
+    def kind(self) -> str:
+        """SSE 事件类型名。"""
+        return "run-finished"
+
+    def to_payload(self) -> dict[str, Any]:
+        """序列化为 SSE data 载荷。"""
+        return {
+            "run_id": self.run_id,
+            "batch": self.batch,
+            "status": self.status,
+            "counters": dict(self.counters),
+        }
+
+
+#: 业务事件的联合（SSE 桥接与 CLI 进度打印的消费对象）。
+RunEvent = RunStartedEvent | ItemUpdatedEvent | RunFinishedEvent
+
+
+class _BlankCaptionError(Exception):
+    """内部哨兵：模型返回了空白描述——按 llm-content（可重试）失败处理。"""
+
+
+class BatchRunner:
+    """一个批次的跑批执行器：持锁、定计划、逐条打标、落三件套、发事件。
+
+    一次运行对应一个实例；同一工作目录同一时刻只允许一个运行（运行锁保证）。
+    ``completer`` 与 :class:`~dataset_factory.labeling.LabelingEngine` 同款注入式
+    设计——测试注入假实现即可离线跑全流程。
+    """
+
+    def __init__(
+        self,
+        workdir: Path,
+        seq: int,
+        completer: Any,
+        *,
+        mode: RunMode,
+        trigger: RunTrigger,
+        video_fps: int = 2,
+        video_max_frames: int = 16,
+        sleeper: Callable[[float], None] | None = None,
+    ) -> None:
+        """绑定批次与运行参数。
+
+        Args:
+            workdir: 工作目录路径（须已登记）。
+            seq: 批次序号（sN 的 N）。
+            completer: 实现 llm.Completer 协议的客户端（逐条打标的唯一模型通道）。
+            mode: full / retry。
+            trigger: web / cli（出身记录）。
+            video_fps: 视频条目的抽帧 fps。
+            video_max_frames: 视频条目的抽帧帧数上限。
+            sleeper: 退避等待函数（注入替代 time.sleep，测试不打真盹）。
+        """
+        self._workdir = workdir
+        self._seq = seq
+        self._completer = completer
+        self._mode: RunMode = mode
+        self._trigger: RunTrigger = trigger
+        self._video_fps = video_fps
+        self._video_max_frames = video_max_frames
+        self._sleep = sleeper if sleeper is not None else time.sleep
+        self._stop_event = threading.Event()
+        self._subscribers: list[Callable[[RunEvent], None]] = []
+
+    # -- 停止与事件订阅（供入口层跨线程调用） --------------------------------
+
+    def stop(self) -> None:
+        """请求停止（协作取消）：当前条目在下一个安全点（条目边界 / 退避后）停下。"""
+        self._stop_event.set()
+
+    def subscribe(self, callback: Callable[[RunEvent], None]) -> Callable[[], None]:
+        """订阅业务事件（多播——多个 SSE 连接各订各的），返回退订函数。
+
+        订阅要在 ``run()`` 开始前完成；回调异常只记日志、绝不中断跑批
+        （消费者死了不该连累生产者）。
+        """
+        self._subscribers.append(callback)
+
+        def _unsubscribe() -> None:
+            with suppress(ValueError):
+                self._subscribers.remove(callback)
+
+        return _unsubscribe
+
+    # -- 主流程 ---------------------------------------------------------------
+
+    def run(self) -> RunReport:
+        """执行一次跑批（阻塞到结束 / 停止），返回最终报告。
+
+        Raises:
+            BatchNotFoundError: 批次不存在（strategies 域异常冒泡）。
+            BatchInactiveError: 批次已停用（隐藏），不允许跑批。
+            StrategyNotFoundError: 快照缺失或损坏（批次元数据与文件不一致）。
+            RunOccupiedError: 工作目录已有跑批在运行（运行锁被占用）。
+            RunJournalCorruptedError: 历史运行流水损坏（full 模式续跑判定要读它）。
+        """
+        entry = get_batch(self._workdir, self._seq)
+        if not entry.active:
+            raise BatchInactiveError(
+                f"批次 s{self._seq} 已停用（隐藏）——请先在批次列表里「显示」再跑批。"
+            )
+        snapshot = read_snapshot(self._workdir, self._seq)
+        store = WorkdirStore(self._workdir)
+        lock = RunLock(store.dsf_path)
+        lock.acquire(
+            {
+                "pid": os.getpid(),
+                "started_at": _utc_now_iso(),
+                "hostname": platform.node(),
+                "batch": f"s{self._seq}",
+                "mode": self._mode,
+            }
+        )
+        try:
+            return self._run_locked(store, snapshot)
+        finally:
+            lock.release()
+
+    def _run_locked(self, store: WorkdirStore, snapshot: Any) -> RunReport:
+        """持锁后的执行主体：定计划 → 逐条打标 → 收尾（全部在调度线程）。
+
+        计划构建放在创建运行目录**之前**：计划阶段失败（历史流水损坏等）零痕迹，
+        不留下空 run 目录。
+        """
+        counters = {
+            "planned": 0,
+            "attempted": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "skipped": 0,
+        }
+        planned_stems: list[str] = []
+        if self._mode == "retry":
+            planned_stems = list(read_retry_list(self._workdir, self._seq))
+        else:
+            planned_stems, skip_stems = _plan_full(
+                self._workdir, self._seq, store.runs_dir
+            )
+            counters["skipped"] = len(skip_stems)
+
+        run_id = _new_run_id(store.runs_dir)
+        journal = RunJournal(store.runs_dir / run_id)
+        started_at = _utc_now_iso()
+        model = cast(str, snapshot.endpoint["model"])
+        engine = LabelingEngine(self._completer, model)
+
+        counters["planned"] = len(planned_stems)
+        strategy_hash = _snapshot_file_hash(store, self._seq)
+        run_meta: dict[str, object] = {
+            "run_id": run_id,
+            "batch": self._seq,
+            "mode": self._mode,
+            "trigger": self._trigger,
+            "strategy_hash": strategy_hash,
+            "snapshot": f"strategies/s{self._seq}.json",
+            "dsf_version": tool_version(),
+            "status": _STATUS_RUNNING,
+            "counters": dict(counters),
+            "started_at": started_at,
+            "finished_at": None,
+        }
+        journal.write_run_json(run_meta)
+        journal.append_log_line(
+            f"[{started_at}] 启动：批次 s{self._seq}、模式 {self._mode}、"
+            f"触发 {self._trigger}、计划 {counters['planned']} 条"
+            f"（启动时跳过 {counters['skipped']}）、快照哈希 {strategy_hash[:12]}…、"
+            f"工具 {tool_version()}"
+        )
+        self._emit(
+            RunStartedEvent(
+                run_id=run_id,
+                mode=self._mode,
+                batch=self._seq,
+                planned=counters["planned"],
+            )
+        )
+
+        interrupted = False
+        succeeded_items: list[str] = []
+        for item in planned_stems:
+            if self._stop_event.is_set():
+                interrupted = True
+                break
+            if self._label_one(journal, engine, snapshot, item, counters):
+                succeeded_items.append(item)
+
+        status = (
+            _STATUS_INTERRUPTED
+            if interrupted or self._stop_event.is_set()
+            else _STATUS_COMPLETED
+        )
+        counters["attempted"] = counters["succeeded"] + counters["failed"]
+        finished_at = _utc_now_iso()
+        run_meta["status"] = status
+        run_meta["counters"] = dict(counters)
+        run_meta["finished_at"] = finished_at
+        journal.write_run_json(run_meta)
+        if self._mode == "retry" and succeeded_items:
+            # 出列在锁内做（运行全程持锁）：本次成功的条目移出重试列表，仍失败与
+            # 中断没跑到的保留（「还没补完的账」）。
+            _remove_retry_items(self._workdir, self._seq, succeeded_items)
+        journal.append_log_line(
+            f"[{finished_at}] 结束（{status}）：成功 {counters['succeeded']}、"
+            f"失败 {counters['failed']}、跳过 {counters['skipped']}、"
+            f"尝试 {counters['attempted']} / 计划 {counters['planned']}"
+        )
+        self._emit(
+            RunFinishedEvent(
+                run_id=run_id, batch=self._seq, status=status, counters=counters
+            )
+        )
+        return RunReport(
+            run_id=run_id,
+            status=status,
+            mode=self._mode,
+            counters=dict(counters),
+            run_dir=journal.run_dir,
+        )
+
+    # -- 单条执行 -------------------------------------------------------------
+
+    def _label_one(
+        self,
+        journal: RunJournal,
+        engine: LabelingEngine,
+        snapshot: Any,
+        item: str,
+        counters: dict[str, int],
+    ) -> bool:
+        """打一条素材：退避重试循环到成功或判死，写流水、发事件、记人读日志。
+
+        Returns:
+            True = 最终成功（重试模式出列用）；False = 失败、素材缺失或中途中断。
+        """
+        self._emit(
+            ItemUpdatedEvent(item=item, batch=self._seq, status="started", attempt=0)
+        )
+        asset_path = _resolve_asset(self._workdir, item)
+        prompt_body = cast(str, snapshot.prompt["body"])
+        skill_texts = [cast(str, block["body"]) for block in snapshot.skills]
+
+        attempt = 0
+        while True:
+            attempt += 1
+            started = perf_counter()
+            elapsed_ms = 0
+            failure: _Failure | None = None
+            try:
+                if asset_path is None:
+                    # raise 作统一失败处理的入口：缺失、空白描述与模型错误共用
+                    # 同一套「退避重试 / 记死」逻辑（TRY301 定点豁免，拆开反而散）。
+                    raise MaterialReadError(  # noqa: TRY301
+                        f"素材 {item} 不在工作目录（缺失）——请先补回素材再重试。"
+                    )
+                result = engine.label_material(
+                    asset_path,
+                    prompt_body=prompt_body,
+                    skill_texts=skill_texts,
+                    video_fps=self._video_fps,
+                    video_max_frames=self._video_max_frames,
+                )
+                elapsed_ms = int((perf_counter() - started) * 1000)
+                if not result.caption.strip():
+                    raise _BlankCaptionError()  # noqa: TRY301 —— 同上
+                # 成功：产物原子写（只有完整产物算已有产物，中断不留半截）。
+                atomic_write_text(
+                    self._workdir / f"s{self._seq}__{item}.txt", result.caption
+                )
+                counters["succeeded"] += 1
+                journal.append_item(
+                    {
+                        "item": item,
+                        "batch": self._seq,
+                        "status": "succeeded",
+                        "attempt": attempt,
+                        "asset_hash": result.asset_hash,
+                        "elapsed_ms": elapsed_ms,
+                    }
+                )
+                self._emit(
+                    ItemUpdatedEvent(
+                        item=item, batch=self._seq, status="succeeded", attempt=attempt
+                    )
+                )
+                journal.append_log_line(
+                    f"[{_utc_now_compact()}] {item} 尝试 {attempt} 成功（{elapsed_ms}ms）"
+                )
+            except _BlankCaptionError:
+                failure = _Failure(
+                    "llm-content",
+                    "模型返回了空白描述；按内容层失败处理。",
+                    retryable=True,
+                )
+            except (MaterialReadError, MaterialOversizeError) as exc:
+                failure = _Failure("asset-unreadable", str(exc))
+            except ValueError as exc:
+                # 快照提示词空白 / 素材扩展名白名单外——批次配置类，重试不会变好。
+                failure = _Failure("config", str(exc))
+            except LLMError as exc:
+                reason_code, retryable = _classify_llm_error(exc)
+                failure = _Failure(
+                    reason_code,
+                    str(exc),
+                    retryable=retryable,
+                    retry_after=getattr(exc, "retry_after", None),
+                )
+            except OSError as exc:
+                # 产物写入失败（磁盘 / 权限）：重试同条多半还是撞，按 config 记死。
+                failure = _Failure("config", f"写入产物失败：{exc.strerror or exc}")
+            else:
+                return True  # 成功路径（TRY300：返回值放 else 块，与失败处理分离）
+
+            # 失败路径：可重试且没到上限且没被停止 → 退避后重试；否则记死。
+            if (
+                failure.retryable
+                and attempt < _MAX_ATTEMPTS
+                and not self._stop_event.is_set()
+            ):
+                delay = failure.retry_after or _backoff_seconds(attempt)
+                journal.append_log_line(
+                    f"[{_utc_now_compact()}] {item} 尝试 {attempt} 失败"
+                    f"（{failure.reason_code}：{_one_line(failure.message)}）；"
+                    f"{delay:.1f}s 后重试"
+                )
+                self._sleep(delay)
+                if self._stop_event.is_set():
+                    # 退避中被打断：本条不写终态行（回到「排队中」，下次续跑再打）。
+                    return False
+                continue
+            counters["failed"] += 1
+            journal.append_item(
+                {
+                    "item": item,
+                    "batch": self._seq,
+                    "status": "failed",
+                    "attempt": attempt,
+                    "reason_code": failure.reason_code,
+                    "message": _one_line(failure.message),
+                    "elapsed_ms": elapsed_ms,
+                }
+            )
+            self._emit(
+                ItemUpdatedEvent(
+                    item=item,
+                    batch=self._seq,
+                    status="failed",
+                    attempt=attempt,
+                    reason_code=failure.reason_code,
+                    message=_one_line(failure.message),
+                )
+            )
+            journal.append_log_line(
+                f"[{_utc_now_compact()}] {item} 失败（{failure.reason_code}："
+                f"{_one_line(failure.message)}）"
+            )
+            return False
+
+    # -- 事件多播 -------------------------------------------------------------
+
+    def _emit(self, event: RunEvent) -> None:
+        """把事件发给全部订阅者（回调异常只记日志，不中断跑批）。"""
+        for callback in list(self._subscribers):
+            try:
+                callback(event)
+            except Exception:
+                # 消费者异常不连累跑批；BLE001 对「记日志后继续」的宽捕获不报警
+                # （memory 48④），无需 noqa。
+                logger.warning("跑批事件订阅者回调异常（已忽略）", exc_info=True)
+
+
+@dataclass(frozen=True)
+class _Failure:
+    """一次尝试的失败信息（内部中间对象，不进流水——落盘前拆成字段）。"""
+
+    reason_code: str
+    message: str
+    retryable: bool = False
+    retry_after: float | None = None
+
+
+def _plan_full(workdir: Path, seq: int, runs_dir: Path) -> tuple[list[str], list[str]]:
+    """full 模式定计划：登记在册素材逐条判定「跳过 / 要打」。
+
+    跳过判定（E1 续跑）：有产物（txt 非空白）且当前素材哈希与最近一次成功打标
+    一致 → 跳过；无产物、产物空白、无锚点（从没成功打过）、哈希不一致（打标后
+    素材被换过）→ 重打。只对有产物条目现算哈希（无产物的本来就要打）。
+
+    Returns:
+        (要打的素材主干列表, 跳过的素材主干列表)，均按主干排序（确定性）。
+    """
+    store = WorkdirStore(workdir)
+    # files[] 的形状（dict + name: str）已由 read_import_records 校验，这里只取名字。
+    registered = {
+        str(entry["name"])
+        for record in store.read_import_records()
+        for entry in cast("list[dict[str, object]]", record.get("files", []))
+        if isinstance(entry.get("name"), str)
+    }
+    assets = _scan_assets(workdir)
+    hashes = load_recent_success_hashes(runs_dir)
+
+    to_label: list[str] = []
+    skipped: list[str] = []
+    for stem, path in sorted(assets.items()):
+        if path.name not in registered:
+            continue  # 未登记素材不打标（M2：批次成员由导入登记界定）
+        product = workdir / f"s{seq}__{stem}.txt"
+        if product.is_file():
+            try:
+                has_content = bool(product.read_text(encoding="utf-8").strip())
+            except (OSError, UnicodeDecodeError):
+                has_content = False
+            if has_content:
+                recorded = hashes.get(stem)
+                if recorded is not None and hash_file(path) == recorded:
+                    skipped.append(stem)
+                    continue
+        to_label.append(stem)
+    return to_label, skipped
+
+
+def _scan_assets(workdir: Path) -> dict[str, Path]:
+    """工作目录现状里的素材文件（白名单内、平铺不递归），主干 → 路径。"""
+    result: dict[str, Path] = {}
+    if not workdir.is_dir():
+        return result
+    for entry in sorted(workdir.iterdir(), key=lambda p: p.name):
+        if not entry.is_file() or entry.suffix.lower() not in ASSET_EXTENSIONS:
+            continue
+        result[Path(entry.name).stem] = entry
+    return result
+
+
+def _resolve_asset(workdir: Path, item: str) -> Path | None:
+    """按素材主干解析工作目录里的素材文件；找不到（缺失）返回 None。"""
+    for suffix in sorted(ASSET_EXTENSIONS):
+        candidate = workdir / f"{item}{suffix}"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _classify_llm_error(exc: LLMError) -> tuple[str, bool]:
+    """把 llm 分类异常映射为 (reason_code, retryable)（F5 的两类清单）。
+
+    判定顺序「先具体后一般」：各分类异常都是 LLMError 子类；裸 LLMError（模型没
+    返回可用文本）属内容层异常，可重试。
+    """
+    if isinstance(exc, LLMRateLimitError):
+        return "rate-limit", True
+    if isinstance(exc, LLMTimeoutError):
+        return "timeout", True
+    if isinstance(exc, LLMConnectionError):
+        return "network", True
+    if isinstance(exc, LLMServerError):
+        return "5xx", True
+    if isinstance(exc, LLMBadRequestError):
+        return "bad-request", False
+    if isinstance(exc, (LLMNotFoundError, LLMAuthError, LLMUnexpectedError)):
+        return "config", False
+    if isinstance(exc, UnsupportedImageError):
+        # 内容不是真图片（导入只看扩展名）——重试不会变好，按素材问题记死。
+        return "asset-unreadable", False
+    return "llm-content", True
+
+
+def _backoff_seconds(attempt: int) -> float:
+    """第 attempt 次尝试失败后的退避秒数：1s / 2s / 4s 乘 ±20% 随机抖动。"""
+    base = _BACKOFF_BASE_SECONDS * (2 ** (attempt - 1))
+    # S311：抖动只为了让重试错峰，不是加密用途。
+    return base * random.uniform(1 - _JITTER_RATIO, 1 + _JITTER_RATIO)  # noqa: S311
+
+
+def _utc_now_iso() -> str:
+    """当前 UTC 时刻（ISO 8601，进 run.json / 占用者信息）。"""
+    return datetime.now(UTC).isoformat()
+
+
+def _utc_now_compact() -> str:
+    """当前 UTC 时刻（秒精度紧凑 ISO，run.log 行首时间戳用）。"""
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _one_line(message: str) -> str:
+    """把异常消息压成单行（进流水与人读日志，换行会破坏 JSONL / 日志行结构）。"""
+    return " ".join(message.split())
+
+
+def _new_run_id(runs_dir: Path) -> str:
+    """分配运行目录名：UTC 时间戳定宽（字典序即时间序），撞名加序号（同秒防撞）。"""
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    candidate = stamp
+    seq = 1
+    while (runs_dir / candidate).exists():
+        candidate = f"{stamp}-{seq}"
+        seq += 1
+    return candidate
+
+
+def _snapshot_file_hash(store: WorkdirStore, seq: int) -> str:
+    """快照文件的 SHA-256（run.json 的策略哈希锚点——快照被手改可被发现）。"""
+    data = (store.strategies_dir / f"s{seq}.json").read_bytes()
+    return hashlib.sha256(data).hexdigest()
+
+
+# -- 重试列表（state.json 的 retry_list 键；结构由本域定义） --------------------
+
+
+def read_retry_list(workdir: Path, seq: int) -> list[str]:
+    """读某批次的重试列表（列表顺序即重试顺序；缺键视为空）。
+
+    形状不对 fail loud（按 state.json 损坏处理——重试列表是「还没补完的账」，
+    静默清零等于替用户丢账）。
+    """
+    raw = WorkdirStore(workdir).read_state().get(_RETRY_LIST_KEY)
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise WorkdirMetadataCorruptedError(
+            "工作目录状态文件的重试列表损坏——请检查 .dsf/state.json。"
+        )
+    items: list[str] = []
+    for entry in cast("list[object]", raw):
+        if not isinstance(entry, dict):
+            raise WorkdirMetadataCorruptedError(
+                "工作目录状态文件的重试列表形状不对——请检查 .dsf/state.json。"
+            )
+        record = cast("dict[str, object]", entry)
+        batch = record.get("batch")
+        item = record.get("item")
+        if (
+            not isinstance(batch, int)
+            or isinstance(batch, bool)
+            or not isinstance(item, str)
+        ):
+            raise WorkdirMetadataCorruptedError(
+                "工作目录状态文件的重试列表条目缺字段或类型不对——"
+                "请检查 .dsf/state.json。"
+            )
+        if batch == seq:
+            items.append(item)
+    return items
+
+
+def _remove_retry_items(workdir: Path, seq: int, items: list[str]) -> None:
+    """把本次成功的条目移出重试列表（读—改—写全程持锁由执行器保证）。"""
+    store = WorkdirStore(workdir)
+    state = store.read_state()
+    raw = state.get(_RETRY_LIST_KEY)
+    if raw is None:
+        return
+    if not isinstance(raw, list):
+        raise WorkdirMetadataCorruptedError(
+            "工作目录状态文件的重试列表损坏——请检查 .dsf/state.json。"
+        )
+    removal = set(items)
+    kept: list[dict[str, object]] = []
+    for entry in cast("list[object]", raw):
+        if not isinstance(entry, dict):
+            raise WorkdirMetadataCorruptedError(
+                "工作目录状态文件的重试列表形状不对——请检查 .dsf/state.json。"
+            )
+        record = cast("dict[str, object]", entry)
+        if record.get("batch") == seq and record.get("item") in removal:
+            continue
+        kept.append(record)
+    state[_RETRY_LIST_KEY] = kept
+    store.write_state(state)

@@ -28,11 +28,14 @@ from ..llm.endpoints import (
 from ..prompts.store import read_prompt
 from ..skills.store import read_skill
 
-__all__ = ["StrategySnapshot", "build_snapshot"]
+__all__ = ["StrategySnapshot", "build_snapshot", "tool_version"]
 
 
-def _tool_version() -> str:
-    """工具版本号（可编辑安装也能查到发行元数据；查不到降级 unknown）。"""
+def tool_version() -> str:
+    """工具版本号（可编辑安装也能查到发行元数据；查不到降级 unknown）。
+
+    快照装配与运行日志（run.json 的 dsf_version）共用——同一份「工具出身」口径。
+    """
     try:
         return version("dataset-factory")
     except PackageNotFoundError:
@@ -150,6 +153,6 @@ def build_snapshot(
         prompt=prompt_block,
         skills=skill_blocks,
         built_at=built_at,
-        tool_version=_tool_version(),
+        tool_version=tool_version(),
         source=source,
     )

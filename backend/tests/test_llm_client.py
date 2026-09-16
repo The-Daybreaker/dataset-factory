@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock
 
@@ -321,6 +322,47 @@ def test_complete_maps_generic_5xx_to_server_error() -> None:
         client.complete([Message(role="user", parts=(TextPart("hi"),))])
 
     assert excinfo.value.retryable is True
+
+
+def _rate_limit_with_headers(headers: object) -> openai.RateLimitError:
+    """造一个带响应头的裸限流异常（探测 Retry-After 提取路径专用）。"""
+    exc = _bare_sdk_error(openai.RateLimitError)
+    # SDK 的 response 是 httpx 对象（memory 65④：测试不真造），且为只读属性——
+    # 按「裸实例 + 手工补属性」的既有套路绕过赋值限制。
+    object.__setattr__(exc, "response", SimpleNamespace(headers=headers))
+    return exc
+
+
+def test_rate_limit_error_carries_retry_after_header() -> None:
+    """限流异常翻译时提取 Retry-After 响应头的秒数（批量跑批退避优先遵循它）。
+
+    键名用小写：真实环境里 headers 是 httpx.Headers（取值大小写不敏感），
+    大小写归一是它的保证，不是本模块被测逻辑。
+    """
+    client = _client_raising(_rate_limit_with_headers({"retry-after": "7.5"}))
+
+    with pytest.raises(LLMRateLimitError) as excinfo:
+        client.complete([Message(role="user", parts=(TextPart("hi"),))])
+
+    assert excinfo.value.retry_after == 7.5
+
+
+def test_rate_limit_error_without_parsable_retry_after_is_none() -> None:
+    """Retry-After 缺失 / 非 HTTP-date 数字格式：retry_after 回落 None（调用方走本地退避）。"""
+    client = _client_raising(
+        _rate_limit_with_headers({"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"})
+    )
+
+    with pytest.raises(LLMRateLimitError) as excinfo:
+        client.complete([Message(role="user", parts=(TextPart("hi"),))])
+
+    assert excinfo.value.retry_after is None
+
+    client = _client_raising(_bare_sdk_error(openai.RateLimitError))
+    with pytest.raises(LLMRateLimitError) as excinfo:
+        client.complete([Message(role="user", parts=(TextPart("hi"),))])
+
+    assert excinfo.value.retry_after is None
 
 
 def test_auth_error_message_is_clean_and_actionable() -> None:
