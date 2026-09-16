@@ -101,7 +101,6 @@
   /* 侧栏：比画布深一档（#ECECEE），与内容区分层 */
   --sidebar: var(--n-75);
   --sidebar-foreground: var(--n-900);
-  --radius: 0.5rem;
 }
 
 /* 暗色：刻度整体翻转（与 ui-system.css .dark 一字不差）；槽位随指向自动翻转，
@@ -149,6 +148,16 @@
   --background: var(--n-0);
   --nav-hover: 220 6% 11.5%; /* 比侧栏 n-75（9%）亮一档 */
   --nav-active: 220 6% 13.5%; /* 选中再亮一档 */
+}
+
+/* 字体族令牌：与 ui-system.css --font-sans / --font-mono 一字不差（非 inline 块，
+   变量真实发射到 :root，页面可直接 var(--font-sans) 引用；font-sans / font-mono 工具类同源）。 */
+@theme {
+  --font-sans:
+    "HarmonyOS Sans SC", "HarmonyOS Sans", "MiSans", -apple-system, "Segoe UI", Roboto,
+    "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono:
+    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 /* 把 HSL 令牌映射成 Tailwind 的颜色工具类（bg-background / text-muted-foreground /
@@ -218,11 +227,26 @@
   --color-warn-dot: hsl(var(--warn-dot));
   --color-bad-dot: hsl(var(--bad-dot));
   --color-info-dot: hsl(var(--info-dot));
-  /* 圆角阶梯：卡片 8px（lg）、控件 6px（md）、气泡 10px（xl） */
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 2px);
+  /* 字号 6 档：与 ui-system.css --t-* 一字不差，工具类 text-t-* 与规范类名 t-* 一一对应；
+     行高走规范三档（tight 1.35 / base 1.55）。一期页面的任意字号留待二期前端批统一清理。 */
+  --text-t-xs: 11px;
+  --text-t-xs--line-height: 1.35;
+  --text-t-sm: 12px;
+  --text-t-sm--line-height: 1.55;
+  --text-t-md: 13px;
+  --text-t-md--line-height: 1.55;
+  --text-t-lg: 14px;
+  --text-t-lg--line-height: 1.55;
+  --text-t-xl: 16px;
+  --text-t-xl--line-height: 1.35;
+  --text-t-2xl: 24px;
+  --text-t-2xl--line-height: 1.35;
+  /* 圆角阶梯 = ui-system.css 圆角 5 档（r-xs 5 / r-sm 8 / r-md 12 / r-lg 14）；
+     rounded-full 用 Tailwind 内置（等价 r-full 999px）。 */
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
 }
 
 @layer base {
@@ -233,10 +257,9 @@
     height: 100%;
   }
   body {
-    @apply bg-background text-foreground;
-    /* 可读性基线：正文 14px、行高 1.7、系统字体栈（中文回退交给系统）。 */
-    font-family:
-      ui-sans-serif, system-ui, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    @apply bg-background text-foreground font-sans;
+    /* 可读性基线：正文 14px、行高 1.7（一期基线；规范 t-md 13px / lh-base 1.55 的
+       基线切换随二期前端批一并处理）。 */
     font-size: 14px;
     line-height: 1.7;
     height: 100%;
