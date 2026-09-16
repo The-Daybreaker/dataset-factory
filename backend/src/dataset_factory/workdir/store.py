@@ -307,6 +307,15 @@ class WorkdirStore:
         finally:
             lock.release()
 
+    def export_directory(self) -> Path:
+        """持运行锁的调用方准备交付目录，清理上次异常退出的临时包。"""
+        directory = self.dsf_path / "export"
+        directory.mkdir(exist_ok=True)
+        for temporary in directory.glob(".dsf-export-*.tmp"):
+            if temporary.is_file() or temporary.is_symlink():
+                temporary.unlink()
+        return directory
+
     def append_import_record(self, record: dict[str, object]) -> None:
         """追加一条导入记录到 ``imports.jsonl``（append-only，一行一次导入）。
 

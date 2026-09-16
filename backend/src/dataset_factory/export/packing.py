@@ -125,6 +125,18 @@ def build_export_plan(
         excluded.append(
             ExportRow(Path(unimported.name).stem, unimported.name, reason="未登记")
         )
+    if not sequential:
+        stems: dict[str, int] = {}
+        for row in included:
+            key = row.item.casefold()
+            stems[key] = stems.get(key, 0) + 1
+        conflicts = {key for key, count in stems.items() if count > 1}
+        excluded.extend(
+            replace(row, reason="配对冲突")
+            for row in included
+            if row.item.casefold() in conflicts
+        )
+        included = [row for row in included if row.item.casefold() not in conflicts]
     width = max(3, len(str(len(included))))
     included = [
         replace(

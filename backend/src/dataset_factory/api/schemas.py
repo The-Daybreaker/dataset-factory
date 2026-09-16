@@ -671,3 +671,59 @@ class ItemListView(BaseModel):
     batch: int = Field(description="批次序号（防把 s2 的视图渲染进 s1 的列表）")
     query: str = Field(description="生效的搜索词（空串 = 没过滤）")
     groups: dict[str, list[ItemRowView]] = Field(description="分组键 → 该组的行")
+
+
+# --------------------------------------------------------------------------
+# 导出（export 打包域）
+# --------------------------------------------------------------------------
+
+
+class ExportPlanRow(BaseModel):
+    """导出计划里的一条记录：将入包带输出名，被排除带具体原因。"""
+
+    item: str = Field(description="素材主干（导入顺序的唯一引用）")
+    name: str = Field(description="工作目录中的素材文件名")
+    asset_name: str | None = Field(
+        default=None, description="顺序重命名后的素材文件名；不重命名 = 原名"
+    )
+    caption_name: str | None = Field(
+        default=None,
+        description="顺序重命名后的 caption 文件名；不重命名 = 素材主干.txt",
+    )
+    asset_bytes: int = Field(default=0, description="素材字节数")
+    caption_bytes: int = Field(default=0, description="caption 字节数")
+    integrity: Literal["valid", "changed", "unknown", "missing", "unreadable", None] = (
+        Field(default=None, description="素材完整性结论（排除行可为 null）")
+    )
+    reason: str | None = Field(default=None, description="被排除的具体原因")
+
+
+class ExportPlanView(BaseModel):
+    """当前批次的导出计划（状态 / 条数 / 体积与将入包、被排除清单）。"""
+
+    batch: int = Field(description="批次序号（sN 的 N）")
+    sequential: bool = Field(description="是否启用顺序重命名（默认开启）")
+    included: list[ExportPlanRow] = Field(description="将入包的配对")
+    excluded: list[ExportPlanRow] = Field(description="排除记录与原因")
+    total_bytes: int = Field(description="未压缩的字节总计")
+    non_ascii_names: bool = Field(
+        description="关闭顺序重命名后，将入包素材是否含非 ASCII 文件名"
+    )
+
+
+class ExportStartRequest(BaseModel):
+    """启动打包的请求体。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    batch: str = Field(description="所选批次标识（sN）")
+    mode: Literal["current"] = "current"
+    sequential: bool = Field(
+        default=True, description="顺序重命名；关闭时保留原文件名并检查非 ASCII 风险"
+    )
+
+
+class ExportAccepted(BaseModel):
+    """打包任务受理响应。"""
+
+    task_id: str = Field(description="任务句柄（GET /tasks/{id} 轮询）")

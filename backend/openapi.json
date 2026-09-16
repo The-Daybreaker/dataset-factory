@@ -677,6 +677,181 @@
         "title": "ExclusionsView",
         "type": "object"
       },
+      "ExportAccepted": {
+        "description": "打包任务受理响应。",
+        "properties": {
+          "task_id": {
+            "description": "任务句柄（GET /tasks/{id} 轮询）",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "title": "ExportAccepted",
+        "type": "object"
+      },
+      "ExportPlanRow": {
+        "description": "导出计划里的一条记录：将入包带输出名，被排除带具体原因。",
+        "properties": {
+          "asset_bytes": {
+            "default": 0,
+            "description": "素材字节数",
+            "title": "Asset Bytes",
+            "type": "integer"
+          },
+          "asset_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "顺序重命名后的素材文件名；不重命名 = 原名",
+            "title": "Asset Name"
+          },
+          "caption_bytes": {
+            "default": 0,
+            "description": "caption 字节数",
+            "title": "Caption Bytes",
+            "type": "integer"
+          },
+          "caption_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "顺序重命名后的 caption 文件名；不重命名 = 素材主干.txt",
+            "title": "Caption Name"
+          },
+          "integrity": {
+            "description": "素材完整性结论（排除行可为 null）",
+            "enum": [
+              "valid",
+              "changed",
+              "unknown",
+              "missing",
+              "unreadable",
+              null
+            ],
+            "title": "Integrity"
+          },
+          "item": {
+            "description": "素材主干（导入顺序的唯一引用）",
+            "title": "Item",
+            "type": "string"
+          },
+          "name": {
+            "description": "工作目录中的素材文件名",
+            "title": "Name",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "被排除的具体原因",
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "item",
+          "name"
+        ],
+        "title": "ExportPlanRow",
+        "type": "object"
+      },
+      "ExportPlanView": {
+        "description": "当前批次的导出计划（状态 / 条数 / 体积与将入包、被排除清单）。",
+        "properties": {
+          "batch": {
+            "description": "批次序号（sN 的 N）",
+            "title": "Batch",
+            "type": "integer"
+          },
+          "excluded": {
+            "description": "排除记录与原因",
+            "items": {
+              "$ref": "#/components/schemas/ExportPlanRow"
+            },
+            "title": "Excluded",
+            "type": "array"
+          },
+          "included": {
+            "description": "将入包的配对",
+            "items": {
+              "$ref": "#/components/schemas/ExportPlanRow"
+            },
+            "title": "Included",
+            "type": "array"
+          },
+          "non_ascii_names": {
+            "description": "关闭顺序重命名后，将入包素材是否含非 ASCII 文件名",
+            "title": "Non Ascii Names",
+            "type": "boolean"
+          },
+          "sequential": {
+            "description": "是否启用顺序重命名（默认开启）",
+            "title": "Sequential",
+            "type": "boolean"
+          },
+          "total_bytes": {
+            "description": "未压缩的字节总计",
+            "title": "Total Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "batch",
+          "sequential",
+          "included",
+          "excluded",
+          "total_bytes",
+          "non_ascii_names"
+        ],
+        "title": "ExportPlanView",
+        "type": "object"
+      },
+      "ExportStartRequest": {
+        "additionalProperties": false,
+        "description": "启动打包的请求体。",
+        "properties": {
+          "batch": {
+            "description": "所选批次标识（sN）",
+            "title": "Batch",
+            "type": "string"
+          },
+          "mode": {
+            "const": "current",
+            "default": "current",
+            "title": "Mode",
+            "type": "string"
+          },
+          "sequential": {
+            "default": true,
+            "description": "顺序重命名；关闭时保留原文件名并检查非 ASCII 风险",
+            "title": "Sequential",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "batch"
+        ],
+        "title": "ExportStartRequest",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -5239,6 +5414,305 @@
         "summary": "Unhide Batch",
         "tags": [
           "批次（策略实例）"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/export": {
+      "post": {
+        "description": "受理当前批次导出；任务完成返回路径和同源下载地址。",
+        "operationId": "start_export_api_workdirs__wid__export_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "导出参数或文件路径不合法"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "工作目录、批次或交付文件不存在"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "批次已停用"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "工作目录元数据或运行流水损坏"
+          }
+        },
+        "summary": "Start Export",
+        "tags": [
+          "导出"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/export/files/{filename}": {
+      "get": {
+        "description": "仅下载本工具命名的完成包，临时文件与其他元数据均不可寻址。",
+        "operationId": "download_export_api_workdirs__wid__export_files__filename__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "filename",
+            "required": true,
+            "schema": {
+              "title": "Filename",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {},
+              "application/zip": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "导出参数或文件路径不合法"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {},
+              "application/zip": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "工作目录、批次或交付文件不存在"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {},
+              "application/zip": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "批次已停用"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {},
+              "application/zip": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "工作目录元数据或运行流水损坏"
+          }
+        },
+        "summary": "Download Export",
+        "tags": [
+          "导出"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/export/plan": {
+      "get": {
+        "description": "按当前批次返回实时计划，开关改变时重新计算输出名与兼容性提示。",
+        "operationId": "get_export_plan_api_workdirs__wid__export_plan_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "batch",
+            "required": true,
+            "schema": {
+              "title": "Batch",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sequential",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Sequential",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportPlanView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "导出参数或文件路径不合法"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "工作目录、批次或交付文件不存在"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "批次已停用"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "工作目录元数据或运行流水损坏"
+          }
+        },
+        "summary": "Get Export Plan",
+        "tags": [
+          "导出"
         ]
       }
     },

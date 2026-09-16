@@ -417,6 +417,12 @@ def _exclusions_from_state(state: dict[str, object]) -> dict[str, list[str]]:
     return result
 
 
+def read_exclusions(workdir: Path, seq: int) -> list[str]:
+    """读取该批次的排除名单，复用写入侧的结构校验。"""
+    get_batch(workdir, seq)
+    return _exclusions_from_state(WorkdirStore(workdir).read_state()).get(str(seq), [])
+
+
 def add_exclusions(workdir: Path, seq: int, items: list[str]) -> list[str]:
     """把条目加入该批次的排除名单（幂等去重），返回当前名单。"""
     store = WorkdirStore(workdir)

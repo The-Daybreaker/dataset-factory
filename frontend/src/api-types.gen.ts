@@ -984,6 +984,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workdirs/{wid}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Export
+         * @description 受理当前批次导出；任务完成返回路径和同源下载地址。
+         */
+        post: operations["start_export_api_workdirs__wid__export_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/export/files/{filename}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download Export
+         * @description 仅下载本工具命名的完成包，临时文件与其他元数据均不可寻址。
+         */
+        get: operations["download_export_api_workdirs__wid__export_files__filename__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/export/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Export Plan
+         * @description 按当前批次返回实时计划，开关改变时重新计算输出名与兼容性提示。
+         */
+        get: operations["get_export_plan_api_workdirs__wid__export_plan_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workdirs/{wid}/imports": {
         parameters: {
             query?: never;
@@ -1452,6 +1512,125 @@ export interface components {
              * @description 序号
              */
             seq: number;
+        };
+        /**
+         * ExportAccepted
+         * @description 打包任务受理响应。
+         */
+        ExportAccepted: {
+            /**
+             * Task Id
+             * @description 任务句柄（GET /tasks/{id} 轮询）
+             */
+            task_id: string;
+        };
+        /**
+         * ExportPlanRow
+         * @description 导出计划里的一条记录：将入包带输出名，被排除带具体原因。
+         */
+        ExportPlanRow: {
+            /**
+             * Asset Bytes
+             * @description 素材字节数
+             * @default 0
+             */
+            asset_bytes: number;
+            /**
+             * Asset Name
+             * @description 顺序重命名后的素材文件名；不重命名 = 原名
+             */
+            asset_name?: string | null;
+            /**
+             * Caption Bytes
+             * @description caption 字节数
+             * @default 0
+             */
+            caption_bytes: number;
+            /**
+             * Caption Name
+             * @description 顺序重命名后的 caption 文件名；不重命名 = 素材主干.txt
+             */
+            caption_name?: string | null;
+            /**
+             * Integrity
+             * @description 素材完整性结论（排除行可为 null）
+             * @enum {unknown}
+             */
+            integrity?: "valid" | "changed" | "unknown" | "missing" | "unreadable" | null;
+            /**
+             * Item
+             * @description 素材主干（导入顺序的唯一引用）
+             */
+            item: string;
+            /**
+             * Name
+             * @description 工作目录中的素材文件名
+             */
+            name: string;
+            /**
+             * Reason
+             * @description 被排除的具体原因
+             */
+            reason?: string | null;
+        };
+        /**
+         * ExportPlanView
+         * @description 当前批次的导出计划（状态 / 条数 / 体积与将入包、被排除清单）。
+         */
+        ExportPlanView: {
+            /**
+             * Batch
+             * @description 批次序号（sN 的 N）
+             */
+            batch: number;
+            /**
+             * Excluded
+             * @description 排除记录与原因
+             */
+            excluded: components["schemas"]["ExportPlanRow"][];
+            /**
+             * Included
+             * @description 将入包的配对
+             */
+            included: components["schemas"]["ExportPlanRow"][];
+            /**
+             * Non Ascii Names
+             * @description 关闭顺序重命名后，将入包素材是否含非 ASCII 文件名
+             */
+            non_ascii_names: boolean;
+            /**
+             * Sequential
+             * @description 是否启用顺序重命名（默认开启）
+             */
+            sequential: boolean;
+            /**
+             * Total Bytes
+             * @description 未压缩的字节总计
+             */
+            total_bytes: number;
+        };
+        /**
+         * ExportStartRequest
+         * @description 启动打包的请求体。
+         */
+        ExportStartRequest: {
+            /**
+             * Batch
+             * @description 所选批次标识（sN）
+             */
+            batch: string;
+            /**
+             * Mode
+             * @default current
+             * @constant
+             */
+            mode: "current";
+            /**
+             * Sequential
+             * @description 顺序重命名；关闭时保留原文件名并检查非 ASCII 风险
+             * @default true
+             */
+            sequential: boolean;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -4681,6 +4860,227 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_export_api_workdirs__wid__export_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExportStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportAccepted"];
+                };
+            };
+            /** @description 导出参数或文件路径不合法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description 工作目录、批次或交付文件不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description 批次已停用 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description 工作目录元数据或运行流水损坏 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+        };
+    };
+    download_export_api_workdirs__wid__export_files__filename__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+                filename: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": string;
+                };
+            };
+            /** @description 导出参数或文件路径不合法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": unknown;
+                    "application/zip": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 工作目录、批次或交付文件不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": unknown;
+                    "application/zip": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 批次已停用 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": unknown;
+                    "application/zip": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description 工作目录元数据或运行流水损坏 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": unknown;
+                    "application/zip": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_export_plan_api_workdirs__wid__export_plan_get: {
+        parameters: {
+            query: {
+                batch: string;
+                sequential?: boolean;
+            };
+            header?: never;
+            path: {
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportPlanView"];
+                };
+            };
+            /** @description 导出参数或文件路径不合法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description 工作目录、批次或交付文件不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description 批次已停用 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description 工作目录元数据或运行流水损坏 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
                 };
             };
         };

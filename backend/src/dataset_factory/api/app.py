@@ -17,6 +17,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from ..export import ExportError
 from ..labeling import (
     EmptyTurnError,
     LabelingError,
@@ -86,6 +87,7 @@ from ..workdir import (
 from . import (
     routes_config,
     routes_endpoints,
+    routes_export,
     routes_items,
     routes_labeling,
     routes_prompts,
@@ -128,6 +130,7 @@ def create_app(frontend_dir: Path | None = None) -> FastAPI:
     app.include_router(routes_service.router)
     app.include_router(routes_tasks.router)
     app.include_router(routes_workdir.router)
+    app.include_router(routes_export.router)
     app.include_router(routes_runs.router)
     app.include_router(routes_runs.retry_router)
     app.include_router(routes_items.router)
@@ -204,6 +207,16 @@ _ERROR_MAP: list[tuple[int, tuple[type[Exception], ...]]] = [
 
 def _register_error_handlers(app: FastAPI) -> None:
     """按映射表注册异常处理器：域异常消息进 detail、状态码按分类。"""
+
+    def export_handler(request: Request, exc: Exception) -> JSONResponse:
+        return problem_response(
+            status_code=400,
+            type_slug="export-invalid",
+            title="无法导出",
+            detail=str(exc),
+        )
+
+    app.add_exception_handler(ExportError, export_handler)
 
     def make_handler(
         status_code: int,

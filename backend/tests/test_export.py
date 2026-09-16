@@ -136,6 +136,21 @@ def test_sequence_width_expands_at_one_thousand(tmp_path: Path) -> None:
     assert plan.included[-1].caption_name == "1000.txt"
 
 
+def test_original_names_exclude_case_insensitive_caption_collisions(
+    tmp_path: Path,
+) -> None:
+    """保留原名时，大小写不同但会解压成同名 caption 的素材提前列为冲突。"""
+    _pair(tmp_path, "Photo.jpg")
+    _pair(tmp_path, "photo.png")
+    _register(tmp_path, ["Photo.jpg", "photo.png"])
+
+    plan = build_export_plan(tmp_path, 1, labeling_hashes={}, sequential=False)
+
+    assert not plan.included
+    assert len(plan.excluded) == 2
+    assert all(row.reason == "配对冲突" for row in plan.excluded)
+
+
 @pytest.mark.parametrize("changed_name", ["a.jpg", "s1__a.txt"])
 def test_changed_input_aborts_zip_without_touching_source(
     tmp_path: Path, changed_name: str
