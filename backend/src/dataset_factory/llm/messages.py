@@ -20,10 +20,20 @@ VIDEO_MIME_BY_SUFFIX: dict[str, str] = {
 }
 VIDEO_EXTENSIONS = frozenset(VIDEO_MIME_BY_SUFFIX)
 
-# 图片扩展名窄清单（OpenAI 兼容端点事实标准 + torchvision 训练生态；design 项 12）——
-# 与视频扩展名同为媒体格式事实，二期起集中在此作单一事实源（workdir 导入与 labeling
-# 纯素材路径共用，防两处各写一份清单悄悄漂移）。
-IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif"})
+# 图片扩展名 → MIME 与窄清单（OpenAI 兼容端点事实标准 + torchvision 训练生态；design 项 12）
+# ——与视频扩展名同为媒体格式事实，集中在此作单一事实源（workdir 导入、labeling 纯素材
+# 路径、素材预览端点共用，防多处各写一份清单悄悄漂移）。
+# 这份映射只用于「把文件原样提供给浏览器」时定 Content-Type；送模型的图片格式判定走
+# magic bytes 嗅探（images.py 的 _sniff_image_subtype）——扩展名可以撒谎、字节不会，
+# 两者用途不同不可互换。
+IMAGE_MIME_BY_SUFFIX: dict[str, str] = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
+IMAGE_EXTENSIONS = frozenset(IMAGE_MIME_BY_SUFFIX)
 
 # 视频字节上限（二期新增）：批量无人值守必须本地限制——GB 级视频会整读进内存、
 # base64 再胀 1.33 倍。与 MAX_IMAGE_BYTES 同为「运行时读取前再验」的单一事实源

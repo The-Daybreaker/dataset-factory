@@ -72,8 +72,11 @@ from ..strategies import (
 )
 from ..tasks import TaskManager, TaskNotFoundError
 from ..workdir import (
+    AssetNotFoundError,
+    AssetPathError,
     ImportInProgressError,
     ImportSourceConflictError,
+    ProductNotFoundError,
     WorkdirMetadataCorruptedError,
     WorkdirNotFoundError,
     WorkdirPathError,
@@ -81,6 +84,7 @@ from ..workdir import (
 from . import (
     routes_config,
     routes_endpoints,
+    routes_items,
     routes_labeling,
     routes_prompts,
     routes_runs,
@@ -123,6 +127,7 @@ def create_app(frontend_dir: Path | None = None) -> FastAPI:
     app.include_router(routes_tasks.router)
     app.include_router(routes_workdir.router)
     app.include_router(routes_runs.router)
+    app.include_router(routes_items.router)
     app.include_router(routes_strategies.library_router)
     app.include_router(routes_strategies.batches_router)
     directory = frontend_dir if frontend_dir is not None else _default_frontend_dir()
@@ -235,6 +240,21 @@ def _register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(
         WorkdirMetadataCorruptedError, workdir_metadata_corrupted_handler
     )
+
+    def asset_not_found_handler(request: Request, exc: Exception) -> JSONResponse:
+        return problem_response(404, "asset-not-found", "素材不存在", str(exc))
+
+    app.add_exception_handler(AssetNotFoundError, asset_not_found_handler)
+
+    def product_not_found_handler(request: Request, exc: Exception) -> JSONResponse:
+        return problem_response(404, "product-not-found", "产物不存在", str(exc))
+
+    app.add_exception_handler(ProductNotFoundError, product_not_found_handler)
+
+    def asset_path_invalid_handler(request: Request, exc: Exception) -> JSONResponse:
+        return problem_response(400, "asset-path-invalid", "条目名不合法", str(exc))
+
+    app.add_exception_handler(AssetPathError, asset_path_invalid_handler)
 
     def import_source_conflict_handler(
         request: Request, exc: Exception

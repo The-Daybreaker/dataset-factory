@@ -32,3 +32,23 @@ class ImportInProgressError(WorkdirError):
 
     detail 携带占用任务的 task_id（与运行锁拒绝时的占用者信息同思路）。
     """
+
+
+class AssetNotFoundError(WorkdirError):
+    """素材找不到（缺失，或在盘但未登记在册）——HTTP 404 problem+json（asset-not-found）。"""
+
+
+class ProductNotFoundError(WorkdirError):
+    """该批次没有这个条目的可用产物（还没打标，或产物为空 / 读不出）——HTTP 404 problem+json（product-not-found）。
+
+    「读不出」也归这里而不是 500：产物是本工具写的 UTF-8 文本，读不出就等于没有
+    可用 caption，条目视图同样把它算作未完成（产物异常、可重打）——两侧一个口径。
+    """
+
+
+class AssetPathError(WorkdirError):
+    """条目名解析出的路径越出工作目录（符号链接指向外部 / 名字里带路径分隔符）——HTTP 400 problem+json（asset-path-invalid）。
+
+    预览端点只服务工作目录内的文件：realpath 之后仍必须以工作目录为祖先，
+    否则拒绝——这条 confine 校验是「只读端点也不能被拿来读任意文件」的底线。
+    """

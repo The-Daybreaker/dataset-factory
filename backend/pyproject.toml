@@ -121,6 +121,7 @@ convention = "google"
 "__init__.py" = ["D104"]   # 骨架包暂无 docstring，各模块有内容时再补
 "src/dataset_factory/api/routes_strategies.py" = ["N803"]  # 路径参数 sN 是 design 定的批次标识词汇（s1、s2…）
 "src/dataset_factory/api/routes_runs.py" = ["N803"]  # 同上（跑批端点挂在批次路径之下）
+"src/dataset_factory/api/routes_items.py" = ["N803"]  # 同上（条目视图与产物端点挂在批次路径之下）
 "tests/**" = [
     "S101",   # 测试就是用 assert 断言
     "S105", "S106", "S107",  # 测试里的假密钥字面量（"test-key" 等），非真实凭据

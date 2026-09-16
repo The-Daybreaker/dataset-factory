@@ -585,3 +585,72 @@ class RunStatusView(BaseModel):
     )
     current_item: str | None = Field(description="正在（或最近一次）处理的素材主干")
     error: str | None = Field(description="启动失败的原因；正常运行为 null")
+
+
+# --------------------------------------------------------------------------
+# 条目视图（打标页左列六分组）
+# --------------------------------------------------------------------------
+
+#: 行的媒体形态（界面据此选图标）。
+ItemMedia = Literal["image", "video", "file"]
+
+#: 条目的状态位。前四个互斥（design「缺失立为第四个条目状态位」），
+#: unimported 不是条目状态——它是「未导入」分组里那些文件的行状态。
+ItemStatus = Literal["queued", "done", "failed", "missing", "unimported"]
+
+
+class ItemRowView(BaseModel):
+    """左列的一行——六分组共用一个行形状，用不上的字段为 null。
+
+    共用一个形状是为了界面不必为每个分组各写一套解析；字段按行类别分工：
+    未完成行带 attempt / reason_code / message，缺失行带 source / recoverable，
+    未导入行带 reason / size / limit。
+    """
+
+    item: str = Field(description="条目身份 = 素材主干（不含扩展名）")
+    name: str = Field(description="展示用文件名（含扩展名）")
+    media: ItemMedia = Field(description="媒体形态（界面选图标）")
+    status: ItemStatus = Field(description="状态位")
+    can_retry: bool = Field(
+        description="能否加入重试列表——False 时界面置灰（排队中无可重试、"
+        "缺失要先补素材、不可重试失败要先解决格式问题）",
+    )
+    in_retry: bool = Field(description="是否已在重试列表（叠加标记「已排重试」）")
+    attempt: int | None = Field(
+        default=None, description="未完成行：最近一次的尝试序号（1–4）"
+    )
+    reason_code: str | None = Field(
+        default=None, description="未完成行：失败原因码（F5 两类清单）"
+    )
+    message: str | None = Field(
+        default=None, description="未完成行：失败原因（人读，来自运行流水）"
+    )
+    source: str | None = Field(
+        default=None,
+        description="缺失行：来源文件的完整路径（悬停提示与「从别处导入」用）",
+    )
+    recoverable: bool | None = Field(
+        default=None,
+        description="缺失行：来源那儿是否还有这份素材（决定「重新导入」可不可点）",
+    )
+    reason: str | None = Field(
+        default=None,
+        description="未导入行：原因（标准措辞——扩展名不支持 / 超出大小上限 / 未登记）",
+    )
+    size: int | None = Field(default=None, description="未导入行：文件字节数")
+    limit: int | None = Field(
+        default=None, description="未导入行：该档大小上限（只有超限那一类有值）"
+    )
+
+
+class ItemListView(BaseModel):
+    """条目视图响应（GET items）：六个分组恒在，空组给空列表。
+
+    分组键固定六个：queued / done / failed / missing（四个互斥状态位）、
+    retry（叠加标记的聚合视图，条目同时留在自己的状态分组里）、
+    unimported（素材级待办清单，不属于条目）。各组计数 = 该组行数。
+    """
+
+    batch: int = Field(description="批次序号（防把 s2 的视图渲染进 s1 的列表）")
+    query: str = Field(description="生效的搜索词（空串 = 没过滤）")
+    groups: dict[str, list[ItemRowView]] = Field(description="分组键 → 该组的行")

@@ -765,6 +765,192 @@
         "title": "ImportRecord",
         "type": "object"
       },
+      "ItemListView": {
+        "description": "条目视图响应（GET items）：六个分组恒在，空组给空列表。\n\n分组键固定六个：queued / done / failed / missing（四个互斥状态位）、\nretry（叠加标记的聚合视图，条目同时留在自己的状态分组里）、\nunimported（素材级待办清单，不属于条目）。各组计数 = 该组行数。",
+        "properties": {
+          "batch": {
+            "description": "批次序号（防把 s2 的视图渲染进 s1 的列表）",
+            "title": "Batch",
+            "type": "integer"
+          },
+          "groups": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/components/schemas/ItemRowView"
+              },
+              "type": "array"
+            },
+            "description": "分组键 → 该组的行",
+            "title": "Groups",
+            "type": "object"
+          },
+          "query": {
+            "description": "生效的搜索词（空串 = 没过滤）",
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "batch",
+          "query",
+          "groups"
+        ],
+        "title": "ItemListView",
+        "type": "object"
+      },
+      "ItemRowView": {
+        "description": "左列的一行——六分组共用一个行形状，用不上的字段为 null。\n\n共用一个形状是为了界面不必为每个分组各写一套解析；字段按行类别分工：\n未完成行带 attempt / reason_code / message，缺失行带 source / recoverable，\n未导入行带 reason / size / limit。",
+        "properties": {
+          "attempt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "未完成行：最近一次的尝试序号（1–4）",
+            "title": "Attempt"
+          },
+          "can_retry": {
+            "description": "能否加入重试列表——False 时界面置灰（排队中无可重试、缺失要先补素材、不可重试失败要先解决格式问题）",
+            "title": "Can Retry",
+            "type": "boolean"
+          },
+          "in_retry": {
+            "description": "是否已在重试列表（叠加标记「已排重试」）",
+            "title": "In Retry",
+            "type": "boolean"
+          },
+          "item": {
+            "description": "条目身份 = 素材主干（不含扩展名）",
+            "title": "Item",
+            "type": "string"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "未导入行：该档大小上限（只有超限那一类有值）",
+            "title": "Limit"
+          },
+          "media": {
+            "description": "媒体形态（界面选图标）",
+            "enum": [
+              "image",
+              "video",
+              "file"
+            ],
+            "title": "Media",
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "未完成行：失败原因（人读，来自运行流水）",
+            "title": "Message"
+          },
+          "name": {
+            "description": "展示用文件名（含扩展名）",
+            "title": "Name",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "未导入行：原因（标准措辞——扩展名不支持 / 超出大小上限 / 未登记）",
+            "title": "Reason"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "未完成行：失败原因码（F5 两类清单）",
+            "title": "Reason Code"
+          },
+          "recoverable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "缺失行：来源那儿是否还有这份素材（决定「重新导入」可不可点）",
+            "title": "Recoverable"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "未导入行：文件字节数",
+            "title": "Size"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "缺失行：来源文件的完整路径（悬停提示与「从别处导入」用）",
+            "title": "Source"
+          },
+          "status": {
+            "description": "状态位",
+            "enum": [
+              "queued",
+              "done",
+              "failed",
+              "missing",
+              "unimported"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item",
+          "name",
+          "media",
+          "status",
+          "can_retry",
+          "in_retry"
+        ],
+        "title": "ItemRowView",
+        "type": "object"
+      },
       "LabelRequest": {
         "description": "POST /api/label 的请求体。",
         "properties": {
@@ -4186,6 +4372,175 @@
         ]
       }
     },
+    "/api/workdirs/{wid}/batches/{sN}/items": {
+      "get": {
+        "description": "条目视图：六个分组一次给全（左列整列的数据源）。\n\n六分组 = 四个互斥状态位（排队中 / 已完成 / 未完成 / 缺失）+ 重试列表（叠加标记，\n条目同时留在自己的状态分组里）+ 未导入（工作目录里没登记过的文件）。",
+        "operationId": "list_items_api_workdirs__wid__batches__sN__items_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sN",
+            "required": true,
+            "schema": {
+              "title": "Sn",
+              "type": "string"
+            }
+          },
+          {
+            "description": "搜索词：按文件名做大小写不敏感的子串匹配；缺省 = 不过滤。过滤后各组计数随之变小（与原型的搜索行为同口径）",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "搜索词：按文件名做大小写不敏感的子串匹配；缺省 = 不过滤。过滤后各组计数随之变小（与原型的搜索行为同口径）",
+              "title": "Q",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemListView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "wid 或批次不存在（workdir-not-found / batch-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "导入记录 / 状态文件 / 运行流水损坏（workdir-metadata-corrupted / run-journal-corrupted）"
+          }
+        },
+        "summary": "List Items",
+        "tags": [
+          "条目"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/batches/{sN}/items/{item}/txt": {
+      "get": {
+        "description": "该批次某条目的产物 txt 正文。\n\n「没有可用产物」统一 404：文件不存在、文件为空 / 全空白、文件读不出三种情况\n对用户是同一件事——这一栏没有 caption 可看。空与读不出在条目视图里同样被算作\n未完成（产物异常、可重打），两侧一个口径。",
+        "operationId": "read_item_product_api_workdirs__wid__batches__sN__items__item__txt_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sN",
+            "required": true,
+            "schema": {
+              "title": "Sn",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item",
+            "required": true,
+            "schema": {
+              "title": "Item",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "产物正文（只含 caption 本身，无任何标记或元数据）"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {},
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "条目名不合法或解析后越出工作目录（asset-path-invalid）"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {},
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "wid / 批次不存在，或该条目没有可用产物（workdir-not-found / batch-not-found / product-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Item Product",
+        "tags": [
+          "条目"
+        ]
+      }
+    },
     "/api/workdirs/{wid}/batches/{sN}/runs": {
       "post": {
         "description": "受理一次跑批：同步预检 + 登记注册表 + 后台线程执行，202 立即返回。\n\n预检在受理之前完成（批次存在 / 活跃 / 快照可读 / 客户端可装配），把能在\n请求内确定的错误同步报给客户端；真正的运行锁在后台线程里抢——跨进程占用\n（如 CLI 正在跑同一工作目录）在受理后才暴露，失败原因经 SSE / current 呈现\n（进度快照 status=failed + 一条 failed 的 run-finished 事件）。",
@@ -4640,6 +4995,81 @@
           }
         },
         "summary": "Create Import",
+        "tags": [
+          "工作目录"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/items/{item}/asset": {
+      "get": {
+        "description": "素材原件（只读预览）。\n\n三重校验分工：``WorkdirRegistry.get`` 管「wid 注册表存活」，``resolve_asset``\n管后两重——「在册」（没登记的文件不属于任何批次，预览端点不为它服务）与\n「realpath confine」（工作目录里的符号链接指向外部时拒绝，只读端点也不能\n变成读任意文件的通道）。\n\n交给 FileResponse 而不是自己读字节：它原生支持 Range（206 单段 / 多段、\n416 越界）与 ETag / Last-Modified，视频拖动进度条全靠这个；自己读整份字节\n会把 100 MiB 的视频整个塞进内存，还得手写一遍分段逻辑。不设\n``content-disposition``——界面要在 ``<img>`` / ``<video>`` 里内联渲染，\nattachment 会让浏览器变成下载。",
+        "operationId": "get_item_asset_api_workdirs__wid__items__item__asset_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item",
+            "required": true,
+            "schema": {
+              "title": "Item",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "素材原件（Content-Type 按扩展名；带 accept-ranges: bytes，支持 Range 请求，视频可拖动进度条）"
+          },
+          "400": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "条目名不合法，或解析后越出工作目录（asset-path-invalid）"
+          },
+          "404": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "wid 不在注册表，或素材缺失 / 未登记在册（workdir-not-found / asset-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Item Asset",
         "tags": [
           "工作目录"
         ]

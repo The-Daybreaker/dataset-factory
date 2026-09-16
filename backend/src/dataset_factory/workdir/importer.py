@@ -48,6 +48,7 @@ __all__ = [
     "ensure_importable_source",
     "hash_file",
     "import_assets",
+    "size_limit",
 ]
 
 #: 图片 / 视频扩展名与大小护栏的单一事实源都在 llm（IMAGE_EXTENSIONS /
@@ -100,9 +101,9 @@ def _is_nested(a: str, b: str) -> bool:
     return a.startswith(b + os.sep) or b.startswith(a + os.sep)
 
 
-def _size_limit(suffix: str) -> int:
-    """按扩展名归类取大小上限（视频 / 图片各一档）。"""
-    return MAX_VIDEO_BYTES if suffix in VIDEO_EXTENSIONS else MAX_IMAGE_BYTES
+def size_limit(suffix: str) -> int:
+    """按扩展名取大小护栏上限（图片 / 视频各一档；两个常量都在 llm 作单一事实源）。"""
+    return MAX_VIDEO_BYTES if suffix.lower() in VIDEO_EXTENSIONS else MAX_IMAGE_BYTES
 
 
 def _scan_assets(directory: Path) -> tuple[list[_Candidate], list[dict[str, str]]]:
@@ -123,7 +124,7 @@ def _scan_assets(directory: Path) -> tuple[list[_Candidate], list[dict[str, str]
             )
             continue
         size = entry.stat().st_size
-        if size > _size_limit(suffix):
+        if size > size_limit(suffix):
             rejected.append({"name": entry.name, "reason": REASON_OVERSIZE})
             continue
         candidates.append(_Candidate(name=entry.name, path=entry, size=size))
@@ -181,7 +182,7 @@ def _workdir_asset_map(workdir: Path) -> dict[str, Path]:
     return {
         name: path
         for name, path in _whitelisted_files(workdir).items()
-        if path.stat().st_size <= _size_limit(path.suffix.lower())
+        if path.stat().st_size <= size_limit(path.suffix.lower())
     }
 
 

@@ -13,13 +13,19 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 from .._fs import atomic_write_text
 from .errors import RunJournalCorruptedError
 
-__all__ = ["RunJournal", "load_recent_success_hashes"]
+__all__ = [
+    "ItemRecord",
+    "RunJournal",
+    "load_latest_item_records",
+    "load_recent_success_hashes",
+]
 
 _RUN_JSON_NAME = "run.json"
 _ITEMS_JSONL_NAME = "items.jsonl"
@@ -109,6 +115,71 @@ def load_recent_success_hashes(runs_dir: Path, seq: int) -> dict[str, str]:
             if item not in hashes:
                 hashes[item] = cast(str, record["asset_hash"])
     return hashes
+
+
+@dataclass(frozen=True)
+class ItemRecord:
+    """一条素材在某批次里**最近一次**运行的结果（条目视图分组判定的依据）。
+
+    Attributes:
+        status: ``succeeded`` 或 ``failed``。
+        attempt: 那次的尝试序号（1–4，F5 自动重试的真实次数）。
+        reason_code: 失败原因码（F5 两类清单）；成功时为 None。
+        message: 失败原因的人读消息；成功时为 None。
+    """
+
+    status: str
+    attempt: int
+    reason_code: str | None
+    message: str | None
+
+
+def load_latest_item_records(runs_dir: Path, seq: int) -> dict[str, ItemRecord]:
+    """扫本批次历史运行流水，取每条素材**各自最近一次**的结果记录。
+
+    为什么按「每条素材各自最近一次」而不是「最近一次运行目录」取：retry 模式的
+    运行只覆盖名单里那几条，若整体只认最新那个运行目录，上一轮全量跑批留下的失败
+    记录会被这一轮的窄运行整体抹掉——那些至今仍未完成的条目会错误地回到「排队中」
+    （明明没有任何东西在排队）。逐条取最近记录，「这条最后一次尝试的结果是什么」
+    才是界面要回答的问题。
+
+    运行目录名字典序 = 时间序，从新到旧扫，每条素材取第一次遇到的记录；行内
+    batch 字段做批次过滤（runs/ 是工作目录级共享，多批次并存时不能串账）。
+
+    Args:
+        runs_dir: ``.dsf/runs/`` 目录。
+        seq: 批次序号（只认该批次的流水行）。
+
+    Returns:
+        素材主干 → 最近一次记录（从没被实际调用过的条目不在映射里，调用方按
+        「无失败记录」处理）。
+
+    Raises:
+        RunJournalCorruptedError: 某次运行的 items.jsonl 损坏（fail loud——
+            坏流水会让分组判定失真，用户可用「清理运行记录」移除后重试）。
+    """
+    if not runs_dir.is_dir():
+        return {}
+    records: dict[str, ItemRecord] = {}
+    for run_dir in sorted(runs_dir.iterdir(), key=lambda p: p.name, reverse=True):
+        items_path = run_dir / _ITEMS_JSONL_NAME
+        if not items_path.is_file():
+            continue
+        for record in _read_items_file(items_path):
+            if record.get("batch") != seq:
+                continue
+            item = cast(str, record["item"])
+            if item in records:
+                continue
+            reason_code = record.get("reason_code")
+            message = record.get("message")
+            records[item] = ItemRecord(
+                status=cast(str, record["status"]),
+                attempt=cast(int, record["attempt"]),
+                reason_code=reason_code if isinstance(reason_code, str) else None,
+                message=message if isinstance(message, str) else None,
+            )
+    return records
 
 
 def _read_items_file(path: Path) -> list[dict[str, object]]:

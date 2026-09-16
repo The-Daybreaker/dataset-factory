@@ -6,7 +6,10 @@
   注册表登记（wid 立即可用），扫描 + 复制 + 哈希登记作为长任务受理（202 + task_id
   + Retry-After，Google LRO 同构）；
 - 补充导入：POST /{wid}/imports（任务句柄同上）；
-- 导入历史：GET /{wid}/imports（``.dsf/imports.jsonl`` 全量，出身回看的数据源）。
+- 导入历史：GET /{wid}/imports（``.dsf/imports.jsonl`` 全量，出身回看的数据源）；
+- 素材原件：GET /{wid}/items/{item}/asset（只读预览，原生 Range 支持视频 seek）——
+  素材是**工作目录级**资源、不属于任何批次（同一份素材被该目录下每个批次共享），
+  故挂在这里而不是批次作用域的条目模块下。
 
 错误一律 problem+json（api.problems）：404 wid 不在注册表、400 路径不合法、
 422 来源与工作目录相同或互为嵌套。
@@ -21,7 +24,7 @@ from pathlib import Path
 from typing import cast
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from ..tasks import RETRY_AFTER_SECONDS, TaskManager, TaskResult
 from ..workdir import (
@@ -32,6 +35,8 @@ from ..workdir import (
     WorkdirStore,
     ensure_importable_source,
     import_assets,
+    mime_for_suffix,
+    resolve_asset,
 )
 from .schemas import (
     ImportAccepted,
@@ -248,3 +253,60 @@ async def create_import(
         force_names=frozenset(body.force_names),
     )
     return _accepted_response(ImportAccepted(task_id=task_id))
+
+
+class _AssetResponse(FileResponse):
+    """FileResponse 的薄壳：把「这是二进制文件」写进**类属性**。
+
+    FastAPI 生成契约时从 ``response_class`` 的类属性取媒体类型，而 FileResponse 的
+    media_type 是构造时才定的（类上没有），于是文档会回落成默认的 application/json
+    ——一个只吐文件的端点在契约里声称自己返回 JSON。这里补上类属性，契约就只列
+    一种内容类型；实际响应的 Content-Type 仍按扩展名给（构造时传入，覆盖类属性）。
+    """
+
+    media_type = "application/octet-stream"
+
+
+@router.get(
+    "/{wid}/items/{item}/asset",
+    response_class=_AssetResponse,
+    responses={
+        200: {
+            "content": {
+                "application/octet-stream": {
+                    "schema": {"type": "string", "format": "binary"},
+                },
+            },
+            "description": "素材原件（Content-Type 按扩展名；带 accept-ranges: bytes，"
+            "支持 Range 请求，视频可拖动进度条）",
+        },
+        400: {
+            "model": Problem,
+            "content": {"application/problem+json": {}},
+            "description": "条目名不合法，或解析后越出工作目录（asset-path-invalid）",
+        },
+        404: {
+            "model": Problem,
+            "content": {"application/problem+json": {}},
+            "description": "wid 不在注册表，或素材缺失 / 未登记在册"
+            "（workdir-not-found / asset-not-found）",
+        },
+    },
+)
+def get_item_asset(wid: str, item: str) -> _AssetResponse:
+    """素材原件（只读预览）。
+
+    三重校验分工：``WorkdirRegistry.get`` 管「wid 注册表存活」，``resolve_asset``
+    管后两重——「在册」（没登记的文件不属于任何批次，预览端点不为它服务）与
+    「realpath confine」（工作目录里的符号链接指向外部时拒绝，只读端点也不能
+    变成读任意文件的通道）。
+
+    交给 FileResponse 而不是自己读字节：它原生支持 Range（206 单段 / 多段、
+    416 越界）与 ETag / Last-Modified，视频拖动进度条全靠这个；自己读整份字节
+    会把 100 MiB 的视频整个塞进内存，还得手写一遍分段逻辑。不设
+    ``content-disposition``——界面要在 ``<img>`` / ``<video>`` 里内联渲染，
+    attachment 会让浏览器变成下载。
+    """
+    entry = WorkdirRegistry.get(wid)
+    path = resolve_asset(Path(entry.path), item)
+    return _AssetResponse(path, media_type=mime_for_suffix(path.suffix))

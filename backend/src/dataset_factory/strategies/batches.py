@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import cast
 
 from .._fs import atomic_write_text
-from ..workdir import WorkdirMetadataCorruptedError, WorkdirStore
+from ..workdir import WorkdirMetadataCorruptedError, WorkdirStore, product_pattern
 from .errors import BatchNotFoundError, StrategyNotFoundError, StrategyRefsError
 from .snapshot import StrategySnapshot, build_snapshot
 from .store import (
@@ -182,7 +182,7 @@ def _replace_entry(entries: list[BatchEntry], entry: BatchEntry) -> list[BatchEn
 def product_count(workdir: Path, seq: int) -> int:
     """该批次现有产物 txt 数（删除确认弹窗的「将删多少个」数据源）。"""
     store = WorkdirStore(workdir)
-    return sum(1 for _ in store.dsf_path.parent.glob(f"s{seq}__*.txt"))
+    return sum(1 for _ in store.dsf_path.parent.glob(product_pattern(seq)))
 
 
 def _write_snapshot(store: WorkdirStore, seq: int, snapshot: StrategySnapshot) -> None:
@@ -331,7 +331,7 @@ def delete_batch(workdir: Path, seq: int) -> int:
     get_batch(workdir, seq)  # 不存在先报错，失败时现场不动
     store = WorkdirStore(workdir)
     count = 0
-    for product in store.dsf_path.parent.glob(f"s{seq}__*.txt"):
+    for product in store.dsf_path.parent.glob(product_pattern(seq)):
         product.unlink()
         count += 1
     snapshot_path = store.strategies_dir / f"s{seq}.json"

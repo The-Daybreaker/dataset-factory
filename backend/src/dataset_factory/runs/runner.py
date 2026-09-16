@@ -60,14 +60,16 @@ from ..llm.errors import (
 )
 from ..strategies.batches import get_batch, read_snapshot
 from ..strategies.snapshot import tool_version
+from ..workdir.assets import product_filename, product_has_content, scan_assets
 from ..workdir.errors import WorkdirMetadataCorruptedError
-from ..workdir.importer import ASSET_EXTENSIONS, hash_file
+from ..workdir.importer import hash_file
 from ..workdir.store import WorkdirStore
 from .errors import BatchInactiveError
 from .journal import RunJournal, load_recent_success_hashes
 from .lock import RunLock
 
 __all__ = [
+    "RETRYABLE_REASON_CODES",
     "BatchRunner",
     "ItemUpdatedEvent",
     "RunFinishedEvent",
@@ -614,7 +616,7 @@ class BatchRunner:
         # 成功：产物原子写（只有完整产物算已有产物，中断不留半截）。
         try:
             atomic_write_text(
-                self._workdir / f"s{self._seq}__{item}.txt", result.caption
+                self._workdir / product_filename(self._seq, item), result.caption
             )
         except OSError as exc:
             return _Failure(
@@ -689,7 +691,7 @@ def _plan_full(
         for entry in cast("list[dict[str, object]]", record.get("files", []))
         if isinstance(entry.get("name"), str)
     }
-    assets = _scan_assets(workdir)
+    assets = scan_assets(workdir)
     hashes = load_recent_success_hashes(runs_dir, seq)
 
     to_label: list[str] = []
@@ -697,68 +699,70 @@ def _plan_full(
     for stem, path in sorted(assets.items()):
         if path.name not in registered:
             continue  # 未登记素材不打标（M2：批次成员由导入登记界定）
-        product = workdir / f"s{seq}__{stem}.txt"
-        if product.is_file():
-            try:
-                has_content = bool(product.read_text(encoding="utf-8").strip())
-            except (OSError, UnicodeDecodeError):
-                has_content = False
-            if has_content:
-                recorded = hashes.get(stem)
-                if recorded is not None and hash_file(path) == recorded:
-                    skipped.append(stem)
-                    continue
+        product = workdir / product_filename(seq, stem)
+        if product_has_content(product):
+            recorded = hashes.get(stem)
+            if recorded is not None and hash_file(path) == recorded:
+                skipped.append(stem)
+                continue
         to_label.append(stem)
     return to_label, skipped, assets
-
-
-def _scan_assets(workdir: Path) -> dict[str, Path]:
-    """工作目录现状里的素材文件（白名单内、平铺不递归），主干 → 路径。
-
-    这是「主干 → 素材文件」解析的**单一事实源**（计划判定与执行读取共用，含
-    retry 模式经 _resolve_asset 间接使用）——同主干多扩展并存时两处必须取同一份，
-    否则 E1 比对的哈希与送模型的素材错位、跳过判定永久失真。
-    """
-    result: dict[str, Path] = {}
-    if not workdir.is_dir():
-        return result
-    for entry in sorted(workdir.iterdir(), key=lambda p: p.name):
-        if not entry.is_file() or entry.suffix.lower() not in ASSET_EXTENSIONS:
-            continue
-        result[Path(entry.name).stem] = entry
-    return result
 
 
 def _resolve_asset(workdir: Path, item: str) -> Path | None:
     """按素材主干解析工作目录里的素材文件；找不到（缺失）返回 None。
 
-    经 _scan_assets 同源解析（retry 模式的逐条解析——列表通常很短，全扫成本可忽略）。
+    经 workdir 域的 scan_assets 同源解析（retry 模式的逐条解析——列表通常很短，
+    全扫成本可忽略）。扫描归 workdir 域是因为条目视图与素材预览端点也要按同一份
+    解析取素材：同主干多扩展并存时，比对哈希的那份、送模型的那份与界面预览的那份
+    必须是同一个文件。
     """
-    return _scan_assets(workdir).get(item)
+    return scan_assets(workdir).get(item)
+
+
+#: 可重试类原因码（F5 两类清单之一）：网络 / 超时 / 限流 / 服务端 / 内容层异常——
+#: 再试一次有可能变好。另一半（bad-request / config / asset-unreadable）重试不会变好，
+#: 直接记死。这份集合既是执行器退避重试的判定依据，也是条目视图「这条能不能加入
+#: 重试列表」的依据：原因码由本模块产出、由 items 消费，两边读同一份清单。
+#:
+#: 它与 llm 异常类上的 ``retryable`` 类属性**不是同一份东西**，别把两边「修正」成一致：
+#: 那是「单次 HTTP 调用值不值得重试」的判断，这里是「记进运行流水的原因码」层面的清单
+#: ——流水里只有原因码，读不回异常对象，条目视图只能靠这份集合判。两者在 llm-content
+#: 上有意分歧：裸 LLMError 在批量语境下意味着「模型没返回可用文本」，值得再试一次，
+#: 而 llm 层对它的默认判定是不可重试。
+RETRYABLE_REASON_CODES = frozenset(
+    {"network", "timeout", "rate-limit", "5xx", "llm-content"}
+)
+
+
+def _reason_code(exc: LLMError) -> str:
+    """把 llm 分类异常映射为原因码（F5 的两类清单）。
+
+    判定顺序「先具体后一般」：各分类异常都是 LLMError 子类；裸 LLMError（模型没
+    返回可用文本）属内容层异常。
+    """
+    if isinstance(exc, LLMRateLimitError):
+        return "rate-limit"
+    if isinstance(exc, LLMTimeoutError):
+        return "timeout"
+    if isinstance(exc, LLMConnectionError):
+        return "network"
+    if isinstance(exc, LLMServerError):
+        return "5xx"
+    if isinstance(exc, LLMBadRequestError):
+        return "bad-request"
+    if isinstance(exc, (LLMNotFoundError, LLMAuthError, LLMUnexpectedError)):
+        return "config"
+    if isinstance(exc, UnsupportedImageError):
+        # 内容不是真图片（导入只看扩展名）——重试不会变好，按素材问题记死。
+        return "asset-unreadable"
+    return "llm-content"
 
 
 def _classify_llm_error(exc: LLMError) -> tuple[str, bool]:
-    """把 llm 分类异常映射为 (reason_code, retryable)（F5 的两类清单）。
-
-    判定顺序「先具体后一般」：各分类异常都是 LLMError 子类；裸 LLMError（模型没
-    返回可用文本）属内容层异常，可重试。
-    """
-    if isinstance(exc, LLMRateLimitError):
-        return "rate-limit", True
-    if isinstance(exc, LLMTimeoutError):
-        return "timeout", True
-    if isinstance(exc, LLMConnectionError):
-        return "network", True
-    if isinstance(exc, LLMServerError):
-        return "5xx", True
-    if isinstance(exc, LLMBadRequestError):
-        return "bad-request", False
-    if isinstance(exc, (LLMNotFoundError, LLMAuthError, LLMUnexpectedError)):
-        return "config", False
-    if isinstance(exc, UnsupportedImageError):
-        # 内容不是真图片（导入只看扩展名）——重试不会变好，按素材问题记死。
-        return "asset-unreadable", False
-    return "llm-content", True
+    """异常 → (原因码, 可否重试)；可重试与否一律查 RETRYABLE_REASON_CODES。"""
+    code = _reason_code(exc)
+    return code, code in RETRYABLE_REASON_CODES
 
 
 def _backoff_seconds(attempt: int) -> float:
