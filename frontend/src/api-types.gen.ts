@@ -489,10 +489,620 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/strategies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Library
+         * @description 列出全部库策略（按显示名排序），健康度现查。
+         */
+        get: operations["list_library_api_strategies_get"];
+        put?: never;
+        /**
+         * Create Library Entry
+         * @description 新建库策略（引用必须现存在）。
+         */
+        post: operations["create_library_entry_api_strategies_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/strategies/{strategy_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Library Entry
+         * @description 按 ID 查库策略。
+         */
+        get: operations["get_library_entry_api_strategies__strategy_id__get"];
+        /**
+         * Update Library Entry
+         * @description 整条更新库策略（策略页「保存」的落点；组合整体替换）。
+         */
+        put: operations["update_library_entry_api_strategies__strategy_id__put"];
+        post?: never;
+        /**
+         * Delete Library Entry
+         * @description 删除库策略（已应用的批次不受影响——copy-on-apply 持有内容副本）。
+         */
+        delete: operations["delete_library_entry_api_strategies__strategy_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/strategies/{strategy_id}/copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Copy Library Entry
+         * @description 复制一份（派生变体：新 ID、内容原样）。
+         */
+        post: operations["copy_library_entry_api_strategies__strategy_id__copy_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/strategies/{strategy_id}/rebind": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rebind Library Entry
+         * @description 重新指定缺失引用（只更新提供的引用位，其余保持不变）。
+         */
+        post: operations["rebind_library_entry_api_strategies__strategy_id__rebind_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Task
+         * @description 轮询任务状态；不存在返回 404 problem+json（task-not-found，消息只指动作）。
+         */
+        get: operations["get_task_api_tasks__task_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{task_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Task
+         * @description 协作式取消：置信号、返回当前快照；任务体随后在安全点退出并归档状态。
+         */
+        post: operations["cancel_task_api_tasks__task_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List All
+         * @description 列出全部登记的工作目录，按最后使用时间倒序（最近在前）。
+         */
+        get: operations["list_all_api_workdirs_get"];
+        put?: never;
+        /**
+         * Create Workdir
+         * @description 登记工作目录并受理初始导入（长任务，202 + task_id + Retry-After）。
+         *
+         *     校验在登记之前完成（失败的请求不在注册表留痕）；注册表登记同步完成
+         *     （wid 立即可用、幂等——同 realpath 只更新已有条目），扫描与复制走任务。
+         */
+        post: operations["create_workdir_api_workdirs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get One
+         * @description 按 wid 查注册表条目。
+         */
+        get: operations["get_one_api_workdirs__wid__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Workdir Batches
+         * @description 列出工作目录全部批次（按序号升序，含停用的——设置页要能召回）。
+         *
+         *     打标页顶栏策略下拉与工作目录设置页策略区块的数据源。
+         */
+        get: operations["list_workdir_batches_api_workdirs__wid__batches_get"];
+        put?: never;
+        /**
+         * Create Workdir Batch
+         * @description 新建批次：library = copy-on-apply 应用库策略（记来源）/ scratch = 从零配置。
+         *
+         *     201 + Location 指向新批次（REST 惯例：创建成功告诉客户端新资源在哪）。
+         */
+        post: operations["create_workdir_batch_api_workdirs__wid__batches_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/batches/{sN}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Batch Detail
+         * @description 按序号查单个批次（新建 201 的 Location 指向这里，可解析）。
+         */
+        get: operations["get_batch_detail_api_workdirs__wid__batches__sN__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Workdir Batch
+         * @description 删除批次：该策略全部产物 txt + 快照 + state.json 记录 + 排除名单一并移除。
+         *
+         *     删前告知条数由界面负责（批次视图的 product_count 即数据源）。
+         */
+        delete: operations["delete_workdir_batch_api_workdirs__wid__batches__sN__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Patch Batch
+         * @description 改名 / 描述（纯显示元数据）。
+         *
+         *     组合不可改——工作目录下的策略是库策略的应用副本（copy-on-apply），
+         *     库端编辑不传染、已应用批次不提供就地改组合；想换组合 = 新建批次。
+         *     「保存策略」钮的落点是策略库（PUT /api/strategies/{id}），不是这里。
+         */
+        patch: operations["patch_batch_api_workdirs__wid__batches__sN__patch"];
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/batches/{sN}/exclusions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add Batch Exclusions
+         * @description 把条目加入排除打包名单（幂等去重），返回当前名单。
+         *
+         *     名单随批次元数据持久、跨会话存活；改动全程持运行锁（T36 起生效）。
+         */
+        post: operations["add_batch_exclusions_api_workdirs__wid__batches__sN__exclusions_post"];
+        /**
+         * Remove Batch Exclusions
+         * @description 把条目移出排除打包名单（撤销排除），返回当前名单。
+         */
+        delete: operations["remove_batch_exclusions_api_workdirs__wid__batches__sN__exclusions_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/batches/{sN}/hide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hide Batch
+         * @description 停用批次：不出现在下拉 / 列表 / 打包选项，产物全部保留。
+         *
+         *     该批次正在跑批则中断本次运行（design 定案「停用 = 停用」沿用手动停止语义）：
+         *     查运行注册表命中本批次即置位协作取消，当前条目在安全点停下。
+         */
+        post: operations["hide_batch_api_workdirs__wid__batches__sN__hide_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/batches/{sN}/items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Items
+         * @description 条目视图：六个分组一次给全（左列整列的数据源）。
+         *
+         *     六分组 = 四个互斥状态位（排队中 / 已完成 / 未完成 / 缺失）+ 重试列表（叠加标记，
+         *     条目同时留在自己的状态分组里）+ 未导入（工作目录里没登记过的文件）。
+         */
+        get: operations["list_items_api_workdirs__wid__batches__sN__items_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/batches/{sN}/items/{item}/txt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Item Product
+         * @description 该批次某条目的产物 txt 正文。
+         *
+         *     「没有可用产物」统一 404：文件不存在、文件为空 / 全空白、文件读不出三种情况
+         *     对用户是同一件事——这一栏没有 caption 可看。空与读不出在条目视图里同样被算作
+         *     未完成（产物异常、可重打），两侧一个口径。
+         */
+        get: operations["read_item_product_api_workdirs__wid__batches__sN__items__item__txt_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/batches/{sN}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Run
+         * @description 受理一次跑批：同步预检 + 登记注册表 + 后台线程执行，202 立即返回。
+         *
+         *     预检在受理之前完成（批次存在 / 活跃 / 快照可读 / 客户端可装配），把能在
+         *     请求内确定的错误同步报给客户端；真正的运行锁在后台线程里抢——跨进程占用
+         *     （如 CLI 正在跑同一工作目录）在受理后才暴露，失败原因经 SSE / current 呈现
+         *     （进度快照 status=failed + 一条 failed 的 run-finished 事件）。
+         */
+        post: operations["start_run_api_workdirs__wid__batches__sN__runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/batches/{sN}/runs/current": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Current Run
+         * @description 当前运行进度快照（轮询用；SSE 断线重连后的全量刷新同款数据）。
+         */
+        get: operations["current_run_api_workdirs__wid__batches__sN__runs_current_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/batches/{sN}/runs/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop Run
+         * @description 请求停止当前跑批（协作取消）：置位信号即返回，当前条目在安全点停下。
+         */
+        post: operations["stop_run_api_workdirs__wid__batches__sN__runs_stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/batches/{sN}/runs/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream Run
+         * @description SSE 业务事件流：run-started → item-updated… → run-finished（收到终态即关流）。
+         *
+         *     订阅之前已发生的事件不补发（前端断线约定：重连先全量拉条目视图刷新界面）；
+         *     事件经线程安全队列从跑批线程转发到流。
+         */
+        get: operations["stream_run_api_workdirs__wid__batches__sN__runs_stream_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/batches/{sN}/unhide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unhide Batch
+         * @description 召回已停用的批次。
+         */
+        post: operations["unhide_batch_api_workdirs__wid__batches__sN__unhide_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Imports
+         * @description 导入历史（追加序 = 时间正序）——素材出身回看的数据源。
+         */
+        get: operations["list_imports_api_workdirs__wid__imports_get"];
+        put?: never;
+        /**
+         * Create Import
+         * @description 补充导入（长任务，202 + task_id + Retry-After）。
+         *
+         *     重新导入缺失素材也走本端点：来源指向原始目录，已登记的同名同容文件
+         *     幂等跳过并重登记，缺失的补回。
+         */
+        post: operations["create_import_api_workdirs__wid__imports_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/items/{item}/asset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Item Asset
+         * @description 素材原件（只读预览）。
+         *
+         *     三重校验分工：``WorkdirRegistry.get`` 管「wid 注册表存活」，``resolve_asset``
+         *     管后两重——「在册」（没登记的文件不属于任何批次，预览端点不为它服务）与
+         *     「realpath confine」（工作目录里的符号链接指向外部时拒绝，只读端点也不能
+         *     变成读任意文件的通道）。
+         *
+         *     交给 FileResponse 而不是自己读字节：它原生支持 Range（206 单段 / 多段、
+         *     416 越界）与 ETag / Last-Modified，视频拖动进度条全靠这个；自己读整份字节
+         *     会把 100 MiB 的视频整个塞进内存，还得手写一遍分段逻辑。不设
+         *     ``content-disposition``——界面要在 ``<img>`` / ``<video>`` 里内联渲染，
+         *     attachment 会让浏览器变成下载。
+         */
+        get: operations["get_item_asset_api_workdirs__wid__items__item__asset_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * BatchCreateRequest
+         * @description POST /api/workdirs/{wid}/batches 的请求体：新建批次。
+         *
+         *     type = library：从库策略 copy-on-apply（id 必填；name / description 缺省
+         *     沿用库策略）；type = scratch：从零配置（name / endpoint / prompt 必填）。
+         */
+        BatchCreateRequest: {
+            /**
+             * Description
+             * @description 说明文字；library 缺省沿用库策略
+             */
+            description?: string | null;
+            /**
+             * Endpoint
+             * @description 端点配置名（scratch 必填）
+             */
+            endpoint?: string | null;
+            /**
+             * Id
+             * @description 库策略 ID（type = library 时必填）
+             */
+            id?: string | null;
+            /**
+             * Name
+             * @description 显示名；library 缺省沿用库策略名，scratch 必填
+             */
+            name?: string | null;
+            /**
+             * Prompt
+             * @description 基础提示词名（scratch 必填）
+             */
+            prompt?: string | null;
+            /**
+             * Skills
+             * @description 启用 Skill 名清单（scratch 可缺省 = 空）
+             */
+            skills?: string[] | null;
+            /**
+             * Type
+             * @description 新建方式：library（应用库策略）或 scratch（从零配置）
+             */
+            type: string;
+        };
+        /**
+         * BatchUpdateRequest
+         * @description PATCH /api/workdirs/{wid}/batches/{sN} 的请求体：改名 / 描述。
+         *
+         *     组合不可改（工作目录下的策略是库策略的应用副本，想换组合 = 新建批次）；
+         *     未声明字段一律拒绝，让「发错字段」当场 422 而不是被静默忽略。
+         */
+        BatchUpdateRequest: {
+            /**
+             * Description
+             * @description 说明文字；缺省 = 不变
+             */
+            description?: string | null;
+            /**
+             * Name
+             * @description 显示名；缺省 = 不变
+             */
+            name?: string | null;
+        };
+        /**
+         * BatchView
+         * @description 批次摘要——列表 / 详情 / 配置补丁 / 停用召回的响应体。
+         *
+         *     组合全文在快照文件（.dsf/strategies/sN.json），本视图只带元数据；
+         *     product_count 供删除确认弹窗展示「将删多少个产物」。
+         */
+        BatchView: {
+            /**
+             * Active
+             * @description 是否启用（False = 已停用，不出现在下拉 / 打包选项）
+             */
+            active: boolean;
+            /**
+             * Created At
+             * @description 创建时刻（UTC ISO 8601）
+             */
+            created_at: string;
+            /**
+             * Description
+             * @description 说明文字
+             */
+            description: string;
+            /**
+             * Id
+             * @description 批次标识（sN 形式，如 s1）
+             */
+            id: string;
+            /**
+             * Name
+             * @description 策略显示名（纯显示别名，可改、允许重名）
+             */
+            name: string;
+            /**
+             * Product Count
+             * @description 该批次现有产物 txt 数
+             */
+            product_count: number;
+            /**
+             * Seq
+             * @description 序号（只增不复用）
+             */
+            seq: number;
+        };
         /** Body_import_upload_api_skills_import_upload_post */
         Body_import_upload_api_skills_import_upload_post: {
             /** Files */
@@ -711,6 +1321,38 @@ export interface components {
             /** Detail */
             detail: string;
         };
+        /**
+         * ExclusionsRequest
+         * @description 排除名单增删的请求体：条目数组（素材主干）。
+         */
+        ExclusionsRequest: {
+            /**
+             * Items
+             * @description 条目清单（素材主干，如 cat_001）
+             */
+            items: string[];
+        };
+        /**
+         * ExclusionsView
+         * @description 排除名单现状（增删动作都返回全量名单，前端以响应为准）。
+         */
+        ExclusionsView: {
+            /**
+             * Id
+             * @description 批次标识（sN 形式）
+             */
+            id: string;
+            /**
+             * Items
+             * @description 当前排除名单（追加序）
+             */
+            items: string[];
+            /**
+             * Seq
+             * @description 序号
+             */
+            seq: number;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -727,6 +1369,166 @@ export interface components {
             role: string;
             /** Text */
             text: string;
+        };
+        /**
+         * ImportAccepted
+         * @description POST /api/workdirs/{wid}/imports 的 202 受理响应：任务句柄。
+         */
+        ImportAccepted: {
+            /**
+             * Task Id
+             * @description 导入任务句柄（GET /api/tasks/{id} 轮询）
+             */
+            task_id: string;
+        };
+        /**
+         * ImportFileRecord
+         * @description 导入记录里的单个文件：文件名 + 导入时的内容哈希。
+         */
+        ImportFileRecord: {
+            /**
+             * Name
+             * @description 文件名（工作目录内的平铺文件名）
+             */
+            name: string;
+            /**
+             * Sha256
+             * @description 导入时内容哈希（SHA-256 十六进制）
+             */
+            sha256: string;
+        };
+        /**
+         * ImportRecord
+         * @description 一条导入记录（``.dsf/imports.jsonl`` 一行）——素材出身的载体。
+         *
+         *     素材的出身 = 包含它的最近一次导入记录；同一素材多次导入取最近一次。
+         *     就地采用的来源路径 = 工作目录自身。
+         */
+        ImportRecord: {
+            /**
+             * Files
+             * @description 本次登记的文件清单
+             */
+            files: components["schemas"]["ImportFileRecord"][];
+            /**
+             * Imported At
+             * @description 导入时刻（UTC ISO 8601）
+             */
+            imported_at: string;
+            /**
+             * Source
+             * @description 来源目录路径（就地采用 = 工作目录自身）
+             */
+            source: string;
+        };
+        /**
+         * ItemListView
+         * @description 条目视图响应（GET items）：六个分组恒在，空组给空列表。
+         *
+         *     分组键固定六个：queued / done / failed / missing（四个互斥状态位）、
+         *     retry（叠加标记的聚合视图，条目同时留在自己的状态分组里）、
+         *     unimported（素材级待办清单，不属于条目）。各组计数 = 该组行数。
+         */
+        ItemListView: {
+            /**
+             * Batch
+             * @description 批次序号（防把 s2 的视图渲染进 s1 的列表）
+             */
+            batch: number;
+            /**
+             * Groups
+             * @description 分组键 → 该组的行
+             */
+            groups: {
+                [key: string]: components["schemas"]["ItemRowView"][];
+            };
+            /**
+             * Query
+             * @description 生效的搜索词（空串 = 没过滤）
+             */
+            query: string;
+        };
+        /**
+         * ItemRowView
+         * @description 左列的一行——六分组共用一个行形状，用不上的字段为 null。
+         *
+         *     共用一个形状是为了界面不必为每个分组各写一套解析；字段按行类别分工：
+         *     未完成行带 attempt / reason_code / message，缺失行带 source / recoverable，
+         *     未导入行带 reason / size / limit。
+         */
+        ItemRowView: {
+            /**
+             * Attempt
+             * @description 未完成行：最近一次的尝试序号（1–4）
+             */
+            attempt?: number | null;
+            /**
+             * Can Retry
+             * @description 能否加入重试列表——False 时界面置灰（排队中无可重试、缺失要先补素材、不可重试失败要先解决格式问题）
+             */
+            can_retry: boolean;
+            /**
+             * In Retry
+             * @description 是否已在重试列表（叠加标记「已排重试」）
+             */
+            in_retry: boolean;
+            /**
+             * Item
+             * @description 条目身份 = 素材主干（不含扩展名）
+             */
+            item: string;
+            /**
+             * Limit
+             * @description 未导入行：该档大小上限（只有超限那一类有值）
+             */
+            limit?: number | null;
+            /**
+             * Media
+             * @description 媒体形态（界面选图标）
+             * @enum {string}
+             */
+            media: "image" | "video" | "file";
+            /**
+             * Message
+             * @description 未完成行：失败原因（人读，来自运行流水）
+             */
+            message?: string | null;
+            /**
+             * Name
+             * @description 展示用文件名（含扩展名）
+             */
+            name: string;
+            /**
+             * Reason
+             * @description 未导入行：原因（标准措辞——扩展名不支持 / 超出大小上限 / 未登记）
+             */
+            reason?: string | null;
+            /**
+             * Reason Code
+             * @description 未完成行：失败原因码（F5 两类清单）
+             */
+            reason_code?: string | null;
+            /**
+             * Recoverable
+             * @description 缺失行：来源那儿是否还有这份素材（决定「重新导入」可不可点）
+             */
+            recoverable?: boolean | null;
+            /**
+             * Size
+             * @description 未导入行：文件字节数
+             */
+            size?: number | null;
+            /**
+             * Source
+             * @description 缺失行：来源文件的完整路径（悬停提示与「从别处导入」用）
+             */
+            source?: string | null;
+            /**
+             * Status
+             * @description 状态位
+             * @enum {string}
+             */
+            status: "queued" | "done" | "failed" | "missing" | "unimported";
         };
         /**
          * LabelRequest
@@ -800,6 +1602,35 @@ export interface components {
             session_id: string;
         };
         /**
+         * Problem
+         * @description RFC 9457 problem+json 错误体——二期新端点的统一错误形状。
+         *
+         *     与一期 `ErrorDetail`（`{"detail"}`）并存：一期端点不返工，前端读 detail 兼容两者。
+         *     扩展字段（occupier / 冲突清单等）由各错误在响应里按需附加，不进本模型。
+         */
+        Problem: {
+            /**
+             * Detail
+             * @description 中文可操作消息——下一步该做什么
+             */
+            detail: string;
+            /**
+             * Status
+             * @description HTTP 状态码（与响应状态一致）
+             */
+            status: number;
+            /**
+             * Title
+             * @description 人读的短语概括
+             */
+            title: string;
+            /**
+             * Type
+             * @description 机器可读的错误类别 slug（如 task-not-found）
+             */
+            type: string;
+        };
+        /**
          * PromptFull
          * @description 提示词全文。
          */
@@ -841,6 +1672,72 @@ export interface components {
              * @default
              */
             description: string;
+        };
+        /**
+         * RunAccepted
+         * @description 跑批受理响应（202）：后台线程已受理，进度走 current / SSE。
+         */
+        RunAccepted: {
+            /**
+             * Run Id
+             * @description 运行 id（.dsf/runs/ 下的目录名）
+             */
+            run_id: string;
+        };
+        /**
+         * RunStartRequest
+         * @description 启动跑批的请求体。
+         */
+        RunStartRequest: {
+            /**
+             * Mode
+             * @description full = 全量打未完成的条目；retry = 只打重试列表快照
+             * @enum {string}
+             */
+            mode: "full" | "retry";
+        };
+        /**
+         * RunStatusView
+         * @description 当前运行的进度快照（GET current 的响应体）。
+         */
+        RunStatusView: {
+            /**
+             * Batch
+             * @description 批次序号（sN 的 N——防止跨批次误读进度）
+             */
+            batch: number;
+            /**
+             * Counters
+             * @description 计数（planned / attempted / succeeded / failed / skipped）
+             */
+            counters: {
+                [key: string]: number;
+            };
+            /**
+             * Current Item
+             * @description 正在（或最近一次）处理的素材主干
+             */
+            current_item: string | null;
+            /**
+             * Error
+             * @description 启动失败的原因；正常运行为 null
+             */
+            error: string | null;
+            /**
+             * Mode
+             * @description full | retry
+             */
+            mode: string;
+            /**
+             * Run Id
+             * @description 运行 id
+             */
+            run_id: string;
+            /**
+             * Status
+             * @description running | completed | interrupted | failed（failed = 启动失败）
+             */
+            status: string;
         };
         /**
          * ServiceLogs
@@ -998,6 +1895,121 @@ export interface components {
             /** Name */
             name: string;
         };
+        /**
+         * StrategyRebindRequest
+         * @description POST /api/strategies/{id}/rebind 的请求体：缺失引用的「重新指定」。
+         *
+         *     只更新提供的引用位，其余保持不变——对置灰策略来说，健康的引用没有理由
+         *     被 UI 一起重交一遍。至少提供一个字段。
+         */
+        StrategyRebindRequest: {
+            /**
+             * Endpoint
+             * @description 新的端点配置名；缺省 = 不变
+             */
+            endpoint?: string | null;
+            /**
+             * Prompt
+             * @description 新的基础提示词名；缺省 = 不变
+             */
+            prompt?: string | null;
+            /**
+             * Skills
+             * @description 新的 Skill 清单（整体替换）；缺省 = 不变
+             */
+            skills?: string[] | null;
+        };
+        /**
+         * StrategySaveRequest
+         * @description POST /api/strategies 与 PUT /api/strategies/{id} 的请求体（组合整体替换）。
+         */
+        StrategySaveRequest: {
+            /**
+             * Description
+             * @description 说明文字
+             * @default
+             */
+            description: string;
+            /**
+             * Endpoint
+             * @description 端点配置名（必须已存在）
+             */
+            endpoint: string;
+            /**
+             * Name
+             * @description 显示名（非空）
+             */
+            name: string;
+            /**
+             * Prompt
+             * @description 基础提示词名（必须已存在）
+             */
+            prompt: string;
+            /**
+             * Skills
+             * @description 启用 Skill 名清单（必须已存在）
+             */
+            skills?: string[];
+        };
+        /**
+         * StrategyView
+         * @description 库策略条目——列表 / 详情 / 创建 / 更新的响应体。
+         *
+         *     available = 引用健康度（现查）：任一引用（端点配置 / 提示词 / Skill）已不存在
+         *     则为 False，missing_refs 给出缺失清单（界面置灰、禁止应用、走重新指定）。
+         */
+        StrategyView: {
+            /**
+             * Available
+             * @description 引用健康度：全部引用现存在才可用
+             */
+            available: boolean;
+            /**
+             * Created At
+             * @description 创建时刻（UTC ISO 8601）
+             */
+            created_at: string;
+            /**
+             * Description
+             * @description 说明文字
+             */
+            description: string;
+            /**
+             * Endpoint
+             * @description 端点配置名引用
+             */
+            endpoint: string;
+            /**
+             * Id
+             * @description 库策略 ID（内部稳定标识，改名不变）
+             */
+            id: string;
+            /**
+             * Missing Refs
+             * @description 缺失引用的可读描述（健康时为空）
+             */
+            missing_refs: string[];
+            /**
+             * Name
+             * @description 显示名（可改、允许重名）
+             */
+            name: string;
+            /**
+             * Prompt
+             * @description 基础提示词名引用
+             */
+            prompt: string;
+            /**
+             * Skills
+             * @description 启用 Skill 名引用清单（有序）
+             */
+            skills: string[];
+            /**
+             * Updated At
+             * @description 最近更新时刻（UTC ISO 8601）
+             */
+            updated_at: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -1010,6 +2022,86 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /**
+         * WorkdirCreateAccepted
+         * @description POST /api/workdirs 的 202 受理响应：任务句柄 + 已登记的工作目录条目。
+         */
+        WorkdirCreateAccepted: {
+            /**
+             * Task Id
+             * @description 导入任务句柄（GET /api/tasks/{id} 轮询）
+             */
+            task_id: string;
+            /** @description 已登记（或复用）的工作目录条目 */
+            workdir: components["schemas"]["WorkdirInfo"];
+        };
+        /**
+         * WorkdirCreateRequest
+         * @description POST /api/workdirs 的请求体：登记工作目录（可选带初始导入）。
+         *
+         *     带来源目录 = 复制导入（素材被复制进工作目录，初始导入）；不带 = 就地采用
+         *     （直接使用目录内素材，不复制）。两种都会扫描 + 登记导入记录，均为长任务。
+         */
+        WorkdirCreateRequest: {
+            /**
+             * Path
+             * @description 工作目录绝对路径（服务端本地）
+             */
+            path: string;
+            /**
+             * Source
+             * @description 原始素材目录；提供 = 复制导入，缺省 = 就地采用。来源须与工作目录不同且互不嵌套
+             */
+            source?: string | null;
+            /**
+             * Title
+             * @description 显示名；缺省 = 目录名
+             * @default
+             */
+            title: string;
+        };
+        /**
+         * WorkdirImportRequest
+         * @description POST /api/workdirs/{wid}/imports 的请求体：补充导入。
+         */
+        WorkdirImportRequest: {
+            /**
+             * Force Names
+             * @description 异名同容时仍按新名强制导入的源文件名清单；缺省 = 全部默认跳过
+             */
+            force_names?: string[];
+            /**
+             * Source
+             * @description 原始素材目录（服务端本地，须与工作目录不同且互不嵌套）
+             */
+            source: string;
+        };
+        /**
+         * WorkdirInfo
+         * @description 工作目录注册表条目——GET /api/workdirs 列表与详情的响应体。
+         */
+        WorkdirInfo: {
+            /**
+             * Id
+             * @description wid 短 ID（注册表主键，搬迁后不变）
+             */
+            id: string;
+            /**
+             * Last Used At
+             * @description 最后使用时刻（Unix 秒，UTC）
+             */
+            last_used_at: number;
+            /**
+             * Path
+             * @description 工作目录的规范绝对路径
+             */
+            path: string;
+            /**
+             * Title
+             * @description 显示名（默认 = 目录名，可改、允许重名）
+             */
+            title: string;
         };
     };
     responses: never;
@@ -2131,6 +3223,1300 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_library_api_strategies_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyView"][];
+                };
+            };
+        };
+    };
+    create_library_entry_api_strategies_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StrategySaveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyView"];
+                };
+            };
+            /** @description 名字为空 / 引用不存在（strategy-name-invalid / strategy-refs-invalid） */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_library_entry_api_strategies__strategy_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                strategy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyView"];
+                };
+            };
+            /** @description 库策略不存在（problem+json: strategy-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_library_entry_api_strategies__strategy_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                strategy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StrategySaveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyView"];
+                };
+            };
+            /** @description 名字为空 / 引用不存在（strategy-name-invalid / strategy-refs-invalid） */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description 库策略不存在（problem+json: strategy-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_library_entry_api_strategies__strategy_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                strategy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 库策略不存在（problem+json: strategy-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    copy_library_entry_api_strategies__strategy_id__copy_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                strategy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyView"];
+                };
+            };
+            /** @description 库策略不存在（problem+json: strategy-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rebind_library_entry_api_strategies__strategy_id__rebind_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                strategy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StrategyRebindRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyView"];
+                };
+            };
+            /** @description 新引用不存在（problem+json: strategy-refs-invalid） */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description 库策略不存在（problem+json: strategy-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_task_api_tasks__task_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_task_api_tasks__task_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_all_api_workdirs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkdirInfo"][];
+                };
+            };
+        };
+    };
+    create_workdir_api_workdirs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkdirCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkdirCreateAccepted"];
+                };
+            };
+            /** @description 工作目录或来源目录路径不合法（problem+json: workdir-path-invalid） */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description 来源目录与工作目录相同或互为嵌套（problem+json: import-source-conflict） */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+        };
+    };
+    get_one_api_workdirs__wid__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkdirInfo"];
+                };
+            };
+            /** @description wid 不在注册表（problem+json: workdir-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_workdir_batches_api_workdirs__wid__batches_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchView"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_workdir_batch_api_workdirs__wid__batches_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchView"];
+                };
+            };
+            /** @description 引用不存在（problem+json: strategy-refs-invalid） */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description wid 或库策略不存在（workdir-not-found / strategy-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description 请求体按 type 缺必填字段（FastAPI 校验） */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+        };
+    };
+    get_batch_detail_api_workdirs__wid__batches__sN__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+                sN: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchView"];
+                };
+            };
+            /** @description wid 或批次不存在（workdir-not-found / batch-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_workdir_batch_api_workdirs__wid__batches__sN__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+                sN: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description wid 或批次不存在（workdir-not-found / batch-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_batch_api_workdirs__wid__batches__sN__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+                sN: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchView"];
+                };
+            };
+            /** @description wid 或批次不存在（workdir-not-found / batch-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description 请求体含未声明字段（组合不可改，extra=forbid） */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+        };
+    };
+    add_batch_exclusions_api_workdirs__wid__batches__sN__exclusions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+                sN: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExclusionsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExclusionsView"];
+                };
+            };
+            /** @description wid 或批次不存在（workdir-not-found / batch-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_batch_exclusions_api_workdirs__wid__batches__sN__exclusions_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+                sN: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExclusionsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExclusionsView"];
+                };
+            };
+            /** @description wid 或批次不存在（workdir-not-found / batch-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    hide_batch_api_workdirs__wid__batches__sN__hide_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+                sN: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchView"];
+                };
+            };
+            /** @description wid 或批次不存在（workdir-not-found / batch-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_items_api_workdirs__wid__batches__sN__items_get: {
+        parameters: {
+            query?: {
+                /** @description 搜索词：按文件名做大小写不敏感的子串匹配；缺省 = 不过滤。过滤后各组计数随之变小（与原型的搜索行为同口径） */
+                q?: string;
+            };
+            header?: never;
+            path: {
+                wid: string;
+                sN: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemListView"];
+                };
+            };
+            /** @description wid 或批次不存在（workdir-not-found / batch-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description 导入记录 / 状态文件 / 运行流水损坏（workdir-metadata-corrupted / run-journal-corrupted） */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+        };
+    };
+    read_item_product_api_workdirs__wid__batches__sN__items__item__txt_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+                sN: string;
+                item: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 产物正文（只含 caption 本身，无任何标记或元数据） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description 条目名不合法或解析后越出工作目录（asset-path-invalid） */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": unknown;
+                    "text/plain": components["schemas"]["Problem"];
+                };
+            };
+            /** @description wid / 批次不存在，或该条目没有可用产物（workdir-not-found / batch-not-found / product-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": unknown;
+                    "text/plain": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_run_api_workdirs__wid__batches__sN__runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+                sN: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunAccepted"];
+                };
+            };
+            /** @description wid / 批次 / 快照不存在（problem+json） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description 批次已停用或工作目录已有跑批在运行（problem+json: batch-inactive / run-occupied） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    current_run_api_workdirs__wid__batches__sN__runs_current_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+                sN: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunStatusView"];
+                };
+            };
+            /** @description 该批次当前没有进行中的跑批（problem+json: run-not-active） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_run_api_workdirs__wid__batches__sN__runs_stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+                sN: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 该批次当前没有进行中的跑批（problem+json: run-not-active） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_run_api_workdirs__wid__batches__sN__runs_stream_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+                sN: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description 该批次当前没有进行中的跑批（problem+json: run-not-active） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unhide_batch_api_workdirs__wid__batches__sN__unhide_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+                sN: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchView"];
+                };
+            };
+            /** @description wid 或批次不存在（workdir-not-found / batch-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_imports_api_workdirs__wid__imports_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportRecord"][];
+                };
+            };
+            /** @description wid 不在注册表（problem+json: workdir-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_import_api_workdirs__wid__imports_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkdirImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportAccepted"];
+                };
+            };
+            /** @description 来源目录路径不合法（problem+json: workdir-path-invalid） */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description wid 不在注册表（problem+json: workdir-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description 来源目录与工作目录相同或互为嵌套（problem+json: import-source-conflict） */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+        };
+    };
+    get_item_asset_api_workdirs__wid__items__item__asset_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+                item: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 素材原件（Content-Type 按扩展名；带 accept-ranges: bytes，支持 Range 请求，视频可拖动进度条） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description 条目名不合法，或解析后越出工作目录（asset-path-invalid） */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description wid 不在注册表，或素材缺失 / 未登记在册（workdir-not-found / asset-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
                 };
             };
             /** @description Validation Error */

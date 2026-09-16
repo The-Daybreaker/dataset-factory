@@ -115,6 +115,16 @@ jobs:
       - name: Sync dependencies
         run: npm ci                               # 按 package-lock.json 装（可复现，等价后端的 uv sync --frozen）
 
+      # 契约（backend/openapi.json）是单一事实源，前端类型由它生成（npm run gen:api）。
+      # 这一步挡住「改了契约忘了重新生成」——与后端 job 的 openapi 快照漂移检查同一思路。
+      # 放在 lint / typecheck 之前：先确认契约与类型对齐，再看代码风格与类型错误。
+      # 直接用 git diff 比字节是安全的：仓库 .gitattributes 已把文本文件统一成 eol=lf，
+      # Win / Linux 检出一致，不会出现换行抖动造成的假红。
+      - name: Generated API types drift check
+        run: |
+          npm run gen:api
+          git diff --exit-code -- src/api-types.gen.ts
+
       - name: Lint (Biome)
         run: npm run lint
 
