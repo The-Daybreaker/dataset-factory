@@ -401,6 +401,39 @@ def test_parse_seq_strict_format() -> None:
             parse_seq(bad)
 
 
+def test_library_id_shape_guard(assets: None) -> None:
+    """ID 形状校验：路径穿越形状（../、分隔符等）一律按不存在处理（404 档）。"""
+    for bad in ("../x", "a/b", "a\\b", ".", "..", "a b"):
+        with pytest.raises(StrategyNotFoundError):
+            get_strategy(bad)
+
+
+def test_seq_never_wraps_after_deletes(workdir: Path, assets: None) -> None:
+    """序号计数只增不减：连删高序号批次后新建不复用（删除路径不把计数写回去）。"""
+    for name in ("一", "二", "三"):
+        create_batch(
+            workdir,
+            name=name,
+            description="",
+            endpoint="main",
+            prompt="详细描述",
+            skills=[],
+        )
+    delete_batch(workdir, 3)
+    delete_batch(workdir, 2)
+
+    fourth = create_batch(
+        workdir,
+        name="四",
+        description="",
+        endpoint="main",
+        prompt="详细描述",
+        skills=[],
+    )
+
+    assert fourth.seq == 4
+
+
 def test_exclusions_dedupe_and_remove(workdir: Path, assets: None) -> None:
     """排除名单：加入幂等去重、撤销移出、批次间互不干扰。"""
     first = create_batch(

@@ -25,3 +25,10 @@ class WorkdirMetadataCorruptedError(WorkdirError):
 
 class ImportSourceConflictError(WorkdirError):
     """导入来源目录与工作目录相同或互为嵌套（复制会自我覆盖）——HTTP 422 problem+json（import-source-conflict）。"""
+
+
+class ImportInProgressError(WorkdirError):
+    """同一工作目录已有导入任务在跑（并发导入会破坏条目身份不变量）——HTTP 409 problem+json（import-in-progress）。
+
+    detail 携带占用任务的 task_id（与运行锁拒绝时的占用者信息同思路）。
+    """

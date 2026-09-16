@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import shutil
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -141,43 +140,60 @@ def _hash_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _copy_into_workdir(store: WorkdirStore, source_file: Path, dest_name: str) -> None:
+def _copy_into_workdir(store: WorkdirStore, source_file: Path, dest_name: str) -> str:
     """把源文件复制进工作目录：先落 ``.dsf/tmp/``，写完原子改名到最终位置。
 
+    哈希与写入同一次读完成——返回的是**实际落盘内容**的 SHA-256（导入记录的
+    锚点必须指向磁盘上那份字节，而不是「复制前那一刻的源文件」）。
     中断最多留下 tmp 垃圾（下次导入开头清掉），目标文件绝无半截——重入幂等的根基。
     """
     store.tmp_dir.mkdir(parents=True, exist_ok=True)
     tmp_target = store.tmp_dir / dest_name
-    shutil.copyfile(source_file, tmp_target)
+    digest = hashlib.sha256()
+    with source_file.open("rb") as src, tmp_target.open("wb") as dst:
+        while chunk := src.read(_CHUNK_BYTES):
+            dst.write(chunk)
+            digest.update(chunk)
+        dst.flush()
+        os.fsync(dst.fileno())
     os.replace(tmp_target, store.dsf_path.parent / dest_name)
+    return digest.hexdigest()
+
+
+def _whitelisted_files(directory: Path) -> dict[str, Path]:
+    """目录里全部白名单内文件（不看大小护栏），文件名 → 路径（平铺）。
+
+    「同名不覆盖」与「主干唯一」保护的是**物理存在**的文件——哪怕它超限、
+    是用户手工放进去的，也不能被导入静默替换。
+    """
+    return {
+        entry.name: entry
+        for entry in sorted(directory.iterdir(), key=lambda item: item.name)
+        if entry.is_file() and entry.suffix.lower() in ASSET_EXTENSIONS
+    }
 
 
 def _workdir_asset_map(workdir: Path) -> dict[str, Path]:
-    """工作目录现状里的合法素材（白名单 + 护栏内），文件名 → 路径（平铺）。"""
+    """工作目录现状里的**合法素材**（白名单 + 护栏内），文件名 → 路径（平铺）。"""
     return {
-        entry.name: entry
-        for entry in sorted(workdir.iterdir(), key=lambda item: item.name)
-        if entry.is_file()
-        and entry.suffix.lower() in ASSET_EXTENSIONS
-        and entry.stat().st_size <= _size_limit(entry.suffix.lower())
+        name: path
+        for name, path in _whitelisted_files(workdir).items()
+        if path.stat().st_size <= _size_limit(path.suffix.lower())
     }
 
 
 class _Baseline:
-    """工作目录现状的比对基线：合法素材的文件名 → 路径，配按需缓存的哈希查询。
+    """工作目录**合法素材**的比对基线：文件名 → 路径，配按需缓存的哈希查询。
 
-    内容比对前先做大小预筛——大小不同的文件内容必不同，不值得读盘。
+    只收白名单内且护栏内的文件（内容比对只在合法素材之间进行）；大小不同的
+    文件内容必不同，内容比对前先做大小预筛。同文名 / 主干冲突的检测不在这层
+    （那些要对物理存在的文件生效，见 ``_whitelisted_files``）。
     """
 
     def __init__(self, files: dict[str, Path]) -> None:
         """以「文件名 → 路径」建立基线。"""
         self._files = files
         self._hashes: dict[str, str] = {}
-
-    @property
-    def stems(self) -> set[str]:
-        """基线里已被占用的素材主干。"""
-        return {Path(name).stem for name in self._files}
 
     def path_of(self, name: str) -> Path | None:
         """基线里同名文件的路径；没有返回 None。"""
@@ -259,18 +275,25 @@ def import_assets(
         source_path = source
 
     candidates, scan_rejected = _scan_assets(source_path)
+    candidate_names = {candidate.name for candidate in candidates}
+    all_files = _whitelisted_files(workdir)
     baseline_files = _workdir_asset_map(workdir)
     if in_place:
-        # 就地采用：候选就是工作目录里的合法素材本身，基线排除候选——
+        # 就地采用：候选就是工作目录里的文件本身，两种视图都排除候选——
         # 文件和它自己比较必然同名同容，那不是重复；首次登记因此全量进记录，
         # 中断后的重新采用也自然全量重登记（自愈）。
-        candidate_names = {candidate.name for candidate in candidates}
+        all_files = {
+            name: path
+            for name, path in all_files.items()
+            if name not in candidate_names
+        }
         baseline_files = {
             name: path
             for name, path in baseline_files.items()
             if name not in candidate_names
         }
     baseline = _Baseline(baseline_files)
+    all_stems = {Path(name).stem for name in all_files}
     _clean_tmp(store)
 
     imported: list[str] = []
@@ -280,6 +303,9 @@ def import_assets(
     rejected: list[dict[str, str]] = list(scan_rejected)
     registered: list[dict[str, str]] = []  # 进记录的（新导入 + 同名同容重登记）
     accepted_stems: set[str] = set()
+    batch_hashes: dict[
+        str, str
+    ] = {}  # 本批已接受的内容哈希 → 首个文件名（批内同容比对）
 
     total = len(candidates)
     for index, candidate in enumerate(candidates):
@@ -289,10 +315,15 @@ def import_assets(
             progress(0.05 + 0.9 * index / total)
         name = candidate.name
         stem = Path(name).stem
-        same_name = baseline.path_of(name)
+        # 同名检查对**物理存在**的白名单文件生效（含超限的手工文件）——绝不静默覆盖。
+        same_name = all_files.get(name)
         if same_name is not None:
             incoming_hash = _hash_file(candidate.path)
-            existing_hash = baseline.hash_of(name)
+            if baseline.path_of(name) is not None:
+                existing_hash = baseline.hash_of(name)
+            else:
+                # 同名但非法（超限）：内容不可能相等（同容必同尺寸同档），直接按冲突处理。
+                existing_hash = _hash_file(same_name)
             if incoming_hash == existing_hash:
                 # 同名同容：不重复复制（幂等），但重登记——中断重入时已复制的
                 # 文件由此回到记录里（自愈）；正常重导只是出身刷新到最近一次。
@@ -310,8 +341,8 @@ def import_assets(
                     },
                 )
             continue
-        # 主干冲突：与基线或本批已接受的素材争同一个条目身份（同名不同扩展名）。
-        if stem in baseline.stems or stem in accepted_stems:
+        # 主干冲突：同样对物理存在的文件（含超限）与本批已接受者生效。
+        if stem in all_stems or stem in accepted_stems:
             rejected.append(
                 {
                     "name": name,
@@ -320,21 +351,28 @@ def import_assets(
             )
             continue
         incoming_hash = _hash_file(candidate.path)
-        duplicate_of = _find_duplicate_content(baseline, incoming_hash, candidate.size)
+        # 异名同容：与基线（工作目录已有）和本批已接受者全量比对。
+        duplicate_of = _find_duplicate_content(
+            baseline, incoming_hash, candidate.size
+        ) or batch_hashes.get(incoming_hash)
         if duplicate_of is not None and name not in force_names:
-            # 异名同容：默认跳过；可选仍按新名导入（force_names 逐条点名）。
             skipped_duplicate.append({"name": name, "duplicate_of": duplicate_of})
             continue
         if not in_place:
             try:
-                _copy_into_workdir(store, candidate.path, name)
+                # 记录哈希取**实际落盘内容**（复制与哈希同一次读），锚点不撒谎。
+                disk_hash = _copy_into_workdir(store, candidate.path, name)
             except OSError as exc:
                 raise WorkdirError(
                     f"复制素材「{name}」失败：{exc}——请检查磁盘空间与权限后重试。",
                 ) from exc
+        else:
+            disk_hash = incoming_hash
         imported.append(name)
-        registered.append({"name": name, "sha256": incoming_hash})
+        registered.append({"name": name, "sha256": disk_hash})
         accepted_stems.add(stem)
+        if incoming_hash not in batch_hashes:
+            batch_hashes[incoming_hash] = name
 
     if progress is not None:
         progress(0.95)

@@ -150,7 +150,11 @@ def _read_next_seq(workdir: Path, entries: list[BatchEntry]) -> int:
 
 
 def _write_batches(workdir: Path, entries: list[BatchEntry], next_seq: int) -> None:
-    """原子写回批次列表与序号计数（读—改—写全程持锁由调用方保证——T36 起）。"""
+    """原子写回批次列表与序号计数（读—改—写全程持锁由调用方保证——T36 起）。
+
+    序号计数只增不减：无论调用方传入什么，落盘值不低于「现有批次最大序号 + 1」，
+    防止删除路径把计数写回去导致序号复用。
+    """
     store = WorkdirStore(workdir)
     state = store.read_state()
     state["batches"] = [
@@ -164,7 +168,9 @@ def _write_batches(workdir: Path, entries: list[BatchEntry], next_seq: int) -> N
         }
         for entry in entries
     ]
-    state["next_seq"] = next_seq
+    state["next_seq"] = max(
+        next_seq, max((entry.seq for entry in entries), default=0) + 1
+    )
     store.write_state(state)
 
 
@@ -330,8 +336,11 @@ def delete_batch(workdir: Path, seq: int) -> int:
         count += 1
     snapshot_path = store.strategies_dir / f"s{seq}.json"
     snapshot_path.unlink(missing_ok=True)
-    entries = [item for item in list_batches(workdir) if item.seq != seq]
-    _write_batches(workdir, entries, _read_next_seq(workdir, entries))
+    # 计数在移除条目**之前**读：legacy state（无 next_seq 键）回退 max+1 时
+    # 才能算上被删的那个序号，删完不回退（配合 _write_batches 的只增不减钳制）。
+    entries = list_batches(workdir)
+    next_seq = _read_next_seq(workdir, entries)
+    _write_batches(workdir, [item for item in entries if item.seq != seq], next_seq)
     exclusions = _read_exclusions(workdir)
     exclusions.pop(str(seq), None)
     _write_exclusions(workdir, exclusions)

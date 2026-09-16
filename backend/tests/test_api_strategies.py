@@ -262,6 +262,30 @@ def test_create_batch_invalid_type_returns_422(
     assert response.status_code == 422
 
 
+def test_get_batch_detail_and_patch_clears_description(
+    client: TestClient, assets: None, wid: str
+) -> None:
+    """GET 单批次详情（201 的 Location 可解析）+ PATCH 空 description = 清空。"""
+    client.post(
+        f"/api/workdirs/{wid}/batches",
+        json={
+            "type": "scratch",
+            "name": "从零来",
+            "description": "备注文字",
+            "endpoint": "main",
+            "prompt": "详细描述",
+        },
+    )
+
+    detail = client.get(f"/api/workdirs/{wid}/batches/s1")
+    assert detail.status_code == 200
+    assert detail.json()["name"] == "从零来"
+
+    cleared = client.patch(f"/api/workdirs/{wid}/batches/s1", json={"description": ""})
+    assert cleared.status_code == 200
+    assert cleared.json()["description"] == ""
+
+
 def test_patch_batch_rejects_combo_fields_with_422(
     client: TestClient, assets: None, wid: str
 ) -> None:

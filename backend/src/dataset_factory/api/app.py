@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -64,6 +65,7 @@ from ..strategies import (
 )
 from ..tasks import TaskManager, TaskNotFoundError
 from ..workdir import (
+    ImportInProgressError,
     ImportSourceConflictError,
     WorkdirMetadataCorruptedError,
     WorkdirNotFoundError,
@@ -97,6 +99,9 @@ def create_app(frontend_dir: Path | None = None) -> FastAPI:
     _register_error_handlers(app)
     # 长任务管理器随应用实例装配（内存态、重启即丢；测试各自 create_app 天然隔离）。
     app.state.task_manager = TaskManager()
+    # 导入槽位表：同一工作目录同时只允许一个导入任务（routes_workdir 检查与释放）。
+    app.state.import_slots = {}
+    app.state.import_slots_guard = threading.Lock()
     app.include_router(routes_labeling.router)
     app.include_router(routes_prompts.router)
     app.include_router(routes_skills.router)
@@ -224,6 +229,11 @@ def _register_error_handlers(app: FastAPI) -> None:
         return problem_response(422, "import-source-conflict", "导入来源冲突", str(exc))
 
     app.add_exception_handler(ImportSourceConflictError, import_source_conflict_handler)
+
+    def import_in_progress_handler(request: Request, exc: Exception) -> JSONResponse:
+        return problem_response(409, "import-in-progress", "导入任务进行中", str(exc))
+
+    app.add_exception_handler(ImportInProgressError, import_in_progress_handler)
 
     def strategy_not_found_handler(request: Request, exc: Exception) -> JSONResponse:
         return problem_response(404, "strategy-not-found", "库策略不存在", str(exc))

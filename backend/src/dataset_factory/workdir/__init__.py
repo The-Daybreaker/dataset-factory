@@ -6,6 +6,7 @@
 """
 
 from .errors import (
+    ImportInProgressError,
     ImportSourceConflictError,
     WorkdirError,
     WorkdirMetadataCorruptedError,
@@ -36,6 +37,7 @@ __all__ = [
     "MAX_VIDEO_BYTES",
     "REASON_OVERSIZE",
     "REASON_UNSUPPORTED_EXTENSION",
+    "ImportInProgressError",
     "ImportSourceConflictError",
     "WorkdirEntry",
     "WorkdirError",

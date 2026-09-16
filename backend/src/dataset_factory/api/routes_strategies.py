@@ -29,6 +29,7 @@ from ..strategies import (
     create_strategy,
     delete_batch,
     delete_strategy,
+    get_batch,
     get_strategy,
     list_batches,
     list_strategies,
@@ -305,6 +306,23 @@ def create_workdir_batch(wid: str, body: BatchCreateRequest) -> Response:
         media_type="application/json",
         headers={"Location": f"/api/workdirs/{wid}/batches/{view.id}"},
     )
+
+
+@batches_router.get(
+    "/{sN}",
+    response_model=BatchView,
+    responses={
+        404: {
+            "model": Problem,
+            "content": {"application/problem+json": {}},
+            "description": "wid 或批次不存在（workdir-not-found / batch-not-found）",
+        },
+    },
+)
+def get_batch_detail(wid: str, sN: str) -> BatchView:
+    """按序号查单个批次（新建 201 的 Location 指向这里，可解析）。"""
+    entry = get_batch(_workdir_path(wid), parse_seq(sN))
+    return _to_batch_view(wid, entry)
 
 
 @batches_router.patch(

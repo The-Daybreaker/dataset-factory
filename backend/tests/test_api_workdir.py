@@ -1,4 +1,4 @@
-"""接口测试：workdir 端点（注册表读面 + 登记/导入的 202 任务面 + 导入历史）。
+"""接口测试：workdir 端点（注册表读面 + 登记/导入的 202 任务面 + 导入历史 + 并发锁）。
 
 读面与错误语义用 TestClient 直测；受理端点（202 + 任务）走 httpx ASGITransport——
 任务受理需要运行中的事件循环（TestClient 门户线程没有），同一事件循环里受理 +
@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -359,6 +360,76 @@ def test_import_endpoint_unknown_wid_returns_problem_json(
 
             assert response.status_code == 404
             assert response.json()["type"] == "workdir-not-found"
+
+    asyncio.run(scenario())
+
+
+def test_concurrent_import_on_same_workdir_returns_409(
+    tmp_path: Path, temp_data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """同一工作目录同时只允许一个导入任务：占用中再受理 → 409 problem+json。"""
+    import dataset_factory.api.routes_workdir as routes_workdir_module
+
+    started = threading.Event()
+    gate = threading.Event()
+
+    def slow_import(
+        workdir: Path,
+        source: Path | None,
+        *,
+        force_names: frozenset[str] | set[str] = frozenset(),
+        should_stop: threading.Event | None = None,
+        progress: Any = None,
+    ) -> dict[str, Any]:
+        started.set()
+        gate.wait(timeout=_WAIT_TIMEOUT)
+        return {
+            "imported_at": "",
+            "source": "",
+            "imported": [],
+            "skipped_identical": [],
+            "skipped_conflict": [],
+            "skipped_duplicate": [],
+            "rejected": [],
+        }
+
+    monkeypatch.setattr(routes_workdir_module, "import_assets", slow_import)
+
+    async def scenario() -> None:
+        target = tmp_path / "photos"
+        target.mkdir()
+        entry = WorkdirRegistry.register(target, title="")
+        source = tmp_path / "more"
+        source.mkdir()
+        _write(source, "dog_001.jpg", _PNG_BYTES)
+        app = create_app(frontend_dir=tmp_path)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as http:
+            first = await http.post(
+                f"/api/workdirs/{entry.id}/imports", json={"source": str(source)}
+            )
+            assert first.status_code == 202
+            assert started.wait(timeout=_WAIT_TIMEOUT), "第一个任务未开始"
+
+            second = await http.post(
+                f"/api/workdirs/{entry.id}/imports", json={"source": str(source)}
+            )
+            assert second.status_code == 409
+            assert second.headers["content-type"] == "application/problem+json"
+            body = second.json()
+            assert body["type"] == "import-in-progress"
+            assert body["status"] == 409
+
+            gate.set()
+            finished = await _wait_terminal(http, first.json()["task_id"])
+            assert finished["status"] == "succeeded"
+
+            # 槽位已随任务结束释放：可以再次受理。
+            third = await http.post(
+                f"/api/workdirs/{entry.id}/imports", json={"source": str(source)}
+            )
+            assert third.status_code == 202
 
     asyncio.run(scenario())
 

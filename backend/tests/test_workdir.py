@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import threading
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -587,6 +588,80 @@ def test_copy_failure_fails_loud_with_filename(
 
     with pytest.raises(WorkdirError, match=r"cat_001\.jpg"):
         import_assets(workdir, source)
+
+
+def test_in_batch_same_content_skips_second(
+    workdir: Path, source: Path, temp_data_root: Path
+) -> None:
+    """批内异名同容：同一批里 b 与先导入的 a 内容相同 → 默认跳过（与工作目录全量比对）。"""
+    _write(source, "a.jpg", _PNG_BYTES)
+    _write(source, "b.jpg", _PNG_BYTES)
+
+    report = import_assets(workdir, source)
+
+    assert report["imported"] == ["a.jpg"]
+    assert report["skipped_duplicate"] == [{"name": "b.jpg", "duplicate_of": "a.jpg"}]
+    assert not (workdir / "b.jpg").exists()
+    assert _read_records(workdir)[0]["files"] == [
+        {"name": "a.jpg", "sha256": _sha(_PNG_BYTES)},
+    ]
+
+
+def test_same_name_oversized_file_is_never_overwritten(
+    workdir: Path,
+    source: Path,
+    temp_data_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """同名保护对物理存在的超限文件同样生效：合法同名导入 → 冲突跳过、原文件不动。"""
+    monkeypatch.setattr(importer_module, "MAX_IMAGE_BYTES", 10)
+    _write(workdir, "cat.jpg", b"12345678901")
+    _write(source, "cat.jpg", b"12345")
+
+    report = import_assets(workdir, source)
+
+    assert report["imported"] == []
+    assert (workdir / "cat.jpg").read_bytes() == b"12345678901"
+    assert report["skipped_conflict"][0]["name"] == "cat.jpg"
+
+
+def test_stem_conflict_against_oversized_existing(
+    workdir: Path,
+    source: Path,
+    temp_data_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """主干唯一对超限的物理存在文件同样生效：超限 cat.jpg 在场时 cat.mp4 被拒。"""
+    monkeypatch.setattr(importer_module, "MAX_IMAGE_BYTES", 10)
+    _write(workdir, "cat.jpg", b"12345678901")
+    import_assets(workdir, None)
+    _write(source, "cat.mp4", _MP4_BYTES)
+
+    report = import_assets(workdir, source)
+
+    assert report["imported"] == []
+    rejected = {item["name"]: item["reason"] for item in report["rejected"]}
+    assert "重命名其一" in rejected["cat.mp4"]
+
+
+def test_record_hash_refers_to_copied_bytes(
+    workdir: Path, source: Path, temp_data_root: Path
+) -> None:
+    """导入记录的哈希 = 实际落盘内容的 SHA-256（锚点指向磁盘上那份字节）。"""
+    _write(source, "cat_001.jpg", _PNG_BYTES)
+
+    import_assets(workdir, source)
+
+    files = cast("list[dict[str, str]]", _read_records(workdir)[0]["files"])
+    record = files[0]
+    on_disk = (workdir / "cat_001.jpg").read_bytes()
+    assert record["sha256"] == _sha(on_disk)
+
+
+def test_size_limit_constants_pinned() -> None:
+    """护栏常量钉死（design 项 13）：图片 20 MiB / 视频 100 MiB——值被误改当场红。"""
+    assert importer_module.MAX_IMAGE_BYTES == 20 * 1024 * 1024
+    assert importer_module.MAX_VIDEO_BYTES == 100 * 1024 * 1024
 
 
 def test_import_records_roundtrip(workdir: Path, temp_data_root: Path) -> None:

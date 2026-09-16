@@ -3743,6 +3743,67 @@
           "批次（策略实例）"
         ]
       },
+      "get": {
+        "description": "按序号查单个批次（新建 201 的 Location 指向这里，可解析）。",
+        "operationId": "get_batch_detail_api_workdirs__wid__batches__sN__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sN",
+            "required": true,
+            "schema": {
+              "title": "Sn",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "wid 或批次不存在（workdir-not-found / batch-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Batch Detail",
+        "tags": [
+          "批次（策略实例）"
+        ]
+      },
       "patch": {
         "description": "改名 / 描述（纯显示元数据）。\n\n组合不可改——工作目录下的策略是库策略的应用副本（copy-on-apply），\n库端编辑不传染、已应用批次不提供就地改组合；想换组合 = 新建批次。\n「保存策略」钮的落点是策略库（PUT /api/strategies/{id}），不是这里。",
         "operationId": "patch_batch_api_workdirs__wid__batches__sN__patch",

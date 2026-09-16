@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -88,7 +89,11 @@ def _library_dir() -> Path:
 
 
 def _entry_path(strategy_id: str) -> Path:
-    """一条库策略的落盘路径。"""
+    """一条库策略的落盘路径（ID 直来自 URL 参数，先过形状校验杜绝路径穿越）。"""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", strategy_id):
+        raise StrategyNotFoundError(
+            "库策略 ID 形状不合法（只允许字母 / 数字 / 下划线 / 连字符）。",
+        )
     return _library_dir() / f"{strategy_id}.json"
 
 

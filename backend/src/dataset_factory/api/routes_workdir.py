@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 import threading
 from pathlib import Path
 from typing import cast
@@ -24,6 +25,7 @@ from fastapi.responses import JSONResponse
 
 from ..tasks import RETRY_AFTER_SECONDS, TaskManager, TaskResult
 from ..workdir import (
+    ImportInProgressError,
     WorkdirEntry,
     WorkdirPathError,
     WorkdirRegistry,
@@ -60,32 +62,62 @@ def _manager(request: Request) -> TaskManager:
 
 
 def _spawn_import_task(
-    manager: TaskManager,
+    request: Request,
     workdir: Path,
     source: Path | None,
     force_names: frozenset[str] | set[str] = frozenset(),
 ) -> str:
     """把一次导入包装成长任务受理，返回 task_id。
 
+    同一工作目录**不允许多个导入任务并行**（并发双方基线互不可见，会破坏
+    「主干唯一」不变量、imports.jsonl 可能交错）——槽位表做检查并预留
+    （guard 锁内原子完成），占用中抛 ImportInProgressError（409）。
+    任务体在 finally 里释放槽位（成败 / 取消都释放）。
+
     任务体 = 同步阻塞的 import_assets（跑在工作线程）；进度按文件粒度回报，
     取消信号在文件边界检查（任务体安全点约定）。
     """
+    manager = _manager(request)
+    key = os.path.realpath(workdir)
+    guard = request.app.state.import_slots_guard
+    slots: dict[str, str] = request.app.state.import_slots
+    with guard:
+        if key in slots:
+            raise ImportInProgressError(
+                "该工作目录已有导入任务在进行中——请等待其完成后再发起新导入。",
+            )
+        reserve = secrets.token_hex(6)
+        slots[key] = reserve
 
     def runner(task_id: str, should_stop: threading.Event) -> TaskResult:
-        """导入任务体：进度回报桥接到管理器，其余逻辑全部委托核心库。"""
+        """导入任务体：受理后把占位令牌换成 task_id；结束时释放槽位。"""
+        try:
+            with guard:
+                if slots.get(key) == reserve:
+                    slots[key] = task_id
 
-        def report_progress(value: float) -> None:
-            manager.set_progress(task_id, value)
+            def report_progress(value: float) -> None:
+                manager.set_progress(task_id, value)
 
-        return import_assets(
-            workdir,
-            source,
-            force_names=force_names,
-            should_stop=should_stop,
-            progress=report_progress,
-        )
+            return import_assets(
+                workdir,
+                source,
+                force_names=force_names,
+                should_stop=should_stop,
+                progress=report_progress,
+            )
+        finally:
+            with guard:
+                if slots.get(key) in (reserve, task_id):
+                    del slots[key]
 
-    return manager.create(runner)
+    try:
+        return manager.create(runner)
+    except BaseException:
+        with guard:
+            if slots.get(key) == reserve:
+                del slots[key]
+        raise
 
 
 def _accepted_response(payload: WorkdirCreateAccepted | ImportAccepted) -> JSONResponse:
@@ -135,7 +167,7 @@ async def create_workdir(body: WorkdirCreateRequest, request: Request) -> JSONRe
     if source_path is not None:
         ensure_importable_source(workdir_path, source_path)
     entry = WorkdirRegistry.register(workdir_path, title=body.title)
-    task_id = _spawn_import_task(_manager(request), workdir_path, source_path)
+    task_id = _spawn_import_task(request, workdir_path, source_path)
     return _accepted_response(
         WorkdirCreateAccepted(task_id=task_id, workdir=_to_info(entry)),
     )
@@ -210,7 +242,7 @@ async def create_import(
     source_path = Path(os.path.abspath(body.source))
     ensure_importable_source(workdir_path, source_path)
     task_id = _spawn_import_task(
-        _manager(request),
+        request,
         workdir_path,
         source_path,
         force_names=frozenset(body.force_names),
