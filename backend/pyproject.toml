@@ -63,12 +63,14 @@ show_missing = true
 root_packages = ["dataset_factory"]
 
 [[tool.importlinter.contracts]]
-name = "分层：cli（启动器）> api（HTTP 入口）> 编排 > 能力 > 数据域（单向；核心禁止 import 入口层）"
+name = "分层：cli（启动器）> api（HTTP 入口）> 编排 > 策略 > 工作目录 > 能力 > 数据域（单向；核心禁止 import 入口层）"
 type = "layers"
 layers = [
     "dataset_factory.cli",
     "dataset_factory.api",
-    "dataset_factory.labeling | dataset_factory.workdir",
+    "dataset_factory.labeling",
+    "dataset_factory.strategies",
+    "dataset_factory.workdir",
     "dataset_factory.llm",
     "dataset_factory.prompts | dataset_factory.skills | dataset_factory.sessions | dataset_factory.tasks",
 ]
@@ -115,6 +117,7 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["D104"]   # 骨架包暂无 docstring，各模块有内容时再补
+"src/dataset_factory/api/routes_strategies.py" = ["N803"]  # 路径参数 sN 是 design 定的批次标识词汇（s1、s2…）
 "tests/**" = [
     "S101",   # 测试就是用 assert 断言
     "S105", "S106", "S107",  # 测试里的假密钥字面量（"test-key" 等），非真实凭据

@@ -55,6 +55,13 @@ from ..skills import (
     SkillNotFoundError,
     SkillSourceError,
 )
+from ..strategies import (
+    BatchNotFoundError,
+    StrategyError,
+    StrategyNameError,
+    StrategyNotFoundError,
+    StrategyRefsError,
+)
 from ..tasks import TaskManager, TaskNotFoundError
 from ..workdir import (
     ImportSourceConflictError,
@@ -69,6 +76,7 @@ from . import (
     routes_prompts,
     routes_service,
     routes_skills,
+    routes_strategies,
     routes_tasks,
     routes_workdir,
 )
@@ -97,6 +105,8 @@ def create_app(frontend_dir: Path | None = None) -> FastAPI:
     app.include_router(routes_service.router)
     app.include_router(routes_tasks.router)
     app.include_router(routes_workdir.router)
+    app.include_router(routes_strategies.library_router)
+    app.include_router(routes_strategies.batches_router)
     directory = frontend_dir if frontend_dir is not None else _default_frontend_dir()
     if directory.is_dir():
         app.mount("/", StaticFiles(directory=directory, html=True), name="frontend")
@@ -214,3 +224,31 @@ def _register_error_handlers(app: FastAPI) -> None:
         return problem_response(422, "import-source-conflict", "导入来源冲突", str(exc))
 
     app.add_exception_handler(ImportSourceConflictError, import_source_conflict_handler)
+
+    def strategy_not_found_handler(request: Request, exc: Exception) -> JSONResponse:
+        return problem_response(404, "strategy-not-found", "库策略不存在", str(exc))
+
+    app.add_exception_handler(StrategyNotFoundError, strategy_not_found_handler)
+
+    def strategy_name_invalid_handler(request: Request, exc: Exception) -> JSONResponse:
+        return problem_response(400, "strategy-name-invalid", "策略名不合法", str(exc))
+
+    app.add_exception_handler(StrategyNameError, strategy_name_invalid_handler)
+
+    def strategy_refs_invalid_handler(request: Request, exc: Exception) -> JSONResponse:
+        return problem_response(
+            400, "strategy-refs-invalid", "策略引用不合法", str(exc)
+        )
+
+    app.add_exception_handler(StrategyRefsError, strategy_refs_invalid_handler)
+
+    def batch_not_found_handler(request: Request, exc: Exception) -> JSONResponse:
+        return problem_response(404, "batch-not-found", "批次不存在", str(exc))
+
+    app.add_exception_handler(BatchNotFoundError, batch_not_found_handler)
+
+    def strategy_error_handler(request: Request, exc: Exception) -> JSONResponse:
+        # 基类兜底（库策略文件损坏等）：500 档，消息已可操作。
+        return problem_response(500, "strategy-error", "策略数据异常", str(exc))
+
+    app.add_exception_handler(StrategyError, strategy_error_handler)

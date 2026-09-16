@@ -389,3 +389,168 @@ class ImportRecord(BaseModel):
     imported_at: str = Field(description="导入时刻（UTC ISO 8601）")
     source: str = Field(description="来源目录路径（就地采用 = 工作目录自身）")
     files: list[ImportFileRecord] = Field(description="本次登记的文件清单")
+
+
+# --------------------------------------------------------------------------
+# 策略库（用户级组合清单）
+# --------------------------------------------------------------------------
+
+
+class StrategyView(BaseModel):
+    """库策略条目——列表 / 详情 / 创建 / 更新的响应体。
+
+    available = 引用健康度（现查）：任一引用（端点配置 / 提示词 / Skill）已不存在
+    则为 False，missing_refs 给出缺失清单（界面置灰、禁止应用、走重新指定）。
+    """
+
+    id: str = Field(description="库策略 ID（内部稳定标识，改名不变）")
+    name: str = Field(description="显示名（可改、允许重名）")
+    description: str = Field(description="说明文字")
+    endpoint: str = Field(description="端点配置名引用")
+    prompt: str = Field(description="基础提示词名引用")
+    skills: list[str] = Field(description="启用 Skill 名引用清单（有序）")
+    available: bool = Field(description="引用健康度：全部引用现存在才可用")
+    missing_refs: list[str] = Field(description="缺失引用的可读描述（健康时为空）")
+    created_at: str = Field(description="创建时刻（UTC ISO 8601）")
+    updated_at: str = Field(description="最近更新时刻（UTC ISO 8601）")
+
+
+class StrategySaveRequest(BaseModel):
+    """POST /api/strategies 与 PUT /api/strategies/{id} 的请求体（组合整体替换）。"""
+
+    name: str = Field(description="显示名（非空）")
+    description: str = Field(default="", description="说明文字")
+    endpoint: str = Field(description="端点配置名（必须已存在）")
+    prompt: str = Field(description="基础提示词名（必须已存在）")
+    skills: list[str] = Field(
+        default_factory=list, description="启用 Skill 名清单（必须已存在）"
+    )
+
+
+class StrategyRebindRequest(BaseModel):
+    """POST /api/strategies/{id}/rebind 的请求体：缺失引用的「重新指定」。
+
+    只更新提供的引用位，其余保持不变——对置灰策略来说，健康的引用没有理由
+    被 UI 一起重交一遍。至少提供一个字段。
+    """
+
+    endpoint: str | None = Field(
+        default=None, description="新的端点配置名；缺省 = 不变"
+    )
+    prompt: str | None = Field(
+        default=None, description="新的基础提示词名；缺省 = 不变"
+    )
+    skills: list[str] | None = Field(
+        default=None, description="新的 Skill 清单（整体替换）；缺省 = 不变"
+    )
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> StrategyRebindRequest:
+        """至少指定一个引用位，否则这次调用没有语义。"""
+        if self.endpoint is None and self.prompt is None and self.skills is None:
+            raise ValueError(
+                "至少提供一个要重新指定的引用位（endpoint / prompt / skills 之一）。"
+            )
+        return self
+
+
+# --------------------------------------------------------------------------
+# 批次（= 策略 × 工作目录）
+# --------------------------------------------------------------------------
+
+
+class BatchView(BaseModel):
+    """批次摘要——列表 / 详情 / 配置补丁 / 停用召回的响应体。
+
+    组合全文在快照文件（.dsf/strategies/sN.json），本视图只带元数据；
+    product_count 供删除确认弹窗展示「将删多少个产物」。
+    """
+
+    id: str = Field(description="批次标识（sN 形式，如 s1）")
+    seq: int = Field(description="序号（只增不复用）")
+    name: str = Field(description="策略显示名（纯显示别名，可改、允许重名）")
+    description: str = Field(description="说明文字")
+    active: bool = Field(
+        description="是否启用（False = 已停用，不出现在下拉 / 打包选项）"
+    )
+    created_at: str = Field(description="创建时刻（UTC ISO 8601）")
+    product_count: int = Field(description="该批次现有产物 txt 数")
+
+
+class BatchCreateRequest(BaseModel):
+    """POST /api/workdirs/{wid}/batches 的请求体：新建批次。
+
+    type = library：从库策略 copy-on-apply（id 必填；name / description 缺省
+    沿用库策略）；type = scratch：从零配置（name / endpoint / prompt 必填）。
+    """
+
+    type: str = Field(
+        description="新建方式：library（应用库策略）或 scratch（从零配置）"
+    )
+    id: str | None = Field(
+        default=None, description="库策略 ID（type = library 时必填）"
+    )
+    name: str | None = Field(
+        default=None, description="显示名；library 缺省沿用库策略名，scratch 必填"
+    )
+    description: str | None = Field(
+        default=None, description="说明文字；library 缺省沿用库策略"
+    )
+    endpoint: str | None = Field(default=None, description="端点配置名（scratch 必填）")
+    prompt: str | None = Field(default=None, description="基础提示词名（scratch 必填）")
+    skills: list[str] | None = Field(
+        default=None, description="启用 Skill 名清单（scratch 可缺省 = 空）"
+    )
+
+    @model_validator(mode="after")
+    def _by_type(self) -> BatchCreateRequest:
+        """按 type 校验必填组合（缺了当场 422，不到业务层才发现）。"""
+        if self.type == "library":
+            if not self.id:
+                raise ValueError("type = library 时必须提供库策略 id。")
+            return self
+        if self.type == "scratch":
+            missing = [
+                field_name
+                for field_name in ("name", "endpoint", "prompt")
+                if getattr(self, field_name) is None
+            ]
+            if missing:
+                raise ValueError(
+                    "type = scratch 时必须提供 " + "、".join(missing) + "。"
+                )
+            return self
+        raise ValueError("type 必须是 library 或 scratch。")
+
+
+class BatchUpdateRequest(BaseModel):
+    """PATCH /api/workdirs/{wid}/batches/{sN} 的请求体：顶部「保存策略」。
+
+    组合三件要么全提供（整体替换、重新装配快照）要么全不提供（只改元数据）。
+    """
+
+    name: str | None = Field(default=None, description="显示名；缺省 = 不变")
+    description: str | None = Field(default=None, description="说明文字；缺省 = 不变")
+    endpoint: str | None = Field(
+        default=None, description="端点配置名（组合整体替换时必填）"
+    )
+    prompt: str | None = Field(
+        default=None, description="基础提示词名（组合整体替换时必填）"
+    )
+    skills: list[str] | None = Field(
+        default=None, description="Skill 清单（组合整体替换时必填）"
+    )
+
+
+class ExclusionsRequest(BaseModel):
+    """排除名单增删的请求体：条目数组（素材主干）。"""
+
+    items: list[str] = Field(description="条目清单（素材主干，如 cat_001）")
+
+
+class ExclusionsView(BaseModel):
+    """排除名单现状（增删动作都返回全量名单，前端以响应为准）。"""
+
+    id: str = Field(description="批次标识（sN 形式）")
+    seq: int = Field(description="序号")
+    items: list[str] = Field(description="当前排除名单（追加序）")

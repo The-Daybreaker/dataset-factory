@@ -1,6 +1,217 @@
 {
   "components": {
     "schemas": {
+      "BatchCreateRequest": {
+        "description": "POST /api/workdirs/{wid}/batches 的请求体：新建批次。\n\ntype = library：从库策略 copy-on-apply（id 必填；name / description 缺省\n沿用库策略）；type = scratch：从零配置（name / endpoint / prompt 必填）。",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "说明文字；library 缺省沿用库策略",
+            "title": "Description"
+          },
+          "endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "端点配置名（scratch 必填）",
+            "title": "Endpoint"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "库策略 ID（type = library 时必填）",
+            "title": "Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "显示名；library 缺省沿用库策略名，scratch 必填",
+            "title": "Name"
+          },
+          "prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "基础提示词名（scratch 必填）",
+            "title": "Prompt"
+          },
+          "skills": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "启用 Skill 名清单（scratch 可缺省 = 空）",
+            "title": "Skills"
+          },
+          "type": {
+            "description": "新建方式：library（应用库策略）或 scratch（从零配置）",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "BatchCreateRequest",
+        "type": "object"
+      },
+      "BatchUpdateRequest": {
+        "description": "PATCH /api/workdirs/{wid}/batches/{sN} 的请求体：顶部「保存策略」。\n\n组合三件要么全提供（整体替换、重新装配快照）要么全不提供（只改元数据）。",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "说明文字；缺省 = 不变",
+            "title": "Description"
+          },
+          "endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "端点配置名（组合整体替换时必填）",
+            "title": "Endpoint"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "显示名；缺省 = 不变",
+            "title": "Name"
+          },
+          "prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "基础提示词名（组合整体替换时必填）",
+            "title": "Prompt"
+          },
+          "skills": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Skill 清单（组合整体替换时必填）",
+            "title": "Skills"
+          }
+        },
+        "title": "BatchUpdateRequest",
+        "type": "object"
+      },
+      "BatchView": {
+        "description": "批次摘要——列表 / 详情 / 配置补丁 / 停用召回的响应体。\n\n组合全文在快照文件（.dsf/strategies/sN.json），本视图只带元数据；\nproduct_count 供删除确认弹窗展示「将删多少个产物」。",
+        "properties": {
+          "active": {
+            "description": "是否启用（False = 已停用，不出现在下拉 / 打包选项）",
+            "title": "Active",
+            "type": "boolean"
+          },
+          "created_at": {
+            "description": "创建时刻（UTC ISO 8601）",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "description": "说明文字",
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "description": "批次标识（sN 形式，如 s1）",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "description": "策略显示名（纯显示别名，可改、允许重名）",
+            "title": "Name",
+            "type": "string"
+          },
+          "product_count": {
+            "description": "该批次现有产物 txt 数",
+            "title": "Product Count",
+            "type": "integer"
+          },
+          "seq": {
+            "description": "序号（只增不复用）",
+            "title": "Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "seq",
+          "name",
+          "description",
+          "active",
+          "created_at",
+          "product_count"
+        ],
+        "title": "BatchView",
+        "type": "object"
+      },
       "Body_import_upload_api_skills_import_upload_post": {
         "properties": {
           "files": {
@@ -432,6 +643,54 @@
           "detail"
         ],
         "title": "ErrorDetail",
+        "type": "object"
+      },
+      "ExclusionsRequest": {
+        "description": "排除名单增删的请求体：条目数组（素材主干）。",
+        "properties": {
+          "items": {
+            "description": "条目清单（素材主干，如 cat_001）",
+            "items": {
+              "type": "string"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ExclusionsRequest",
+        "type": "object"
+      },
+      "ExclusionsView": {
+        "description": "排除名单现状（增删动作都返回全量名单，前端以响应为准）。",
+        "properties": {
+          "id": {
+            "description": "批次标识（sN 形式）",
+            "title": "Id",
+            "type": "string"
+          },
+          "items": {
+            "description": "当前排除名单（追加序）",
+            "items": {
+              "type": "string"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "seq": {
+            "description": "序号",
+            "title": "Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "seq",
+          "items"
+        ],
+        "title": "ExclusionsView",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -1037,6 +1296,168 @@
           "body_chars"
         ],
         "title": "SkillInfo",
+        "type": "object"
+      },
+      "StrategyRebindRequest": {
+        "description": "POST /api/strategies/{id}/rebind 的请求体：缺失引用的「重新指定」。\n\n只更新提供的引用位，其余保持不变——对置灰策略来说，健康的引用没有理由\n被 UI 一起重交一遍。至少提供一个字段。",
+        "properties": {
+          "endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "新的端点配置名；缺省 = 不变",
+            "title": "Endpoint"
+          },
+          "prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "新的基础提示词名；缺省 = 不变",
+            "title": "Prompt"
+          },
+          "skills": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "新的 Skill 清单（整体替换）；缺省 = 不变",
+            "title": "Skills"
+          }
+        },
+        "title": "StrategyRebindRequest",
+        "type": "object"
+      },
+      "StrategySaveRequest": {
+        "description": "POST /api/strategies 与 PUT /api/strategies/{id} 的请求体（组合整体替换）。",
+        "properties": {
+          "description": {
+            "default": "",
+            "description": "说明文字",
+            "title": "Description",
+            "type": "string"
+          },
+          "endpoint": {
+            "description": "端点配置名（必须已存在）",
+            "title": "Endpoint",
+            "type": "string"
+          },
+          "name": {
+            "description": "显示名（非空）",
+            "title": "Name",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "基础提示词名（必须已存在）",
+            "title": "Prompt",
+            "type": "string"
+          },
+          "skills": {
+            "description": "启用 Skill 名清单（必须已存在）",
+            "items": {
+              "type": "string"
+            },
+            "title": "Skills",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "endpoint",
+          "prompt"
+        ],
+        "title": "StrategySaveRequest",
+        "type": "object"
+      },
+      "StrategyView": {
+        "description": "库策略条目——列表 / 详情 / 创建 / 更新的响应体。\n\navailable = 引用健康度（现查）：任一引用（端点配置 / 提示词 / Skill）已不存在\n则为 False，missing_refs 给出缺失清单（界面置灰、禁止应用、走重新指定）。",
+        "properties": {
+          "available": {
+            "description": "引用健康度：全部引用现存在才可用",
+            "title": "Available",
+            "type": "boolean"
+          },
+          "created_at": {
+            "description": "创建时刻（UTC ISO 8601）",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "description": "说明文字",
+            "title": "Description",
+            "type": "string"
+          },
+          "endpoint": {
+            "description": "端点配置名引用",
+            "title": "Endpoint",
+            "type": "string"
+          },
+          "id": {
+            "description": "库策略 ID（内部稳定标识，改名不变）",
+            "title": "Id",
+            "type": "string"
+          },
+          "missing_refs": {
+            "description": "缺失引用的可读描述（健康时为空）",
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Refs",
+            "type": "array"
+          },
+          "name": {
+            "description": "显示名（可改、允许重名）",
+            "title": "Name",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "基础提示词名引用",
+            "title": "Prompt",
+            "type": "string"
+          },
+          "skills": {
+            "description": "启用 Skill 名引用清单（有序）",
+            "items": {
+              "type": "string"
+            },
+            "title": "Skills",
+            "type": "array"
+          },
+          "updated_at": {
+            "description": "最近更新时刻（UTC ISO 8601）",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "endpoint",
+          "prompt",
+          "skills",
+          "available",
+          "missing_refs",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "StrategyView",
         "type": "object"
       },
       "ValidationError": {
@@ -2584,6 +3005,384 @@
         ]
       }
     },
+    "/api/strategies": {
+      "get": {
+        "description": "列出全部库策略（按显示名排序），健康度现查。",
+        "operationId": "list_library_api_strategies_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StrategyView"
+                  },
+                  "title": "Response List Library Api Strategies Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Library",
+        "tags": [
+          "策略库"
+        ]
+      },
+      "post": {
+        "description": "新建库策略（引用必须现存在）。",
+        "operationId": "create_library_entry_api_strategies_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StrategySaveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrategyView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "名字为空 / 引用不存在（strategy-name-invalid / strategy-refs-invalid）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Library Entry",
+        "tags": [
+          "策略库"
+        ]
+      }
+    },
+    "/api/strategies/{strategy_id}": {
+      "delete": {
+        "description": "删除库策略（已应用的批次不受影响——copy-on-apply 持有内容副本）。",
+        "operationId": "delete_library_entry_api_strategies__strategy_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "strategy_id",
+            "required": true,
+            "schema": {
+              "title": "Strategy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "库策略不存在（problem+json: strategy-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Library Entry",
+        "tags": [
+          "策略库"
+        ]
+      },
+      "get": {
+        "description": "按 ID 查库策略。",
+        "operationId": "get_library_entry_api_strategies__strategy_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "strategy_id",
+            "required": true,
+            "schema": {
+              "title": "Strategy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrategyView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "库策略不存在（problem+json: strategy-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Library Entry",
+        "tags": [
+          "策略库"
+        ]
+      },
+      "put": {
+        "description": "整条更新库策略（策略页「保存」的落点；组合整体替换）。",
+        "operationId": "update_library_entry_api_strategies__strategy_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "strategy_id",
+            "required": true,
+            "schema": {
+              "title": "Strategy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StrategySaveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrategyView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "名字为空 / 引用不存在（strategy-name-invalid / strategy-refs-invalid）"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "库策略不存在（problem+json: strategy-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Library Entry",
+        "tags": [
+          "策略库"
+        ]
+      }
+    },
+    "/api/strategies/{strategy_id}/copy": {
+      "post": {
+        "description": "复制一份（派生变体：新 ID、内容原样）。",
+        "operationId": "copy_library_entry_api_strategies__strategy_id__copy_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "strategy_id",
+            "required": true,
+            "schema": {
+              "title": "Strategy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrategyView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "库策略不存在（problem+json: strategy-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Copy Library Entry",
+        "tags": [
+          "策略库"
+        ]
+      }
+    },
+    "/api/strategies/{strategy_id}/rebind": {
+      "post": {
+        "description": "重新指定缺失引用（只更新提供的引用位，其余保持不变）。",
+        "operationId": "rebind_library_entry_api_strategies__strategy_id__rebind_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "strategy_id",
+            "required": true,
+            "schema": {
+              "title": "Strategy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StrategyRebindRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrategyView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "新引用不存在（problem+json: strategy-refs-invalid）"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "库策略不存在（problem+json: strategy-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rebind Library Entry",
+        "tags": [
+          "策略库"
+        ]
+      }
+    },
     "/api/tasks/{task_id}": {
       "get": {
         "description": "轮询任务状态；不存在返回 404 problem+json（task-not-found，消息只指动作）。",
@@ -2803,6 +3602,535 @@
         "summary": "Get One",
         "tags": [
           "工作目录"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/batches": {
+      "get": {
+        "description": "列出工作目录全部批次（按序号升序，含停用的——设置页要能召回）。\n\n打标页顶栏策略下拉与工作目录设置页策略区块的数据源。",
+        "operationId": "list_workdir_batches_api_workdirs__wid__batches_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BatchView"
+                  },
+                  "title": "Response List Workdir Batches Api Workdirs  Wid  Batches Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Workdir Batches",
+        "tags": [
+          "批次（策略实例）"
+        ]
+      },
+      "post": {
+        "description": "新建批次：library = copy-on-apply 应用库策略（记来源）/ scratch = 从零配置。\n\n201 + Location 指向新批次（REST 惯例：创建成功告诉客户端新资源在哪）。",
+        "operationId": "create_workdir_batch_api_workdirs__wid__batches_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "引用不存在（problem+json: strategy-refs-invalid）"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "wid 或库策略不存在（workdir-not-found / strategy-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "请求体按 type 缺必填字段（FastAPI 校验）"
+          }
+        },
+        "summary": "Create Workdir Batch",
+        "tags": [
+          "批次（策略实例）"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/batches/{sN}": {
+      "delete": {
+        "description": "删除批次：该策略全部产物 txt + 快照 + state.json 记录 + 排除名单一并移除。\n\n删前告知条数由界面负责（批次视图的 product_count 即数据源）。",
+        "operationId": "delete_workdir_batch_api_workdirs__wid__batches__sN__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sN",
+            "required": true,
+            "schema": {
+              "title": "Sn",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "wid 或批次不存在（workdir-not-found / batch-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Workdir Batch",
+        "tags": [
+          "批次（策略实例）"
+        ]
+      },
+      "patch": {
+        "description": "配置补丁（打标页顶部「保存策略」）：名称 / 描述 / 组合整体替换。",
+        "operationId": "patch_batch_api_workdirs__wid__batches__sN__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sN",
+            "required": true,
+            "schema": {
+              "title": "Sn",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "组合替换不完整 / 新引用不存在（strategy-refs-invalid）"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "wid 或批次不存在（workdir-not-found / batch-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Batch",
+        "tags": [
+          "批次（策略实例）"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/batches/{sN}/exclusions": {
+      "delete": {
+        "description": "把条目移出排除打包名单（撤销排除），返回当前名单。",
+        "operationId": "remove_batch_exclusions_api_workdirs__wid__batches__sN__exclusions_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sN",
+            "required": true,
+            "schema": {
+              "title": "Sn",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExclusionsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExclusionsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "wid 或批次不存在（workdir-not-found / batch-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Batch Exclusions",
+        "tags": [
+          "批次（策略实例）"
+        ]
+      },
+      "post": {
+        "description": "把条目加入排除打包名单（幂等去重），返回当前名单。\n\n名单随批次元数据持久、跨会话存活；改动全程持运行锁（T36 起生效）。",
+        "operationId": "add_batch_exclusions_api_workdirs__wid__batches__sN__exclusions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sN",
+            "required": true,
+            "schema": {
+              "title": "Sn",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExclusionsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExclusionsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "wid 或批次不存在（workdir-not-found / batch-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Batch Exclusions",
+        "tags": [
+          "批次（策略实例）"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/batches/{sN}/hide": {
+      "post": {
+        "description": "停用批次：不出现在下拉 / 列表 / 打包选项，产物全部保留。",
+        "operationId": "hide_batch_api_workdirs__wid__batches__sN__hide_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sN",
+            "required": true,
+            "schema": {
+              "title": "Sn",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "wid 或批次不存在（workdir-not-found / batch-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Hide Batch",
+        "tags": [
+          "批次（策略实例）"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/batches/{sN}/unhide": {
+      "post": {
+        "description": "召回已停用的批次。",
+        "operationId": "unhide_batch_api_workdirs__wid__batches__sN__unhide_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sN",
+            "required": true,
+            "schema": {
+              "title": "Sn",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "wid 或批次不存在（workdir-not-found / batch-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unhide Batch",
+        "tags": [
+          "批次（策略实例）"
         ]
       }
     },
