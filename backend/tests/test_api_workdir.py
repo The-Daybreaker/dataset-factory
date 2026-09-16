@@ -262,6 +262,7 @@ def test_workdir_create_reregister_reuses_wid(
             first = (
                 await http.post("/api/workdirs", json={"path": str(target)})
             ).json()
+            first_done = await _wait_terminal(http, first["task_id"])
             second = (
                 await http.post(
                     "/api/workdirs", json={"path": str(target), "title": "新名"}
@@ -271,7 +272,6 @@ def test_workdir_create_reregister_reuses_wid(
             assert second["workdir"]["id"] == first["workdir"]["id"]
             assert second["workdir"]["title"] == "新名"
 
-            first_done = await _wait_terminal(http, first["task_id"])
             second_done = await _wait_terminal(http, second["task_id"])
 
             assert first_done["status"] == "succeeded"
