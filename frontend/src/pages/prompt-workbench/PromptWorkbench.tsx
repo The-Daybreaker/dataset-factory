@@ -4,17 +4,9 @@
  * ② 编辑器列（430px）：名称 / 描述 / Markdown 正文（等宽 + 行号槽）+ 字节计量 + 保存；
  *    改名保存 = 重命名文件（历史备份随迁）。
  * ③ 对话列（自适应）：端点配置切换器 + 主题切换、会话行、「本轮携带」请求条、消息流、输入区。
+ * 子组件按 feature 目录拆分：EndpointSwitcher / BodyEditor / MessageList / InputArea。
  */
-import {
-  ChevronDownIcon,
-  FileTextIcon,
-  FilmIcon,
-  ImageIcon,
-  PaperclipIcon,
-  PlusIcon,
-  SparklesIcon,
-  XIcon,
-} from "lucide-react";
+import { FileTextIcon, PlusIcon, XIcon } from "lucide-react";
 import {
   type ChangeEvent,
   type KeyboardEvent,
@@ -24,17 +16,12 @@ import {
   useRef,
   useState,
 } from "react";
-import type {
-  EndpointConfigSummary,
-  HistoryMessageView,
-  PromptInfo,
-  SkillInfo,
-} from "../api";
-import { ApiError, api, errorMessage } from "../api";
-import { ShutdownButton } from "../components/shutdown-button";
-import { ThemeToggle } from "../components/theme-toggle";
-import { Alert, AlertDescription } from "../components/ui/alert";
-import { Button } from "../components/ui/button";
+import type { EndpointConfigSummary, PromptInfo, SkillInfo } from "../../api";
+import { ApiError, api, errorMessage } from "../../api";
+import { ShutdownButton } from "../../components/shutdown-button";
+import { ThemeToggle } from "../../components/theme-toggle";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import { Button } from "../../components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -42,146 +29,35 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "../components/ui/dialog";
+} from "../../components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "../components/ui/dropdown-menu";
-import { Input } from "../components/ui/input";
-import { Label } from "../components/ui/label";
-import { Textarea } from "../components/ui/textarea";
+} from "../../components/ui/dropdown-menu";
+import { Input } from "../../components/ui/input";
+import { Label } from "../../components/ui/label";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "../components/ui/tooltip";
+} from "../../components/ui/tooltip";
+import { BodyEditor } from "./BodyEditor";
+import { EndpointSwitcher } from "./EndpointSwitcher";
+import { InputArea } from "./InputArea";
+import { MessageList } from "./MessageList";
+import type { ChatMessage, PendingMedia } from "./types";
 
 /** 基础提示词的字节护栏（对齐 Codex project_doc_max_bytes，后端同值校验）。 */
 const PROMPT_BYTE_BUDGET = 32 * 1024;
-
-/** 视频扩展名清单（与后端 MIME 映射同一份）：历史消息只带文件名，靠它认素材类型。 */
-const VIDEO_EXTENSIONS = [".mp4", ".mov", ".webm", ".m4v"];
-
-function isVideoAttachment(name: string): boolean {
-  const lowered = name.toLowerCase();
-  return VIDEO_EXTENSIONS.some((extension) => lowered.endsWith(extension));
-}
-
-/** 待发送的附件（图片或视频，一期单素材/次）：原始文件名 + data URL + 视频抽帧参数。 */
-interface PendingMedia {
-  name: string;
-  dataUrl: string;
-  kind: "image" | "video";
-  fps: number;
-  maxFrames: number;
-}
-
-/** 界面里的消息 = 后端历史消息 + 渲染用稳定 id + 新增消息才有的 meta。 */
-interface ChatMessage extends HistoryMessageView {
-  id: number;
-  model?: string;
-  durationSeconds?: number;
-  createdAt?: Date;
-  /** 本轮思考过程（仅本轮打标产生、只存页面内存不落盘——历史恢复的消息没有它）。 */
-  reasoning?: string;
-}
 
 /** 一次性反馈（编辑器列的操作结果）；id 让同文案重复出现也能触发重渲染。 */
 interface Feedback {
   kind: "success" | "error";
   text: string;
-}
-
-/** 端点配置切换器（chip = 「名称 · 模型名」；切换调 activate，对新请求立即生效）。 */
-function EndpointSwitcher({
-  endpoints,
-  onActivate,
-  onManage,
-}: {
-  endpoints: EndpointConfigSummary[];
-  onActivate: (name: string) => void;
-  onManage: () => void;
-}): ReactElement {
-  const active = endpoints.find((item) => item.is_active);
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-[30px] max-w-60 rounded-full border-border bg-card px-3 text-[12px] text-muted-foreground"
-          aria-label="端点配置切换器"
-        >
-          <span className="size-[7px] shrink-0 rounded-full bg-success" aria-hidden />
-          <span className="truncate">
-            {active ? `${active.name} · ${active.model}` : "未配置端点"}
-          </span>
-          <ChevronDownIcon className="size-3 shrink-0" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-64">
-        <DropdownMenuLabel>端点配置（当前使用）</DropdownMenuLabel>
-        {endpoints.length === 0 && (
-          <DropdownMenuLabel>（还没有配置——去「管理配置」新增）</DropdownMenuLabel>
-        )}
-        {endpoints.map((item) => (
-          <DropdownMenuItem key={item.name} onSelect={() => onActivate(item.name)}>
-            <span className="flex-1 truncate">
-              {item.name} · {item.model}
-            </span>
-            {item.is_active && <span className="size-2 rounded-full bg-success" />}
-          </DropdownMenuItem>
-        ))}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={onManage}>管理配置…</DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-/** 正文编辑区：等宽字体 + 行号槽（行号随滚动同步平移）。 */
-function BodyEditor({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (next: string) => void;
-}): ReactElement {
-  const [scrollTop, setScrollTop] = useState(0);
-  const lineCount = value === "" ? 1 : value.split("\n").length;
-
-  return (
-    <div className="flex min-h-0 flex-1 overflow-hidden rounded-md border border-input bg-background focus-within:ring-2 focus-within:ring-ring/55">
-      <div
-        aria-hidden
-        className="min-w-[30px] shrink-0 overflow-hidden border-r border-border bg-muted/50 px-2 py-2.5 text-right font-mono text-[12px] leading-[1.7] text-muted-foreground select-none"
-      >
-        <div style={{ transform: `translateY(-${scrollTop}px)` }}>
-          {Array.from({ length: lineCount }, (_, index) => index + 1).map(
-            (lineNumber) => (
-              <div key={lineNumber}>{lineNumber}</div>
-            ),
-          )}
-        </div>
-      </div>
-      <textarea
-        data-slot="prompt-body"
-        aria-label="正文（Markdown）"
-        className="min-h-0 w-full resize-none bg-transparent px-3 py-2.5 font-mono text-[12.5px] leading-[1.7] focus-visible:outline-none"
-        value={value}
-        onInput={(event) => onChange(event.currentTarget.value)}
-        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
-        placeholder={"你是……\n（Markdown 正文，即基础提示词本体）"}
-      />
-    </div>
-  );
 }
 
 export function PromptWorkbench({
@@ -512,6 +388,14 @@ export function PromptWorkbench({
     }
   };
 
+  // 抽帧参数改动走函数式更新：值已在 InputArea 的事件处理里同步取出，这里只合成新 media。
+  const setMediaFps = (fps: number): void => {
+    setMedia((current) => (current === null ? current : { ...current, fps }));
+  };
+  const setMediaMaxFrames = (maxFrames: number): void => {
+    setMedia((current) => (current === null ? current : { ...current, maxFrames }));
+  };
+
   const bodyBytes = new TextEncoder().encode(draftBody).length;
   const byteOver = bodyBytes > PROMPT_BYTE_BUDGET;
   const canSend = !sending && (instruction.trim() !== "" || media !== null);
@@ -808,124 +692,12 @@ export function PromptWorkbench({
           </div>
 
           {/* 消息流 */}
-          <div
-            role="log"
-            aria-label="消息流"
-            className="mt-1 min-h-0 flex-1 space-y-[18px] overflow-y-auto pr-1"
-          >
-            {messages.length === 0 && (
-              <p className="mt-8 text-center text-[12px] text-muted-foreground">
-                （还没有消息——发图片或视频 + 指令开始打标）
-              </p>
-            )}
-            {messages.map((message) =>
-              message.role === "user" ? (
-                <div key={message.id} className="flex justify-end">
-                  <div className="max-w-[94%] rounded-xl rounded-br-[4px] bg-primary/10 px-3.5 py-[11px] text-[13.5px] whitespace-pre-wrap">
-                    {message.text}
-                    {message.attachment !== null && (
-                      <span className="mt-2.5 flex items-center gap-2.5 rounded-lg bg-card py-2 pr-3.5 pl-2 text-[12px] text-muted-foreground shadow-sm">
-                        {isVideoAttachment(message.attachment) ? (
-                          <FilmIcon className="size-7 shrink-0 rounded-md bg-muted p-1.5" />
-                        ) : (
-                          <ImageIcon className="size-7 shrink-0 rounded-md bg-muted p-1.5" />
-                        )}
-                        <span className="truncate">{message.attachment}</span>
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div key={message.id} className="flex items-start">
-                  <span
-                    className="mt-0.5 mr-2.5 flex size-[26px] shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground"
-                    aria-hidden
-                  >
-                    <SparklesIcon className="size-3.5" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    {/* 生成结束后的思考过程保留可回看（本轮内存态，不落盘；历史恢复的消息没有）。 */}
-                    {message.reasoning !== undefined && message.reasoning !== "" && (
-                      <details className="mb-2 max-w-full overflow-hidden rounded-lg border border-border bg-muted/40">
-                        <summary className="cursor-pointer px-3 py-1.5 text-[12px] text-muted-foreground">
-                          思考过程
-                        </summary>
-                        <p className="px-3 pb-2.5 text-[12.5px] leading-[1.65] text-muted-foreground whitespace-pre-wrap">
-                          {message.reasoning}
-                        </p>
-                      </details>
-                    )}
-                    <div className="inline-block max-w-full rounded-xl rounded-bl-[4px] bg-muted/55 px-3.5 py-[11px] text-[13.5px] whitespace-pre-wrap">
-                      {message.text}
-                    </div>
-                    <div className="mt-2 flex items-center gap-2.5 text-[11.5px] text-muted-foreground">
-                      {(message.model !== undefined ||
-                        message.durationSeconds !== undefined) && (
-                        <span>
-                          {[
-                            message.model,
-                            message.durationSeconds !== undefined
-                              ? `${message.durationSeconds}s`
-                              : null,
-                          ]
-                            .filter((part) => part !== null && part !== undefined)
-                            .join(" · ")}
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        className="text-primary underline underline-offset-[3px] hover:opacity-80"
-                        aria-label="复制 caption"
-                        onClick={() => copyCaption(message)}
-                      >
-                        {copiedId === message.id ? "已复制" : "复制"}
-                      </button>
-                      {message.createdAt !== undefined && (
-                        <span className="ml-auto">
-                          {message.createdAt.toLocaleTimeString("zh-CN", {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ),
-            )}
-            {streaming !== null && (
-              <div className="flex items-start">
-                <span
-                  className="mt-0.5 mr-2.5 flex size-[26px] shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground"
-                  aria-hidden
-                >
-                  <SparklesIcon className="size-3.5" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  {streaming.reasoning !== "" && (
-                    <details className="mb-2 max-w-full overflow-hidden rounded-lg border border-border bg-muted/40">
-                      <summary className="cursor-pointer px-3 py-1.5 text-[12px] text-muted-foreground">
-                        思考过程
-                      </summary>
-                      <p className="px-3 pb-2.5 text-[12.5px] leading-[1.65] text-muted-foreground whitespace-pre-wrap">
-                        {streaming.reasoning}
-                      </p>
-                    </details>
-                  )}
-                  <div className="inline-block max-w-full rounded-xl rounded-bl-[4px] bg-muted/55 px-3.5 py-[11px] text-[13.5px] whitespace-pre-wrap">
-                    {streaming.content}
-                    <span
-                      className="ml-0.5 inline-block h-[14px] w-[7px] animate-pulse bg-primary align-[-2px]"
-                      aria-hidden
-                    />
-                  </div>
-                  <div className="mt-2 text-[11.5px] text-muted-foreground">
-                    生成中…
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+          <MessageList
+            messages={messages}
+            streaming={streaming}
+            copiedId={copiedId}
+            onCopy={copyCaption}
+          />
 
           {chatError !== "" && (
             <Alert variant="destructive" className="mt-3">
@@ -934,109 +706,20 @@ export function PromptWorkbench({
           )}
 
           {/* 输入区 */}
-          <div className="mt-3.5 pt-0">
-            <Textarea
-              aria-label="打标指令"
-              placeholder="输入指令，继续交互……"
-              className="min-h-[62px] rounded-lg border-input bg-card px-3.5 py-[11px] text-[13.5px] leading-[1.6]"
-              value={instruction}
-              onInput={(event) => setInstruction(event.currentTarget.value)}
-              onKeyDown={onInstructionKeyDown}
-            />
-            <div className="mt-2.5 flex items-center gap-2.5">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <label className="inline-flex h-[30px] cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-[12px] hover:bg-accent">
-                    <PaperclipIcon className="size-3.5" />
-                    附件
-                    <span className="sr-only">附图片或视频（一期单素材 / 次）</span>
-                    <input
-                      type="file"
-                      accept="image/*,video/mp4,video/quicktime,video/webm,video/x-msvideo,video/x-matroska,video/x-m4v"
-                      className="sr-only"
-                      aria-label="附图或视频"
-                      onChange={pickMedia}
-                    />
-                  </label>
-                </TooltipTrigger>
-                <TooltipContent>附图片或视频（一期单素材 / 次）</TooltipContent>
-              </Tooltip>
-              {media !== null && media.kind === "image" && (
-                <img
-                  className="size-9 rounded-md border border-border object-cover"
-                  src={media.dataUrl}
-                  alt={`待打标图片 ${media.name}`}
-                />
-              )}
-              {media !== null && media.kind === "video" && (
-                <span className="inline-flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2 py-1 text-[11.5px] text-muted-foreground">
-                  <FilmIcon className="size-4" />
-                  <span className="max-w-40 truncate">{media.name}</span>
-                  <label className="flex items-center gap-1">
-                    fps
-                    <input
-                      type="number"
-                      min={1}
-                      max={10}
-                      step={1}
-                      value={media.fps}
-                      onChange={(event) => {
-                        // 先取值再进 setState 更新器：更新器延迟执行时合成事件的
-                        // currentTarget 已被 React 置空，更新器内读取会抛错崩树
-                        //（2026-09-14 验收实测白屏，memory 59① 同款反模式）。
-                        const next = Number(event.currentTarget.value);
-                        setMedia((current) =>
-                          current === null ? current : { ...current, fps: next },
-                        );
-                      }}
-                      className="h-6 w-14 rounded-md border border-input bg-background px-1.5 text-[12px]"
-                      aria-label="视频抽帧 fps"
-                    />
-                  </label>
-                  <label className="flex items-center gap-1">
-                    帧上限
-                    <input
-                      type="number"
-                      min={1}
-                      max={256}
-                      value={media.maxFrames}
-                      onChange={(event) => {
-                        const next = Number(event.currentTarget.value);
-                        setMedia((current) =>
-                          current === null ? current : { ...current, maxFrames: next },
-                        );
-                      }}
-                      className="h-6 w-14 rounded-md border border-input bg-background px-1.5 text-[12px]"
-                      aria-label="视频抽帧帧数上限"
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    aria-label="移除附件"
-                    className="text-muted-foreground hover:text-foreground"
-                    onClick={() => setMedia(null)}
-                  >
-                    ×
-                  </button>
-                </span>
-              )}
-              <span className="ml-auto text-[11.5px] text-muted-foreground">
-                Enter 发送 · Shift+Enter 换行
-              </span>
-              <Button
-                type="button"
-                size="sm"
-                disabled={!canSend}
-                onClick={() => void send()}
-              >
-                {sending
-                  ? waitSeconds < 3
-                    ? "已发送，等待模型…"
-                    : `等待模型响应…（已 ${waitSeconds}s）`
-                  : "发送"}
-              </Button>
-            </div>
-          </div>
+          <InputArea
+            instruction={instruction}
+            onInstructionChange={setInstruction}
+            onInstructionKeyDown={onInstructionKeyDown}
+            media={media}
+            onPickMedia={pickMedia}
+            onMediaFpsChange={setMediaFps}
+            onMediaMaxFramesChange={setMediaMaxFrames}
+            onClearMedia={() => setMedia(null)}
+            canSend={canSend}
+            sending={sending}
+            waitSeconds={waitSeconds}
+            onSend={() => void send()}
+          />
         </section>
       </div>
     </TooltipProvider>

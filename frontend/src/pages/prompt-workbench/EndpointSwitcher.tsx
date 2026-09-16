@@ -1,0 +1,60 @@
+/** 端点配置切换器（chip = 「名称 · 模型名」；切换调 activate，对新请求立即生效）。 */
+import { ChevronDownIcon } from "lucide-react";
+import type { ReactElement } from "react";
+import type { EndpointConfigSummary } from "../../api";
+import { Button } from "../../components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "../../components/ui/dropdown-menu";
+
+export function EndpointSwitcher({
+  endpoints,
+  onActivate,
+  onManage,
+}: {
+  endpoints: EndpointConfigSummary[];
+  onActivate: (name: string) => void;
+  onManage: () => void;
+}): ReactElement {
+  const active = endpoints.find((item) => item.is_active);
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-[30px] max-w-60 rounded-full border-border bg-card px-3 text-[12px] text-muted-foreground"
+          aria-label="端点配置切换器"
+        >
+          <span className="size-[7px] shrink-0 rounded-full bg-success" aria-hidden />
+          <span className="truncate">
+            {active ? `${active.name} · ${active.model}` : "未配置端点"}
+          </span>
+          <ChevronDownIcon className="size-3 shrink-0" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-64">
+        <DropdownMenuLabel>端点配置（当前使用）</DropdownMenuLabel>
+        {endpoints.length === 0 && (
+          <DropdownMenuLabel>（还没有配置——去「管理配置」新增）</DropdownMenuLabel>
+        )}
+        {endpoints.map((item) => (
+          <DropdownMenuItem key={item.name} onSelect={() => onActivate(item.name)}>
+            <span className="flex-1 truncate">
+              {item.name} · {item.model}
+            </span>
+            {item.is_active && <span className="size-2 rounded-full bg-success" />}
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={onManage}>管理配置…</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}

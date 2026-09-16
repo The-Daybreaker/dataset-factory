@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { EndpointConfigSummary, SkillInfo } from "../api";
+import type { EndpointConfigSummary, SkillInfo } from "../../api";
 import { SettingsPage } from "./SettingsPage";
 
 // 设置页测试只关心「交互 → 调了哪个 API → 界面状态对不对」，api 层整体 mock 掉。
@@ -23,7 +23,7 @@ const apiMock = vi.hoisted(() => ({
   readSkillFile: vi.fn(),
 }));
 
-vi.mock("../api", () => ({
+vi.mock("../../api", () => ({
   api: apiMock,
   errorMessage: (error: unknown) => String(error),
 }));

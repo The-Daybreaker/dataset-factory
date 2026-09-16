@@ -8,8 +8,8 @@ import {
 import type { ReactElement } from "react";
 import { useState } from "react";
 import { cn } from "./lib/utils";
-import { PromptWorkbench } from "./pages/PromptWorkbench";
-import { SettingsPage } from "./pages/SettingsPage";
+import { PromptWorkbench } from "./pages/prompt-workbench/PromptWorkbench";
+import { SettingsPage } from "./pages/settings/SettingsPage";
 
 /** 顶级页面：一期两项（提示词工作台 / 设置容器）；后续期页面届时挂主导航长入。 */
 type PageKey = "prompts" | "settings";
