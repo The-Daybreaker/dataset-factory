@@ -26,7 +26,7 @@ from typing import cast
 
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..runs.journal import load_recent_success_hashes
 from ..strategies import get_batch, list_batches, parse_seq
@@ -42,6 +42,15 @@ from ..workdir import (
     mime_for_suffix,
     resolve_asset,
 )
+from ..workdir.cleanup import (
+    CleanupResult,
+    OrphanProduct,
+    RunCleanupEntry,
+    cleanup_products,
+    cleanup_runs,
+    preview_cleanup,
+    preview_run_cleanup,
+)
 from ..workdir.integrity import IntegrityItem, rebuild_import_records, scan_integrity
 from .schemas import (
     ImportAccepted,
@@ -54,6 +63,91 @@ from .schemas import (
 )
 
 router = APIRouter(prefix="/api/workdirs", tags=["工作目录"])
+
+
+class CleanupPreview(BaseModel):
+    """当前可清理的孤立产物及其实际体积。"""
+
+    products: list[OrphanProduct]
+    total_bytes: int
+
+
+class CleanupRequest(BaseModel):
+    """只清理调用方明确选择的文件。"""
+
+    model_config = ConfigDict(extra="forbid")
+    names: list[str] = Field(min_length=1)
+
+
+@router.post(
+    "/{wid}/cleanup",
+    response_model=CleanupResult,
+    responses={
+        code: {
+            "content": {
+                "application/problem+json": {"schema": Problem.model_json_schema()}
+            }
+        }
+        for code in (400, 404, 409)
+    },
+)
+def clean_selected_products(wid: str, body: CleanupRequest) -> CleanupResult:
+    """确认后清理选中的孤立产物，删除失败时返回暂存位置。"""
+    return cleanup_products(Path(WorkdirRegistry.get(wid).path), body.names)
+
+
+@router.get(
+    "/{wid}/cleanup-runs-preview",
+    response_model=list[RunCleanupEntry],
+    responses={
+        code: {
+            "content": {
+                "application/problem+json": {"schema": Problem.model_json_schema()}
+            }
+        }
+        for code in (400, 404)
+    },
+)
+def get_run_cleanup_preview(wid: str) -> list[RunCleanupEntry]:
+    """清理运行记录前列出每份名称、体积和时间。"""
+    return preview_run_cleanup(Path(WorkdirRegistry.get(wid).path))
+
+
+@router.post(
+    "/{wid}/cleanup-runs",
+    response_model=CleanupResult,
+    responses={
+        code: {
+            "content": {
+                "application/problem+json": {"schema": Problem.model_json_schema()}
+            }
+        }
+        for code in (400, 404, 409)
+    },
+)
+def clean_selected_runs(wid: str, body: CleanupRequest) -> CleanupResult:
+    """确认后清理所选运行记录，素材、产物与快照不受影响。"""
+    return cleanup_runs(Path(WorkdirRegistry.get(wid).path), body.names)
+
+
+@router.get(
+    "/{wid}/cleanup-preview",
+    response_model=CleanupPreview,
+    responses={
+        code: {
+            "content": {
+                "application/problem+json": {"schema": Problem.model_json_schema()}
+            }
+        }
+        for code in (400, 404)
+    },
+)
+def get_cleanup_preview(wid: str) -> CleanupPreview:
+    """列出工作目录里已无素材配对的产物，不执行清理。"""
+    products = preview_cleanup(Path(WorkdirRegistry.get(wid).path))
+    return CleanupPreview(
+        products=products, total_bytes=sum(product.size for product in products)
+    )
 
 
 class BatchIntegrity(BaseModel):

@@ -984,6 +984,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workdirs/{wid}/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clean Selected Products
+         * @description 确认后清理选中的孤立产物，删除失败时返回暂存位置。
+         */
+        post: operations["clean_selected_products_api_workdirs__wid__cleanup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/cleanup-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Cleanup Preview
+         * @description 列出工作目录里已无素材配对的产物，不执行清理。
+         */
+        get: operations["get_cleanup_preview_api_workdirs__wid__cleanup_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/cleanup-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clean Selected Runs
+         * @description 确认后清理所选运行记录，素材、产物与快照不受影响。
+         */
+        post: operations["clean_selected_runs_api_workdirs__wid__cleanup_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/cleanup-runs-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Run Cleanup Preview
+         * @description 清理运行记录前列出每份名称、体积和时间。
+         */
+        get: operations["get_run_cleanup_preview_api_workdirs__wid__cleanup_runs_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workdirs/{wid}/export": {
         parameters: {
             query?: never;
@@ -1267,6 +1347,34 @@ export interface components {
         Body_import_upload_api_skills_import_upload_post: {
             /** Files */
             files: string[];
+        };
+        /**
+         * CleanupPreview
+         * @description 当前可清理的孤立产物及其实际体积。
+         */
+        CleanupPreview: {
+            /** Products */
+            products: components["schemas"]["OrphanProduct"][];
+            /** Total Bytes */
+            total_bytes: number;
+        };
+        /**
+         * CleanupRequest
+         * @description 只清理调用方明确选择的文件。
+         */
+        CleanupRequest: {
+            /** Names */
+            names: string[];
+        };
+        /**
+         * CleanupResult
+         * @description 已移出数量及删除失败时的残留目录，完整清理后路径为空。
+         */
+        CleanupResult: {
+            /** Count */
+            count: number;
+            /** Recovery Path */
+            recovery_path: string | null;
         };
         /**
          * ConfigResponse
@@ -1921,6 +2029,18 @@ export interface components {
             session_id: string;
         };
         /**
+         * OrphanProduct
+         * @description 一份没有素材配对的批次产物。
+         */
+        OrphanProduct: {
+            /** Batch */
+            batch: number;
+            /** Name */
+            name: string;
+            /** Size */
+            size: number;
+        };
+        /**
          * Problem
          * @description RFC 9457 problem+json 错误体——二期新端点的统一错误形状。
          *
@@ -2034,6 +2154,18 @@ export interface components {
              * @description 运行 id（.dsf/runs/ 下的目录名）
              */
             run_id: string;
+        };
+        /**
+         * RunCleanupEntry
+         * @description 一份运行记录目录的清理预览，不依赖记录内容能否解析。
+         */
+        RunCleanupEntry: {
+            /** Modified At */
+            modified_at: number;
+            /** Name */
+            name: string;
+            /** Size */
+            size: number;
         };
         /**
          * RunStartRequest
@@ -4851,6 +4983,438 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Problem"];
                     "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clean_selected_products_api_workdirs__wid__cleanup_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CleanupRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CleanupResult"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /**
+                         * Detail
+                         * @description 中文可操作消息——下一步该做什么
+                         */
+                        detail: string;
+                        /**
+                         * Status
+                         * @description HTTP 状态码（与响应状态一致）
+                         */
+                        status: number;
+                        /**
+                         * Title
+                         * @description 人读的短语概括
+                         */
+                        title: string;
+                        /**
+                         * Type
+                         * @description 机器可读的错误类别 slug（如 task-not-found）
+                         */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /**
+                         * Detail
+                         * @description 中文可操作消息——下一步该做什么
+                         */
+                        detail: string;
+                        /**
+                         * Status
+                         * @description HTTP 状态码（与响应状态一致）
+                         */
+                        status: number;
+                        /**
+                         * Title
+                         * @description 人读的短语概括
+                         */
+                        title: string;
+                        /**
+                         * Type
+                         * @description 机器可读的错误类别 slug（如 task-not-found）
+                         */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /**
+                         * Detail
+                         * @description 中文可操作消息——下一步该做什么
+                         */
+                        detail: string;
+                        /**
+                         * Status
+                         * @description HTTP 状态码（与响应状态一致）
+                         */
+                        status: number;
+                        /**
+                         * Title
+                         * @description 人读的短语概括
+                         */
+                        title: string;
+                        /**
+                         * Type
+                         * @description 机器可读的错误类别 slug（如 task-not-found）
+                         */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_cleanup_preview_api_workdirs__wid__cleanup_preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CleanupPreview"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /**
+                         * Detail
+                         * @description 中文可操作消息——下一步该做什么
+                         */
+                        detail: string;
+                        /**
+                         * Status
+                         * @description HTTP 状态码（与响应状态一致）
+                         */
+                        status: number;
+                        /**
+                         * Title
+                         * @description 人读的短语概括
+                         */
+                        title: string;
+                        /**
+                         * Type
+                         * @description 机器可读的错误类别 slug（如 task-not-found）
+                         */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /**
+                         * Detail
+                         * @description 中文可操作消息——下一步该做什么
+                         */
+                        detail: string;
+                        /**
+                         * Status
+                         * @description HTTP 状态码（与响应状态一致）
+                         */
+                        status: number;
+                        /**
+                         * Title
+                         * @description 人读的短语概括
+                         */
+                        title: string;
+                        /**
+                         * Type
+                         * @description 机器可读的错误类别 slug（如 task-not-found）
+                         */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clean_selected_runs_api_workdirs__wid__cleanup_runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CleanupRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CleanupResult"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /**
+                         * Detail
+                         * @description 中文可操作消息——下一步该做什么
+                         */
+                        detail: string;
+                        /**
+                         * Status
+                         * @description HTTP 状态码（与响应状态一致）
+                         */
+                        status: number;
+                        /**
+                         * Title
+                         * @description 人读的短语概括
+                         */
+                        title: string;
+                        /**
+                         * Type
+                         * @description 机器可读的错误类别 slug（如 task-not-found）
+                         */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /**
+                         * Detail
+                         * @description 中文可操作消息——下一步该做什么
+                         */
+                        detail: string;
+                        /**
+                         * Status
+                         * @description HTTP 状态码（与响应状态一致）
+                         */
+                        status: number;
+                        /**
+                         * Title
+                         * @description 人读的短语概括
+                         */
+                        title: string;
+                        /**
+                         * Type
+                         * @description 机器可读的错误类别 slug（如 task-not-found）
+                         */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /**
+                         * Detail
+                         * @description 中文可操作消息——下一步该做什么
+                         */
+                        detail: string;
+                        /**
+                         * Status
+                         * @description HTTP 状态码（与响应状态一致）
+                         */
+                        status: number;
+                        /**
+                         * Title
+                         * @description 人读的短语概括
+                         */
+                        title: string;
+                        /**
+                         * Type
+                         * @description 机器可读的错误类别 slug（如 task-not-found）
+                         */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_run_cleanup_preview_api_workdirs__wid__cleanup_runs_preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunCleanupEntry"][];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /**
+                         * Detail
+                         * @description 中文可操作消息——下一步该做什么
+                         */
+                        detail: string;
+                        /**
+                         * Status
+                         * @description HTTP 状态码（与响应状态一致）
+                         */
+                        status: number;
+                        /**
+                         * Title
+                         * @description 人读的短语概括
+                         */
+                        title: string;
+                        /**
+                         * Type
+                         * @description 机器可读的错误类别 slug（如 task-not-found）
+                         */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /**
+                         * Detail
+                         * @description 中文可操作消息——下一步该做什么
+                         */
+                        detail: string;
+                        /**
+                         * Status
+                         * @description HTTP 状态码（与响应状态一致）
+                         */
+                        status: number;
+                        /**
+                         * Title
+                         * @description 人读的短语概括
+                         */
+                        title: string;
+                        /**
+                         * Type
+                         * @description 机器可读的错误类别 slug（如 task-not-found）
+                         */
+                        type: string;
+                    };
                 };
             };
             /** @description Validation Error */

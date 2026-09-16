@@ -17,9 +17,11 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import shutil
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from functools import wraps
 from pathlib import Path
 from typing import Any, cast
 
@@ -29,7 +31,7 @@ from .errors import (
     WorkdirNotFoundError,
     WorkdirPathError,
 )
-from .locks import StateLock, import_guard
+from .locks import StateLock, import_guard, registry_guard
 
 __all__ = [
     "WorkdirEntry",
@@ -100,6 +102,17 @@ def _write_registry(entries: list[WorkdirEntry]) -> None:
     atomic_write_text(registry_file, json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def _registry_writer[**P, T](operation: Callable[P, T]) -> Callable[P, T]:
+    """注册表写入口共用同一临界区，覆盖读取、检查和原子写入。"""
+
+    @wraps(operation)
+    def guarded(*args: P.args, **kwargs: P.kwargs) -> T:
+        with registry_guard(data_root()):
+            return operation(*args, **kwargs)
+
+    return guarded
+
+
 class WorkdirRegistry:
     """全局工作目录注册表（数据根下唯一文件，跨工作目录共享）。
 
@@ -125,6 +138,7 @@ class WorkdirRegistry:
         )
 
     @staticmethod
+    @_registry_writer
     def register(path: Path, title: str = "") -> WorkdirEntry:
         """登记一个工作目录；幂等（同 realpath 只更新 last_used_at 与路径）。
 
@@ -167,6 +181,7 @@ class WorkdirRegistry:
         return entry
 
     @staticmethod
+    @_registry_writer
     def update_path(wid: str, new_path: Path) -> WorkdirEntry:
         """搬迁后原地更新 path（wid 不变）。"""
         if not new_path.is_dir():
@@ -174,6 +189,11 @@ class WorkdirRegistry:
                 f"新路径「{new_path}」不存在或不是目录——搬迁未完成。",
             )
         entries = _read_registry()
+        if any(
+            entry.id != wid and _realpath(Path(entry.path)) == _realpath(new_path)
+            for entry in entries
+        ):
+            raise WorkdirPathError("新路径已属于另一个工作目录，请选择其他位置。")
         for entry in entries:
             if entry.id == wid:
                 entry.path = str(new_path)
@@ -185,6 +205,7 @@ class WorkdirRegistry:
         )
 
     @staticmethod
+    @_registry_writer
     def remove(wid: str) -> None:
         """从注册表移除（工作目录本身不动）。"""
         entries = _read_registry()
@@ -315,6 +336,79 @@ class WorkdirStore:
             if temporary.is_file() or temporary.is_symlink():
                 temporary.unlink()
         return directory
+
+    def quarantine_paths(self, paths: list[Path]) -> Path | None:
+        """暂存整份清理选择；移动失败时回滚，遇到占位则保留暂存副本。"""
+        if not paths:
+            return None
+        sources = list(dict.fromkeys(path.absolute() for path in paths))
+        for path in sources:
+            self.validate_cleanup_path(path)
+            if not path.exists():
+                raise WorkdirPathError("清理文件已变化，请刷新清单后重试。")
+            if any(other != path and path.is_relative_to(other) for other in sources):
+                raise WorkdirPathError("清理选择包含嵌套目录，请重新选择。")
+        recovery = self._dsf / "trash" / secrets.token_hex(12)
+        self.validate_cleanup_path(recovery)
+        recovery.mkdir(parents=True)
+        moved: list[tuple[Path, Path]] = []
+        try:
+            for source in sources:
+                self.validate_cleanup_path(source)
+                destination = recovery / source.relative_to(self._workdir.absolute())
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                source.rename(destination)
+                moved.append((source, destination))
+        except (OSError, WorkdirPathError) as exc:
+            remaining: list[str] = []
+            for source, destination in reversed(moved):
+                try:
+                    self.validate_cleanup_path(source)
+                    if os.path.lexists(source):
+                        remaining.append(str(source))
+                        continue
+                    if destination.is_file():
+                        os.link(destination, source)
+                        destination.unlink()
+                    else:
+                        destination.rename(source)
+                except (OSError, WorkdirPathError):
+                    remaining.append(str(source))
+            if remaining:
+                raise WorkdirPathError(
+                    f"清理未完成，部分文件未能回滚；请检查原位置及暂存目录 {recovery}。"
+                ) from exc
+            raise WorkdirPathError(
+                "清理未完成，文件已回滚，请检查权限后重试。"
+            ) from exc
+        return recovery
+
+    def validate_cleanup_path(self, path: Path) -> None:
+        """清理只接受目录内的真实子路径，拒绝链接、目录联接与根目录本身。"""
+        root = self._workdir.absolute()
+        candidate = path.absolute()
+        if candidate == root or not candidate.is_relative_to(root):
+            raise WorkdirPathError("清理路径必须是工作目录的子路径。")
+        resolved = candidate.resolve()
+        if resolved == root.resolve() or not resolved.is_relative_to(root.resolve()):
+            raise WorkdirPathError("清理路径越出工作目录，请检查链接。")
+        while candidate != root:
+            if candidate.is_symlink() or candidate.is_junction():
+                raise WorkdirPathError("清理路径包含链接，请检查后重试。")
+            candidate = candidate.parent
+
+    def finish_cleanup(self, recovery: Path | None) -> str | None:
+        """删除本次暂存文件，失败时返回残留位置供调用方明确呈现。"""
+        if recovery is None:
+            return None
+        self.validate_cleanup_path(recovery)
+        if recovery.parent != self._dsf / "trash":
+            raise WorkdirPathError("清理暂存目录不合法。")
+        try:
+            shutil.rmtree(recovery)
+        except OSError:
+            return str(recovery)
+        return None
 
     def append_import_record(self, record: dict[str, object]) -> None:
         """追加一条导入记录到 ``imports.jsonl``（append-only，一行一次导入）。

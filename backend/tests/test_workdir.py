@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import cast
 
@@ -54,6 +55,44 @@ def test_register_missing_path_rejected(tmp_path: Path, temp_data_root: Path) ->
     """登记不存在的路径 → WorkdirPathError（路径不合法，400 档）。"""
     with pytest.raises(WorkdirPathError, match="不存在"):
         WorkdirRegistry.register(tmp_path / "nope", title="")
+
+
+def test_concurrent_registration_preserves_every_entry(
+    tmp_path: Path, temp_data_root: Path
+) -> None:
+    """多个写者同时登记不同目录，注册表保留每一条改动。"""
+    paths = [tmp_path / f"workdir-{index}" for index in range(8)]
+    for path in paths:
+        path.mkdir()
+    ready = threading.Barrier(len(paths))
+
+    def register(path: Path) -> str:
+        ready.wait(timeout=10)
+        return WorkdirRegistry.register(path).id
+
+    with ThreadPoolExecutor(max_workers=len(paths)) as pool:
+        ids = list(pool.map(register, paths))
+
+    assert {entry.id for entry in WorkdirRegistry.list_all()} == set(ids)
+    assert len(ids) == len(set(ids))
+
+
+def test_update_path_rejects_another_registered_directory(
+    tmp_path: Path, temp_data_root: Path
+) -> None:
+    """搬迁更新不能让两个不同标识指向同一个已登记目录。"""
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    entry = WorkdirRegistry.register(first)
+    other = WorkdirRegistry.register(second)
+
+    with pytest.raises(WorkdirPathError):
+        WorkdirRegistry.update_path(entry.id, second)
+
+    assert WorkdirRegistry.get(entry.id).path == str(first)
+    assert WorkdirRegistry.get(other.id).path == str(second)
 
 
 def test_register_same_realpath_is_idempotent(

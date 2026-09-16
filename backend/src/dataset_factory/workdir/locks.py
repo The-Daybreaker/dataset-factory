@@ -54,6 +54,21 @@ logger = logging.getLogger(__name__)
 
 
 @contextmanager
+def registry_guard(directory: Path) -> Generator[None]:
+    """保护全局注册表的读改写，锁放数据根而非将被搬迁的工作目录内。"""
+    directory.mkdir(parents=True, exist_ok=True)
+    lock = _shared_file_lock(directory / "workdirs.lock")
+    try:
+        lock.acquire(timeout=10)
+    except Timeout as exc:
+        raise StateLockTimeoutError("等待工作目录注册表锁超时，请稍后重试。") from exc
+    try:
+        yield
+    finally:
+        lock.release()
+
+
+@contextmanager
 def import_guard(dsf_path: Path) -> Generator[None]:
     """串行化目录内导入与重建，覆盖 CLI 和多个 HTTP 服务进程。
 

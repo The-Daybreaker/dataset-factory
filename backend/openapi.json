@@ -213,6 +213,73 @@
         "title": "Body_import_upload_api_skills_import_upload_post",
         "type": "object"
       },
+      "CleanupPreview": {
+        "description": "当前可清理的孤立产物及其实际体积。",
+        "properties": {
+          "products": {
+            "items": {
+              "$ref": "#/components/schemas/OrphanProduct"
+            },
+            "title": "Products",
+            "type": "array"
+          },
+          "total_bytes": {
+            "title": "Total Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "products",
+          "total_bytes"
+        ],
+        "title": "CleanupPreview",
+        "type": "object"
+      },
+      "CleanupRequest": {
+        "additionalProperties": false,
+        "description": "只清理调用方明确选择的文件。",
+        "properties": {
+          "names": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Names",
+            "type": "array"
+          }
+        },
+        "required": [
+          "names"
+        ],
+        "title": "CleanupRequest",
+        "type": "object"
+      },
+      "CleanupResult": {
+        "description": "已移出数量及删除失败时的残留目录，完整清理后路径为空。",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "recovery_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recovery Path"
+          }
+        },
+        "required": [
+          "count",
+          "recovery_path"
+        ],
+        "title": "CleanupResult",
+        "type": "object"
+      },
       "ConfigResponse": {
         "description": "GET /api/config 的响应体——密钥只报来源、绝不回内容。",
         "properties": {
@@ -1368,6 +1435,30 @@
         "title": "LabelResponse",
         "type": "object"
       },
+      "OrphanProduct": {
+        "description": "一份没有素材配对的批次产物。",
+        "properties": {
+          "batch": {
+            "title": "Batch",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "batch",
+          "name",
+          "size"
+        ],
+        "title": "OrphanProduct",
+        "type": "object"
+      },
       "Problem": {
         "description": "RFC 9457 problem+json 错误体——二期新端点的统一错误形状。\n\n与一期 `ErrorDetail`（`{\"detail\"}`）并存：一期端点不返工，前端读 detail 兼容两者。\n扩展字段（occupier / 冲突清单等）由各错误在响应里按需附加，不进本模型。",
         "properties": {
@@ -1538,6 +1629,30 @@
           "run_id"
         ],
         "title": "RunAccepted",
+        "type": "object"
+      },
+      "RunCleanupEntry": {
+        "description": "一份运行记录目录的清理预览，不依赖记录内容能否解析。",
+        "properties": {
+          "modified_at": {
+            "title": "Modified At",
+            "type": "number"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "size",
+          "modified_at"
+        ],
+        "title": "RunCleanupEntry",
         "type": "object"
       },
       "RunStartRequest": {
@@ -5414,6 +5529,602 @@
         "summary": "Unhide Batch",
         "tags": [
           "批次（策略实例）"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/cleanup": {
+      "post": {
+        "description": "确认后清理选中的孤立产物，删除失败时返回暂存位置。",
+        "operationId": "clean_selected_products_api_workdirs__wid__cleanup_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CleanupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CleanupResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "description": "RFC 9457 problem+json 错误体——二期新端点的统一错误形状。\n\n与一期 `ErrorDetail`（`{\"detail\"}`）并存：一期端点不返工，前端读 detail 兼容两者。\n扩展字段（occupier / 冲突清单等）由各错误在响应里按需附加，不进本模型。",
+                  "properties": {
+                    "detail": {
+                      "description": "中文可操作消息——下一步该做什么",
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "status": {
+                      "description": "HTTP 状态码（与响应状态一致）",
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "description": "人读的短语概括",
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "description": "机器可读的错误类别 slug（如 task-not-found）",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "Problem",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "description": "RFC 9457 problem+json 错误体——二期新端点的统一错误形状。\n\n与一期 `ErrorDetail`（`{\"detail\"}`）并存：一期端点不返工，前端读 detail 兼容两者。\n扩展字段（occupier / 冲突清单等）由各错误在响应里按需附加，不进本模型。",
+                  "properties": {
+                    "detail": {
+                      "description": "中文可操作消息——下一步该做什么",
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "status": {
+                      "description": "HTTP 状态码（与响应状态一致）",
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "description": "人读的短语概括",
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "description": "机器可读的错误类别 slug（如 task-not-found）",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "Problem",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "description": "RFC 9457 problem+json 错误体——二期新端点的统一错误形状。\n\n与一期 `ErrorDetail`（`{\"detail\"}`）并存：一期端点不返工，前端读 detail 兼容两者。\n扩展字段（occupier / 冲突清单等）由各错误在响应里按需附加，不进本模型。",
+                  "properties": {
+                    "detail": {
+                      "description": "中文可操作消息——下一步该做什么",
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "status": {
+                      "description": "HTTP 状态码（与响应状态一致）",
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "description": "人读的短语概括",
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "description": "机器可读的错误类别 slug（如 task-not-found）",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "Problem",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clean Selected Products",
+        "tags": [
+          "工作目录"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/cleanup-preview": {
+      "get": {
+        "description": "列出工作目录里已无素材配对的产物，不执行清理。",
+        "operationId": "get_cleanup_preview_api_workdirs__wid__cleanup_preview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CleanupPreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "description": "RFC 9457 problem+json 错误体——二期新端点的统一错误形状。\n\n与一期 `ErrorDetail`（`{\"detail\"}`）并存：一期端点不返工，前端读 detail 兼容两者。\n扩展字段（occupier / 冲突清单等）由各错误在响应里按需附加，不进本模型。",
+                  "properties": {
+                    "detail": {
+                      "description": "中文可操作消息——下一步该做什么",
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "status": {
+                      "description": "HTTP 状态码（与响应状态一致）",
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "description": "人读的短语概括",
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "description": "机器可读的错误类别 slug（如 task-not-found）",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "Problem",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "description": "RFC 9457 problem+json 错误体——二期新端点的统一错误形状。\n\n与一期 `ErrorDetail`（`{\"detail\"}`）并存：一期端点不返工，前端读 detail 兼容两者。\n扩展字段（occupier / 冲突清单等）由各错误在响应里按需附加，不进本模型。",
+                  "properties": {
+                    "detail": {
+                      "description": "中文可操作消息——下一步该做什么",
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "status": {
+                      "description": "HTTP 状态码（与响应状态一致）",
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "description": "人读的短语概括",
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "description": "机器可读的错误类别 slug（如 task-not-found）",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "Problem",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Cleanup Preview",
+        "tags": [
+          "工作目录"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/cleanup-runs": {
+      "post": {
+        "description": "确认后清理所选运行记录，素材、产物与快照不受影响。",
+        "operationId": "clean_selected_runs_api_workdirs__wid__cleanup_runs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CleanupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CleanupResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "description": "RFC 9457 problem+json 错误体——二期新端点的统一错误形状。\n\n与一期 `ErrorDetail`（`{\"detail\"}`）并存：一期端点不返工，前端读 detail 兼容两者。\n扩展字段（occupier / 冲突清单等）由各错误在响应里按需附加，不进本模型。",
+                  "properties": {
+                    "detail": {
+                      "description": "中文可操作消息——下一步该做什么",
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "status": {
+                      "description": "HTTP 状态码（与响应状态一致）",
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "description": "人读的短语概括",
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "description": "机器可读的错误类别 slug（如 task-not-found）",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "Problem",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "description": "RFC 9457 problem+json 错误体——二期新端点的统一错误形状。\n\n与一期 `ErrorDetail`（`{\"detail\"}`）并存：一期端点不返工，前端读 detail 兼容两者。\n扩展字段（occupier / 冲突清单等）由各错误在响应里按需附加，不进本模型。",
+                  "properties": {
+                    "detail": {
+                      "description": "中文可操作消息——下一步该做什么",
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "status": {
+                      "description": "HTTP 状态码（与响应状态一致）",
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "description": "人读的短语概括",
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "description": "机器可读的错误类别 slug（如 task-not-found）",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "Problem",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "description": "RFC 9457 problem+json 错误体——二期新端点的统一错误形状。\n\n与一期 `ErrorDetail`（`{\"detail\"}`）并存：一期端点不返工，前端读 detail 兼容两者。\n扩展字段（occupier / 冲突清单等）由各错误在响应里按需附加，不进本模型。",
+                  "properties": {
+                    "detail": {
+                      "description": "中文可操作消息——下一步该做什么",
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "status": {
+                      "description": "HTTP 状态码（与响应状态一致）",
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "description": "人读的短语概括",
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "description": "机器可读的错误类别 slug（如 task-not-found）",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "Problem",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clean Selected Runs",
+        "tags": [
+          "工作目录"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/cleanup-runs-preview": {
+      "get": {
+        "description": "清理运行记录前列出每份名称、体积和时间。",
+        "operationId": "get_run_cleanup_preview_api_workdirs__wid__cleanup_runs_preview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RunCleanupEntry"
+                  },
+                  "title": "Response Get Run Cleanup Preview Api Workdirs  Wid  Cleanup Runs Preview Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "description": "RFC 9457 problem+json 错误体——二期新端点的统一错误形状。\n\n与一期 `ErrorDetail`（`{\"detail\"}`）并存：一期端点不返工，前端读 detail 兼容两者。\n扩展字段（occupier / 冲突清单等）由各错误在响应里按需附加，不进本模型。",
+                  "properties": {
+                    "detail": {
+                      "description": "中文可操作消息——下一步该做什么",
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "status": {
+                      "description": "HTTP 状态码（与响应状态一致）",
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "description": "人读的短语概括",
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "description": "机器可读的错误类别 slug（如 task-not-found）",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "Problem",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "description": "RFC 9457 problem+json 错误体——二期新端点的统一错误形状。\n\n与一期 `ErrorDetail`（`{\"detail\"}`）并存：一期端点不返工，前端读 detail 兼容两者。\n扩展字段（occupier / 冲突清单等）由各错误在响应里按需附加，不进本模型。",
+                  "properties": {
+                    "detail": {
+                      "description": "中文可操作消息——下一步该做什么",
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "status": {
+                      "description": "HTTP 状态码（与响应状态一致）",
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "description": "人读的短语概括",
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "description": "机器可读的错误类别 slug（如 task-not-found）",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "Problem",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run Cleanup Preview",
+        "tags": [
+          "工作目录"
         ]
       }
     },
