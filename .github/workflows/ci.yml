@@ -54,7 +54,7 @@ jobs:
       - name: Core coverage gate (≥80%)
         run: >-                                   # 核心五模块（labeling/llm/prompts/skills/sessions）行覆盖率 ≥80% 才算过；入口层单独设门槛（见下一步骤），整体不设硬门槛（goal B3）
           uv run coverage report
-          --include="*/dataset_factory/labeling/*,*/dataset_factory/llm/*,*/dataset_factory/prompts/*,*/dataset_factory/skills/*,*/dataset_factory/sessions/*"
+          --include="*/dataset_factory/labeling/*,*/dataset_factory/llm/*,*/dataset_factory/prompts/*,*/dataset_factory/skills/*,*/dataset_factory/sessions/*,*/dataset_factory/tasks/*"
           --fail-under=80
 
       # 入口层（cli / api）行覆盖率各 ≥70% 才算过（goal B3）：比核心低一档——入口层含

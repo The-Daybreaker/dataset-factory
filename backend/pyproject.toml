@@ -70,7 +70,7 @@ layers = [
     "dataset_factory.api",
     "dataset_factory.labeling",
     "dataset_factory.llm",
-    "dataset_factory.prompts | dataset_factory.skills | dataset_factory.sessions",
+    "dataset_factory.prompts | dataset_factory.skills | dataset_factory.sessions | dataset_factory.tasks",
 ]
 
 [[tool.importlinter.contracts]]
