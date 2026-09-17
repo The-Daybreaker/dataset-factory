@@ -15,12 +15,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import queue
 import threading
-from collections.abc import Generator
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -328,12 +329,18 @@ def stream_run(wid: str, sN: str, request: Request) -> StreamingResponse:
         if isinstance(event, RunFinishedEvent):
             events.put(None)  # 终态哨兵：关流
 
-    unsubscribe = runner.subscribe(_forward)
-
-    def generate() -> Generator[str, None, None]:
+    async def generate() -> AsyncIterator[str]:
+        unsubscribe = runner.subscribe(_forward)
         try:
             while True:
-                event = events.get()
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = events.get_nowait()
+                except queue.Empty:
+                    # 模型等待期间保持可取消，不占用线程池等待下一条业务事件。
+                    await asyncio.sleep(0.1)
+                    continue
                 if event is None:
                     break
                 yield _sse(event.kind, event.to_payload())

@@ -12,19 +12,27 @@ import asyncio
 import json
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from starlette.requests import ClientDisconnect, Request
+from starlette.types import Message, Scope
 
 from dataset_factory.api import create_app
 from dataset_factory.api import routes_runs as routes_runs_module
 from dataset_factory.llm import create_config
 from dataset_factory.prompts import Prompt, save_prompt
-from dataset_factory.runs import RunJournal, add_retry_items, read_retry_list
+from dataset_factory.runs import (
+    BatchRunner,
+    RunEvent,
+    RunJournal,
+    add_retry_items,
+    read_retry_list,
+)
 from dataset_factory.strategies import create_batch, set_batch_active
 from dataset_factory.workdir import WorkdirRegistry, WorkdirStore, import_assets
 from dataset_factory.workdir.locks import RunLock
@@ -581,6 +589,73 @@ def test_start_run_inactive_batch_returns_409(
             )
             assert response.status_code == 409
             assert response.json()["type"] == "batch-inactive"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("spec_version", ["2.3", "2.4"])
+def test_idle_stream_disconnect_releases_subscription(
+    batch_env: tuple[Path, str],
+    monkeypatch: pytest.MonkeyPatch,
+    spec_version: str,
+) -> None:
+    """没有新业务事件时断连也会释放订阅，不停止后台跑批。"""
+    workdir, wid = batch_env
+    runner = BatchRunner(workdir, 1, GatedCompleter([]), mode="full", trigger="web")
+    subscribed = threading.Event()
+    released = threading.Event()
+    original_subscribe = BatchRunner.subscribe
+
+    def subscribe(
+        self: BatchRunner, callback: Callable[[RunEvent], None]
+    ) -> Callable[[], None]:
+        unsubscribe = original_subscribe(self, callback)
+        subscribed.set()
+
+        def release() -> None:
+            unsubscribe()
+            released.set()
+
+        return release
+
+    monkeypatch.setattr(BatchRunner, "subscribe", subscribe)
+
+    async def scenario() -> None:
+        app = create_app(frontend_dir=Path("no-dist"))
+        app.state.run_registry[str(workdir)] = runner
+        disconnected = asyncio.Event()
+        scope: Scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": spec_version},
+            "app": app,
+        }
+
+        async def receive() -> Message:
+            await disconnected.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message: Message) -> None:
+            if disconnected.is_set():
+                raise OSError("client disconnected")
+
+        request = Request(scope, receive)
+        response = routes_runs_module.stream_run(wid, "s1", request)
+        stream = asyncio.create_task(response(scope, receive, send))
+        try:
+            assert await asyncio.to_thread(subscribed.wait, 2)
+            disconnected.set()
+            assert await asyncio.to_thread(released.wait, 2)
+            if spec_version == "2.4":
+                with pytest.raises(ClientDisconnect):
+                    await asyncio.wait_for(stream, 2)
+            else:
+                await asyncio.wait_for(stream, 2)
+            assert runner.snapshot()["status"] == "pending"
+        finally:
+            runner.run()
+            if not stream.done():
+                stream.cancel()
+            await asyncio.gather(stream, return_exceptions=True)
 
     asyncio.run(scenario())
 
