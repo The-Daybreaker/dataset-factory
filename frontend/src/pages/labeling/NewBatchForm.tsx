@@ -30,7 +30,7 @@ import {
 } from "../../components/ui/select";
 import type { BatchSelection } from "./BatchSelector";
 import { ImportMaterialsDialog } from "./ImportMaterialsDialog";
-import { parseImportReport } from "./import-report";
+import { type ImportReport, parseImportReport } from "./import-report";
 
 type Workdir = components["schemas"]["WorkdirInfo"];
 type Batch = components["schemas"]["BatchView"];
@@ -64,6 +64,9 @@ export function NewBatchForm({ onBack, onCreated }: Props) {
   const [batch, setBatch] = useState<Batch | null>(null);
   const [taskId, setTaskId] = useState<string | null>(null);
   const [importDone, setImportDone] = useState(false);
+  const [initialImportReport, setInitialImportReport] = useState<ImportReport | null>(
+    null,
+  );
   const rejectedImports = useRef<{ name: string; reason: string }[]>([]);
   const [unimported, setUnimported] = useState<
     { name: string; reason: string | null | undefined }[] | null
@@ -161,6 +164,15 @@ export function NewBatchForm({ onBack, onCreated }: Props) {
             rejectedImports.current = report.rejected;
             setProgress(`导入完成 · 新增 ${report.imported.length} 项`);
             setImportDone(true);
+            const hasFeedback =
+              report.skipped_identical.length > 0 ||
+              report.skipped_conflict.length > 0 ||
+              report.skipped_duplicate.length > 0;
+            if (hasFeedback) {
+              setInitialImportReport(report);
+              setImportOpen(true);
+              return;
+            }
             break;
           }
           if (task.status !== "running") {
@@ -274,7 +286,11 @@ export function NewBatchForm({ onBack, onCreated }: Props) {
           wid={workdir.id}
           initialMode={mode}
           initialSource={source.trim()}
-          onClose={() => setImportOpen(false)}
+          initialReport={initialImportReport ?? undefined}
+          onClose={() => {
+            setImportOpen(false);
+            setInitialImportReport(null);
+          }}
           onImported={() => {
             setUnimported(null);
           }}

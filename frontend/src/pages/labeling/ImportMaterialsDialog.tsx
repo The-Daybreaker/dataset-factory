@@ -26,6 +26,7 @@ interface Props {
   names?: string[];
   initialMode?: "copy" | "inplace" | "restore";
   initialSource?: string;
+  initialReport?: ImportReport;
 }
 
 function ContentFingerprint({ size, hash }: { size: number; hash: string }) {
@@ -55,19 +56,22 @@ export function ImportMaterialsDialog({
   names,
   initialMode = "inplace",
   initialSource = "",
+  initialReport,
 }: Props) {
   const [mode, setMode] = useState(initialMode);
   const [source, setSource] = useState(initialSource);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [task, setTask] = useState<TaskView | null>(null);
-  const [report, setReport] = useState<ImportReport | null>(null);
+  const [report, setReport] = useState<ImportReport | null>(initialReport ?? null);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [checking, setChecking] = useState(0);
   const [pollFailed, setPollFailed] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const sourceId = useId();
-  const reportSource = useRef<string | null>(null);
+  const reportSource = useRef<string | null>(
+    initialMode === "copy" ? initialSource : null,
+  );
   const forcedName = useRef<string | undefined>(undefined);
   const submittingRef = useRef(false);
   const generation = useRef(0);

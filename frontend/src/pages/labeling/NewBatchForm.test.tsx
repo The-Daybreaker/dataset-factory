@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api, type TaskView } from "../../api";
 import type { components } from "../../api-types.gen";
+import { TooltipProvider } from "../../components/ui/tooltip";
 import { NewBatchForm } from "./NewBatchForm";
 
 vi.mock("../../api", async (original) => ({
@@ -88,6 +89,61 @@ async function fillForm() {
 }
 
 describe("新建跑批恢复", () => {
+  it("首次导入展示重复报告并可逐条按新名导入，确认后复用工作目录启动", async () => {
+    vi.mocked(api.getTask).mockResolvedValue({
+      ...completed,
+      result: {
+        ...(completed.result as Record<string, unknown>),
+        skipped_identical: ["same.jpg"],
+        skipped_conflict: [
+          {
+            name: "changed.jpg",
+            existing_size: 1,
+            incoming_size: 2,
+            existing_sha256: "a".repeat(64),
+            incoming_sha256: "b".repeat(64),
+          },
+        ],
+        skipped_duplicate: [{ name: "copy.jpg", duplicate_of: "image.jpg" }],
+      },
+    });
+    const onCreated = vi.fn();
+    render(
+      <TooltipProvider>
+        <NewBatchForm onBack={vi.fn()} onCreated={onCreated} />
+      </TooltipProvider>,
+    );
+    const user = await fillForm();
+
+    await user.click(screen.getByRole("button", { name: "开始打标" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "导入素材" }));
+    expect(dialog.getByText(/同名同容跳过 1 项/)).toBeInTheDocument();
+    expect(
+      dialog.getByText("1 个同名文件内容不同，已跳过、未覆盖"),
+    ).toBeInTheDocument();
+    expect(api.startRun).not.toHaveBeenCalled();
+    expect(api.createBatch).not.toHaveBeenCalled();
+    vi.mocked(api.getTask).mockResolvedValue({ ...completed, id: "retry" });
+    await user.click(dialog.getByRole("button", { name: "仍按新名导入" }));
+    await waitFor(() =>
+      expect(
+        dialog.queryByRole("button", { name: "仍按新名导入" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(api.importMaterials).toHaveBeenCalledExactlyOnceWith("work", {
+      source: "/source",
+      names: ["copy.jpg"],
+      force_names: ["copy.jpg"],
+    });
+    const close = dialog.getAllByRole("button", { name: "关闭" })[0];
+    if (!close) throw new Error("缺少关闭按钮");
+    await user.click(close);
+    await user.click(screen.getByRole("button", { name: "开始打标" }));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledOnce());
+    expect(api.createWorkdir).toHaveBeenCalledOnce();
+    expect(api.createBatch).toHaveBeenCalledOnce();
+  });
+
   it("预检转去导入保留复制模式与来源，并在补登记后重新预检才启动", async () => {
     vi.mocked(api.listItems).mockResolvedValueOnce({
       batch: 1,
