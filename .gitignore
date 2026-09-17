@@ -16,6 +16,7 @@ __pycache__/
 # npm 依赖与缓存（可再生：npm ci 重建）；前端构建产物由下方 dist/ 覆盖
 node_modules/
 .vite/
+frontend/tsconfig.tsbuildinfo
 
 # 测试 / 覆盖率缓存与报告
 .pytest_cache/
