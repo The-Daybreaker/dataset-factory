@@ -3,6 +3,56 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { hostname } from "node:os";
 
+test("首次复制导入展示三种跳过反馈并逐条重导后继续启动", async ({ page, request }, testInfo) => {
+  const source = testInfo.outputPath("source");
+  const destination = testInfo.outputPath("workdir");
+  await mkdir(source, { recursive: true });
+  await mkdir(destination, { recursive: true });
+  const image = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64");
+  const original = Buffer.concat([image, Buffer.from("original")]);
+  const changed = Buffer.concat([image, Buffer.from("changed")]);
+  await writeFile(path.join(destination, "same.png"), image);
+  await writeFile(path.join(destination, "changed.png"), original);
+  await writeFile(path.join(source, "same.png"), image);
+  await writeFile(path.join(source, "changed.png"), changed);
+  await writeFile(path.join(source, "copy.png"), image);
+  const registration = await request.post("/api/workdirs", { data: { path: destination, title: "首导入报告" } });
+  expect(registration.status()).toBe(202);
+  const accepted = await registration.json();
+  await expect.poll(async () => (await (await request.get(`/api/tasks/${accepted.task_id}`)).json()).status).toBe("succeeded");
+  const starts: string[] = [];
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("request", (req) => {
+    if (req.method() === "POST" && /\/batches\/s\d+\/runs$/.test(req.url())) starts.push(req.url());
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "打标", exact: true }).click();
+  await page.getByRole("button", { name: "新建跑批", exact: true }).click();
+  await page.getByRole("textbox", { name: "来源目录", exact: true }).fill(source);
+  await page.getByRole("textbox", { name: "工作目录", exact: true }).fill(destination);
+  await page.getByRole("textbox", { name: "策略名", exact: true }).fill("重复报告验证");
+  await page.getByRole("button", { name: "开始打标", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "导入素材", exact: true });
+  await expect(dialog).toContainText("导入完成 · 新增 0 项 · 同名同容跳过 1 项");
+  await expect(dialog).toContainText("1 个同名文件内容不同，已跳过、未覆盖");
+  await expect(dialog).toContainText("1 个异名文件内容相同，已跳过");
+  expect(starts).toHaveLength(0);
+  expect(await readFile(path.join(destination, "changed.png"))).toEqual(original);
+  await page.screenshot({ path: testInfo.outputPath("initial-import-feedback.png"), fullPage: true });
+  await dialog.getByRole("button", { name: "仍按新名导入", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "仍按新名导入", exact: true })).toHaveCount(0);
+  await expect(dialog).toContainText("导入完成 · 新增 1 项 · 同名同容跳过 1 项");
+  expect(await readFile(path.join(destination, "copy.png"))).toEqual(image);
+  await dialog.getByRole("button", { name: "关闭", exact: true }).first().click();
+  await page.getByRole("button", { name: "开始打标", exact: true }).click();
+  await expect(page.getByRole("region", { name: "本次运行" }).getByText("已完成", { exact: true })).toBeVisible();
+  expect(starts).toHaveLength(1);
+  expect(await readFile(path.join(destination, "s1__copy.txt"), "utf8")).toBe("E2E 假模型的打标结果");
+  expect(await readFile(path.join(source, "changed.png"))).toEqual(changed);
+  expect(errors).toEqual([]);
+});
+
 test("新建跑批在启动前列出来源中未复制的文件", async ({ page }, testInfo) => {
   test.setTimeout(60_000);
   const source = testInfo.outputPath("source");
