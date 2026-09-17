@@ -5,9 +5,12 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 
 import pytest
+from filelock import FileLock
 
 from dataset_factory.skills import (
     SkillError,
@@ -84,6 +87,64 @@ def test_save_skill_file_rejects_stale_draft(temp_data_root: Path) -> None:
         )
 
     assert read_skill_file(_FIXTURE_NAME, "SKILL.md") == original + "\n先保存"
+
+
+@pytest.mark.parametrize(
+    "bad_path", ["/etc/passwd", "references\\..\\x.md", "../escape.md"]
+)
+def test_save_skill_file_rejects_unsafe_paths(
+    temp_data_root: Path, tmp_path: Path, bad_path: str
+) -> None:
+    """写回与读取共用包内路径闸门：绝对路径、反斜杠与目录上跳都不能保存。"""
+    import_skill(_make_full_source(tmp_path))
+    escape_target = temp_data_root / "escape.md"
+    escape_target.write_text("不该被覆盖", encoding="utf-8")
+
+    with pytest.raises(SkillFilePathError):
+        save_skill_file(
+            "full-pack",
+            bad_path,
+            "恶意内容",
+            original_content="",
+        )
+
+    assert escape_target.read_text(encoding="utf-8") == "不该被覆盖"
+
+
+def test_save_skill_file_waits_for_concurrent_writer(
+    temp_data_root: Path, tmp_path: Path
+) -> None:
+    """另一写者持锁改写后，保存等待锁释放并按最新内容拒绝旧草稿。"""
+    import_skill(_make_full_source(tmp_path))
+    original = read_skill_file("full-pack", "SKILL.md")
+    writer_ready = threading.Event()
+    target = temp_data_root / "skills" / "full-pack" / "SKILL.md"
+
+    def hold_lock() -> None:
+        with FileLock(str(temp_data_root / "skills" / ".full-pack.edit.lock")):
+            target.write_text(original + "\n另一写者\n", encoding="utf-8")
+            writer_ready.set()
+            time.sleep(0.4)
+
+    worker = threading.Thread(target=hold_lock)
+    worker.start()
+    assert writer_ready.wait(timeout=5)
+
+    started = time.monotonic()
+    with pytest.raises(SkillExistsError, match="其他写者"):
+        save_skill_file(
+            "full-pack",
+            "SKILL.md",
+            original + "\n旧草稿\n",
+            original_content=original,
+        )
+    elapsed = time.monotonic() - started
+
+    worker.join(timeout=5)
+    assert not worker.is_alive()
+    assert elapsed >= 0.3
+    assert "另一写者" in target.read_text(encoding="utf-8")
+    assert "旧草稿" not in target.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("description", ["old\n", "|\n  old\n", ">\n  old\n"])
