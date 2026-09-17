@@ -8,6 +8,10 @@ test("运行中的停止按钮调用停止接口", async ({ page, request }, tes
   await mkdir(source, { recursive: true });
   await mkdir(destination, { recursive: true });
   await writeFile(
+    path.join(destination, "sample.png"),
+    Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64"),
+  );
+  await writeFile(
     path.join(source, "sample.png"),
     Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64"),
   );
