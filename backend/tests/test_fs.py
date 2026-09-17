@@ -75,3 +75,88 @@ def test_atomic_write_text_unencodable_raises_and_cleans_up(tmp_path: Path) -> N
 
     assert not target.exists()
     assert [p for p in tmp_path.iterdir() if p.suffix == ".tmp"] == []
+
+
+@pytest.mark.parametrize("winerror", [5, 32, 33])
+def test_atomic_write_retries_transient_windows_file_occupation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, winerror: int
+) -> None:
+    """短暂的 Windows 句柄占用结束后完整替换文件，不丢失本次写入。"""
+    target = tmp_path / "run.json"
+    target.write_text("old", encoding="utf-8")
+    replace = os.replace
+    attempts = 0
+
+    def occupied_then_replace(src: Path, dst: Path) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            error = PermissionError("occupied")
+            error.winerror = winerror
+            raise error
+        replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", occupied_then_replace)
+
+    atomic_write_text(target, "new")
+
+    assert attempts == 3
+    assert target.read_text(encoding="utf-8") == "new"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["run.json"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="验证 Windows 读取句柄的替换冲突")
+def test_atomic_write_recovers_after_real_windows_reader_closes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """真实读取句柄挡住首次替换，关闭后重试成功且内容完整。"""
+    target = tmp_path / "run.json"
+    target.write_text("old", encoding="utf-8")
+    replace = os.replace
+    conflicts: list[int | None] = []
+
+    with target.open("rb") as reader:
+
+        def replace_after_reader_releases(src: Path, dst: Path) -> None:
+            try:
+                replace(src, dst)
+            except PermissionError as exc:
+                conflicts.append(exc.winerror)
+                reader.close()
+                raise
+
+        monkeypatch.setattr(os, "replace", replace_after_reader_releases)
+
+        atomic_write_text(target, "new")
+
+    assert len(conflicts) == 1
+    assert conflicts[0] in {5, 32, 33}
+    assert target.read_text(encoding="utf-8") == "new"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["run.json"]
+
+
+@pytest.mark.parametrize("winerror", [5, None])
+def test_atomic_write_permanent_denial_preserves_original_and_cleans_temp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, winerror: int | None
+) -> None:
+    """永久拒绝访问有界失败，原件保持不变且临时文件清理完成。"""
+    target = tmp_path / "run.json"
+    target.write_text("old", encoding="utf-8")
+    attempts = 0
+
+    def deny_replace(src: Path, dst: Path) -> None:
+        nonlocal attempts
+        attempts += 1
+        error = PermissionError("denied")
+        if winerror is not None:
+            error.winerror = winerror
+        raise error
+
+    monkeypatch.setattr(os, "replace", deny_replace)
+
+    with pytest.raises(PermissionError, match="denied"):
+        atomic_write_text(target, "new")
+
+    assert attempts == (6 if winerror else 1)
+    assert target.read_text(encoding="utf-8") == "old"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["run.json"]

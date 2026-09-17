@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 from pathlib import Path
 
 ENV_HOME = "DATASET_FACTORY_HOME"  # 数据根覆盖（默认 ~/.dataset_factory）
@@ -77,7 +78,15 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp_path, path)
+        # Windows 的短暂读取句柄可能未共享删除权限；重试同一份完整临时文件。
+        for attempt in range(6):
+            try:
+                os.replace(tmp_path, path)
+                break
+            except PermissionError as exc:
+                if getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 5:
+                    raise
+                time.sleep(0.01 * 2**attempt)
         _fsync_directory(path.parent)
     finally:
         # 兜底清理：改名成功后临时文件已不存在（missing_ok 即 no-op）；任何失败路径

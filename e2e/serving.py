@@ -18,6 +18,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 # dataset_factory 源码在 backend/src（e2e 工程没有自己的 Python 环境）。
@@ -48,19 +49,41 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 PORT = 8765
 _FAKE_REPLY = "E2E 假模型的打标结果"
+_GATED_MODEL = "gated-e2e-model"
+_GATED_ENTERED = threading.Event()
+_GATED_RELEASE = threading.Event()
 
 
 def build_fake_llm_app() -> FastAPI:
-    """OpenAI 兼容假端点（E2E 版）：固定回复，支持流式（前端走 SSE 打标）。
-
-    与 backend/tests 的 FakeLLMEndpoint 同一思路，但这里不需要可编程性
-    （浏览器流程只跑通链路），所以实现收窄成一个固定响应。
-    """
+    """提供固定回复及可显式放行的模型，用于验证真实运行中的停止。"""
     app = FastAPI()
 
+    @app.post("/__test__/gated-entered")
+    def gated_entered() -> dict[str, bool]:
+        """返回模型请求是否已到达等待点。"""
+        return {"entered": _GATED_ENTERED.is_set()}
+
+    @app.post("/__test__/gated-release")
+    def gated_release() -> dict[str, bool]:
+        """允许等待中的模型返回。"""
+        _GATED_RELEASE.set()
+        return {"released": True}
+
+    @app.post("/__test__/gated-reset")
+    def gated_reset() -> dict[str, bool]:
+        """为串行测试重置等待点。"""
+        _GATED_ENTERED.clear()
+        _GATED_RELEASE.clear()
+        return {"reset": True}
+
     @app.post("/v1/chat/completions")
-    def chat_completions(payload: dict) -> Response:
+    def chat_completions(payload: dict[str, object]) -> Response:
+        """返回固定的 OpenAI 兼容响应。"""
         model = payload.get("model", "fake-e2e-model")
+        if model == _GATED_MODEL:
+            _GATED_ENTERED.set()
+            if not _GATED_RELEASE.wait(timeout=30):
+                return JSONResponse({"error": "gate timed out"}, status_code=504)
         if payload.get("stream"):
             import json
 
