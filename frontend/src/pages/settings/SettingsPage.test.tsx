@@ -77,6 +77,28 @@ beforeEach(() => {
 });
 
 describe("SettingsPage · 连接·端点配置", () => {
+  it("技能开关等待响应时禁用重复提交，失败后恢复操作", async () => {
+    let rejectToggle: (error: Error) => void = () => {};
+    apiMock.setSkillEnabled.mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectToggle = reject;
+        }),
+    );
+    render(<SettingsPage section="skills" />);
+    const toggle = await screen.findByLabelText("启用 h3-skill");
+
+    await userEvent.click(toggle);
+    await userEvent.click(toggle);
+    expect(toggle).toBeDisabled();
+    expect(apiMock.setSkillEnabled).toHaveBeenCalledTimes(1);
+    rejectToggle(new Error("写入失败"));
+
+    await waitFor(() => expect(toggle).toBeEnabled());
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(await screen.findByText(/写入失败/)).toBeVisible();
+  });
+
   it("列表 + 详情回填：名称只读、密钥只报来源不回内容", async () => {
     render(<SettingsPage />);
 

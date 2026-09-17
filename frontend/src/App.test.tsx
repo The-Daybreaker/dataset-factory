@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -72,7 +72,9 @@ describe("App 外壳", () => {
   it("渲染品牌（副标题 + 版本脚注）与工作区两项导航", () => {
     render(<App />);
 
-    expect(screen.getByText("Dataset Factory")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("sidebar")).getByText("Dataset Factory"),
+    ).toBeInTheDocument();
     expect(screen.getByText("打标流水线工具")).toBeInTheDocument();
     expect(screen.getByText("v0.1.0")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "策略" })).toBeEnabled();
@@ -97,8 +99,12 @@ describe("App 外壳", () => {
 
     await user.click(screen.getByRole("button", { name: "收起侧栏" }));
 
-    expect(screen.queryByText("Dataset Factory")).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("sidebar")).queryByText("Dataset Factory"),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "展开侧栏" }));
-    expect(screen.getByText("Dataset Factory")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("sidebar")).getByText("Dataset Factory"),
+    ).toBeInTheDocument();
   });
 });

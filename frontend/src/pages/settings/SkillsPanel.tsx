@@ -104,6 +104,8 @@ export function SkillsPanel(): ReactElement {
   const [loadingPreview, setLoadingPreview] = useState(false);
   const previewGeneration = useRef(0);
   const savePending = useRef(false);
+  const togglePending = useRef(false);
+  const [toggling, setToggling] = useState(false);
   const dirty = previewContent !== originalContent || descriptionDraft !== null;
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -197,11 +199,17 @@ export function SkillsPanel(): ReactElement {
   };
 
   const toggle = async (skill: SkillInfo): Promise<void> => {
+    if (togglePending.current) return;
+    togglePending.current = true;
+    setToggling(true);
     try {
       await api.setSkillEnabled(skill.name, !skill.enabled);
       await reload();
     } catch (err) {
       setFeedback({ kind: "error", text: errorMessage(err) });
+    } finally {
+      togglePending.current = false;
+      setToggling(false);
     }
   };
 
@@ -342,10 +350,13 @@ export function SkillsPanel(): ReactElement {
   };
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-1 overflow-auto bg-card lg:grid-cols-[340px_minmax(0,1fr)] lg:overflow-hidden">
+    <div className="flex h-full min-h-0 flex-col overflow-auto bg-card lg:grid lg:grid-cols-[340px_minmax(0,1fr)] lg:overflow-hidden">
       {/* 左：列表 + 导入 */}
-      <fieldset disabled={dirty || saving} className="flex min-w-0 min-h-0 flex-col">
-        <div className="flex items-center gap-2 px-6 pt-6 pb-2">
+      <fieldset
+        disabled={dirty || saving}
+        className="flex min-w-0 shrink-0 flex-col lg:min-h-0"
+      >
+        <div className="flex flex-wrap items-center gap-2 px-4 pt-6 pb-2 lg:px-6">
           <h3 className="text-t-sm font-medium">技能列表</h3>
           <span className="text-t-sm text-muted-foreground">{skills.length} 个</span>
           <Button
@@ -361,7 +372,7 @@ export function SkillsPanel(): ReactElement {
             导入 Skill
           </Button>
         </div>
-        <div className="relative mx-6 my-2">
+        <div className="relative mx-4 my-2 lg:mx-6">
           <SearchIcon className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             aria-label="搜索技能"
@@ -371,7 +382,7 @@ export function SkillsPanel(): ReactElement {
             onInput={(event) => setSearch(event.currentTarget.value)}
           />
         </div>
-        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-6 pb-3">
+        <div className="max-h-40 min-h-0 flex-1 space-y-1 overflow-y-auto px-4 pb-3 lg:max-h-none lg:px-6">
           {visible.length === 0 && (
             <p className="px-1 text-t-sm text-muted-foreground">
               {skills.length === 0 ? "Skill 库为空" : "没有匹配的技能"}
@@ -389,6 +400,7 @@ export function SkillsPanel(): ReactElement {
               >
                 <div className="flex items-center gap-2">
                   <Switch
+                    disabled={toggling}
                     checked={skill.enabled}
                     aria-label={`启用 ${skill.name}`}
                     onClick={() => void toggle(skill)}
@@ -560,7 +572,7 @@ export function SkillsPanel(): ReactElement {
       </Dialog>
 
       {/* 右：详情 + 包内容预览 */}
-      <div className="flex min-w-0 min-h-0 flex-1 flex-col overflow-y-auto border-border p-4 lg:border-l lg:px-8 lg:py-6">
+      <div className="flex min-w-0 shrink-0 flex-1 flex-col border-t border-border p-4 lg:min-h-0 lg:overflow-y-auto lg:border-t-0 lg:border-l lg:px-8 lg:py-6">
         {!importOpen && feedback !== null && (
           <Alert variant={feedback.kind === "error" ? "destructive" : "success"}>
             <AlertDescription>{feedback.text}</AlertDescription>
