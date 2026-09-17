@@ -92,7 +92,7 @@ def test_atomic_write_retries_transient_windows_file_occupation(
         attempts += 1
         if attempts < 3:
             error = PermissionError("occupied")
-            error.winerror = winerror
+            monkeypatch.setattr(error, "winerror", winerror, raising=False)
             raise error
         replace(src, dst)
 
@@ -121,7 +121,9 @@ def test_atomic_write_recovers_after_real_windows_reader_closes(
             try:
                 replace(src, dst)
             except PermissionError as exc:
-                conflicts.append(exc.winerror)
+                code: object = getattr(exc, "winerror", None)
+                assert code is None or isinstance(code, int)
+                conflicts.append(code)
                 reader.close()
                 raise
 
@@ -149,7 +151,7 @@ def test_atomic_write_permanent_denial_preserves_original_and_cleans_temp(
         attempts += 1
         error = PermissionError("denied")
         if winerror is not None:
-            error.winerror = winerror
+            monkeypatch.setattr(error, "winerror", winerror, raising=False)
         raise error
 
     monkeypatch.setattr(os, "replace", deny_replace)
