@@ -13,7 +13,6 @@ __pycache__/
 # CI / 本地契约检查的临时基线文件（api-contract job 运行时产物）
 .base-spec.json
 backend/openapi.generated.json
-backend/openapi.generated.json
 
 # npm 依赖与缓存（可再生：npm ci 重建）；前端构建产物由下方 dist/ 覆盖
 node_modules/

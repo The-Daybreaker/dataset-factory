@@ -5,8 +5,8 @@
 
 from __future__ import annotations
 
+import json
 import threading
-import time
 from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -25,6 +25,7 @@ from dataset_factory.skills import (
     SkillNotFoundError,
     delete_skill,
     import_skill,
+    import_skill_files,
     list_skill_files,
     list_skills,
     parse_skill_frontmatter,
@@ -125,7 +126,7 @@ def test_delete_holds_file_edit_and_state_locks(
 
     assert checked == [temp_data_root / "skills" / _FIXTURE_NAME]
     state = (temp_data_root / "skills" / "_state.json").read_text(encoding="utf-8")
-    assert __import__("json").loads(state)["disabled"] == []
+    assert json.loads(state)["disabled"] == []
 
 
 @pytest.mark.parametrize("path", ["SKILL.md", "references/detail.md"])
@@ -183,37 +184,42 @@ def test_save_skill_file_rejects_unsafe_paths(
 
 
 def test_save_skill_file_waits_for_concurrent_writer(
-    temp_data_root: Path, tmp_path: Path
+    temp_data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """另一写者持锁改写后，保存等待锁释放并按最新内容拒绝旧草稿。"""
     import_skill(_make_full_source(tmp_path))
     original = read_skill_file("full-pack", "SKILL.md")
     writer_ready = threading.Event()
+    saver_entered = threading.Event()
     target = temp_data_root / "skills" / "full-pack" / "SKILL.md"
 
     def hold_lock() -> None:
         with FileLock(str(temp_data_root / "skills" / ".full-pack.edit.lock")):
-            target.write_text(original + "\n另一写者\n", encoding="utf-8")
             writer_ready.set()
-            time.sleep(0.4)
+            assert saver_entered.wait(timeout=5)
+            target.write_text(original + "\n另一写者\n", encoding="utf-8")
 
-    worker = threading.Thread(target=hold_lock)
-    worker.start()
-    assert writer_ready.wait(timeout=5)
+    def saving_lock(lock_file: str, timeout: float) -> FileLock:
+        with pytest.raises(Timeout), FileLock(lock_file, timeout=0):
+            pytest.fail("竞争写者应仍持有编辑锁")
+        saver_entered.set()
+        return FileLock(lock_file, timeout=timeout)
 
-    started = time.monotonic()
-    with pytest.raises(SkillExistsError, match="其他写者"):
-        save_skill_file(
-            "full-pack",
-            "SKILL.md",
-            original + "\n旧草稿\n",
-            original_content=original,
-        )
-    elapsed = time.monotonic() - started
-
-    worker.join(timeout=5)
-    assert not worker.is_alive()
-    assert elapsed >= 0.3
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        worker = executor.submit(hold_lock)
+        try:
+            assert writer_ready.wait(timeout=5)
+            monkeypatch.setattr(skill_store, "FileLock", saving_lock)
+            with pytest.raises(SkillExistsError, match="其他写者"):
+                save_skill_file(
+                    "full-pack",
+                    "SKILL.md",
+                    original + "\n旧草稿\n",
+                    original_content=original,
+                )
+        finally:
+            saver_entered.set()
+        worker.result(timeout=5)
     assert "另一写者" in target.read_text(encoding="utf-8")
     assert "旧草稿" not in target.read_text(encoding="utf-8")
 
@@ -327,9 +333,41 @@ def test_import_leaves_no_temp_dir(temp_data_root: Path) -> None:
     """原子导入收尾干净：库里只有 skill 目录，没有 . 前缀的临时目录残留。"""
     import_skill(_FIXTURE_PACK)
 
-    names = [p.name for p in _skills_dir(temp_data_root).iterdir()]
+    names = [p.name for p in _skills_dir(temp_data_root).iterdir() if p.is_dir()]
 
     assert names == [_FIXTURE_NAME]
+
+
+@pytest.mark.parametrize("uploaded", [False, True])
+def test_import_publication_holds_edit_and_state_locks(
+    temp_data_root: Path, monkeypatch: pytest.MonkeyPatch, uploaded: bool
+) -> None:
+    """两种导入入口发布新包时持有同一组锁，清理旧停用记录后默认启用。"""
+    root = _skills_dir(temp_data_root)
+    root.mkdir()
+    (root / "_state.json").write_text(
+        json.dumps({"disabled": [_FIXTURE_NAME]}), encoding="utf-8"
+    )
+    replace = skill_store.os.replace
+    checked: list[Path] = []
+
+    def replace_locked(source: Path, destination: Path) -> None:
+        if destination == root / _FIXTURE_NAME:
+            for name in (f".{_FIXTURE_NAME}.edit.lock", ".state.lock"):
+                with pytest.raises(Timeout), FileLock(str(root / name), timeout=0):
+                    pytest.fail("发布期间写锁没有被持有")
+            checked.append(destination)
+        replace(source, destination)
+
+    monkeypatch.setattr(skill_store.os, "replace", replace_locked)
+
+    if uploaded:
+        import_skill_files({"SKILL.md": (_FIXTURE_PACK / "SKILL.md").read_bytes()})
+    else:
+        import_skill(_FIXTURE_PACK)
+
+    assert checked == [root / _FIXTURE_NAME]
+    assert list_skills()[0].enabled
 
 
 def test_import_duplicate_name_raises_and_keeps_original(temp_data_root: Path) -> None:

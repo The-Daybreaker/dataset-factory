@@ -67,6 +67,23 @@ def test_export_flat_zip_preserves_bytes_and_import_order(tmp_path: Path) -> Non
             )
 
 
+def test_export_excludes_credentials_and_internal_metadata(tmp_path: Path) -> None:
+    """导出仅包含登记配对，目录内凭据与内部元数据不进入 ZIP。"""
+    marker = b"fake-credential-marker-for-export-test"
+    _pair(tmp_path, "sample.jpg")
+    _register(tmp_path, ["sample.jpg"])
+    (tmp_path / "credentials").write_bytes(marker)
+    (tmp_path / ".env").write_bytes(marker)
+    (tmp_path / ".dsf" / "private.json").write_bytes(marker)
+
+    plan = build_export_plan(tmp_path, 1, labeling_hashes={})
+    output = write_export(tmp_path, plan, tmp_path / "dataset.zip")
+
+    with ZipFile(output) as archive:
+        assert archive.namelist() == ["001.jpg", "001.txt"]
+        assert all(marker not in archive.read(name) for name in archive.namelist())
+
+
 def test_plan_explains_all_exclusions(tmp_path: Path) -> None:
     """缺失、无产物、空产物、未完成、手动排除、主干冲突与未登记分别给原因。"""
     names = [

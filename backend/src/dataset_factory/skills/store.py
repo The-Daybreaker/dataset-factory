@@ -131,7 +131,7 @@ def _atomic_copytree(source: Path, dest: Path) -> None:
     tmp = dest.parent / f".{dest.name}.tmp{os.urandom(4).hex()}"
     try:
         shutil.copytree(source, tmp)
-        os.replace(tmp, dest)
+        _publish_skill(tmp, dest)
     except OSError as exc:
         raise SkillError(f"无法把 {source} 复制进库：{exc.strerror or exc}") from exc
     finally:
@@ -244,10 +244,11 @@ def import_skill(source: Path) -> SkillImport:
         raise SkillError(
             f"无法在 {skills_root} 准备导入：{exc.strerror or exc}"
         ) from exc
+    total_bytes = _dir_bytes(source)
     _atomic_copytree(source, dest)
     return SkillImport(
         skill=Skill(name=name, description=description, enabled=True),
-        total_bytes=_dir_bytes(dest),
+        total_bytes=total_bytes,
     )
 
 
@@ -297,7 +298,7 @@ def import_skill_files(files: Mapping[str, bytes]) -> SkillImport:
             target = tmp.joinpath(*[p for p in rel.split("/") if p])
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)
-        os.replace(tmp, dest)
+        _publish_skill(tmp, dest)
     except OSError as exc:
         raise SkillError(f"无法把上传的 skill 包写入库：{exc.strerror or exc}") from exc
     finally:
@@ -306,6 +307,19 @@ def import_skill_files(files: Mapping[str, bytes]) -> SkillImport:
         skill=Skill(name=name, description=description, enabled=True),
         total_bytes=sum(len(content) for content in files.values()),
     )
+
+
+def _publish_skill(temporary: Path, destination: Path) -> None:
+    """发布完整包时与编辑、删除互斥，并清除同名旧包的停用记录。"""
+    with _mutation_lock(destination.parent / f".{destination.name}.edit.lock"):
+        if destination.exists():
+            raise SkillExistsError(f"skill {destination.name!r} 已在库中；重名不合并。")
+        with _mutation_lock(destination.parent / ".state.lock"):
+            disabled = _read_disabled()
+            if destination.name in disabled:
+                disabled.discard(destination.name)
+                _write_disabled(disabled)
+            os.replace(temporary, destination)
 
 
 def list_skills() -> list[Skill]:

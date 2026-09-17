@@ -7,15 +7,19 @@ sleeper 注入假实现（退避不打真盹，只记录等待秒数）。跑批
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import cast
+from unittest.mock import MagicMock
 
+import openai
 import pytest
 from filelock import FileLock
 
-from dataset_factory.llm import create_config
+from dataset_factory.llm import OpenAIChatClient, SecretValue, create_config
 from dataset_factory.llm.errors import (
     LLMBadRequestError,
     LLMConnectionError,
@@ -200,6 +204,36 @@ def test_full_mode_writes_complete_run_journal(batch: Path) -> None:
     assert "启动" in log_text
     assert "结束（completed）" in log_text
     assert "cat_001 尝试 1 成功" in log_text
+
+
+def test_endpoint_key_echo_is_absent_from_run_files(
+    batch: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """端点错误回显密钥时，运行三件套与应用日志均只保留脱敏错误。"""
+    marker = "fake-endpoint-marker-for-journal-test"
+    error = openai.BadRequestError.__new__(openai.BadRequestError)
+    error.body = {"message": f"invalid credential: {marker}"}
+    sdk = MagicMock()
+    sdk.chat.completions.create.side_effect = error
+    client = OpenAIChatClient(
+        cast(openai.OpenAI, sdk), "test-model", api_key=SecretValue(marker)
+    )
+    image = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAA"
+        "AABJRU5ErkJggg=="
+    )
+    for name in ("cat_001.jpg", "cat_002.jpg"):
+        (batch / name).write_bytes(image)
+
+    report = _runner(batch, client).run()
+
+    assert report.counters["failed"] == 2
+    assert sdk.chat.completions.create.call_count == 2
+    assert marker not in caplog.text
+    for name in ("run.log", "items.jsonl", "run.json"):
+        assert marker not in (report.run_dir / name).read_text(encoding="utf-8")
+    for name in ("run.log", "items.jsonl"):
+        assert "*****" in (report.run_dir / name).read_text(encoding="utf-8")
 
 
 def test_run_info_removed_and_lock_released_after_run(batch: Path) -> None:

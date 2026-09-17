@@ -123,7 +123,9 @@ describe("打标页读取流程", () => {
       ];
     });
     const user = userEvent.setup();
-    render(<LabelingPage />);
+    await act(async () => {
+      render(<LabelingPage />);
+    });
 
     expect(
       await screen.findByRole("button", { name: "first.jpg" }),
