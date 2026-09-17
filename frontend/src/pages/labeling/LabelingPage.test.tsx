@@ -1,6 +1,6 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../../api";
 import type { components } from "../../api-types.gen";
 import { LabelingPage } from "./LabelingPage";
@@ -18,6 +18,7 @@ vi.mock("../../api", () => ({
     removeUnimported: vi.fn(),
     getTask: vi.fn(),
     cancelTask: vi.fn(),
+    getBatchSnapshot: vi.fn(),
     currentRun: vi.fn().mockResolvedValue({ status: "completed" }),
     latestRun: vi.fn(),
     exportPlan: vi.fn().mockResolvedValue({
@@ -54,6 +55,15 @@ function view(name: string): components["schemas"]["ItemListView"] {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(api.currentRun).mockResolvedValue({
+    run_id: "old",
+    status: "completed",
+    batch: 1,
+    mode: "full",
+    counters: {},
+    current_item: null,
+    error: null,
+  });
   vi.mocked(api.listWorkdirs).mockResolvedValue([
     { id: "one", title: "目录一", path: "/one", last_used_at: 0 },
     { id: "two", title: "目录二", path: "/two", last_used_at: 0 },
@@ -75,9 +85,130 @@ beforeEach(() => {
     log_path: null,
     items_path: null,
   });
+  vi.mocked(api.getBatchSnapshot).mockResolvedValue({
+    built_at: "2026-09-18T00:00:00Z",
+    changed: false,
+    endpoint: {
+      api_format: "openai-chat",
+      base_url: "https://example.test/v1",
+      model: "mock-model",
+      name: "Mock endpoint",
+      request_params: {},
+      sha256: "endpoint",
+    },
+    prompt: { body: "prompt", name: "Mock prompt", sha256: "prompt" },
+    recorded_sha256: "snapshot",
+    sha256: "snapshot",
+    skills: [{ body: "skill", name: "Mock skill", sha256: "skill" }],
+    tool_version: "0.1.0",
+  });
 });
 
+afterEach(() => vi.unstubAllGlobals());
+
 describe("打标页读取流程", () => {
+  it("一处目录读取失败不会阻止其他目录使用，错误目录仍可定位", async () => {
+    vi.mocked(api.listBatches).mockImplementation(async (wid) => {
+      if (wid === "one") throw new Error("目录不存在");
+      return [
+        {
+          id: "s1",
+          seq: 1,
+          name: "策略",
+          active: true,
+          created_at: "",
+          description: "",
+          product_count: 1,
+        },
+      ];
+    });
+    const user = userEvent.setup();
+    render(<LabelingPage />);
+
+    expect(
+      await screen.findByRole("button", { name: "first.jpg" }),
+    ).toBeInTheDocument();
+    expect(api.listItems).toHaveBeenCalledWith("two", "s1");
+    await user.click(screen.getByRole("button", { name: "选择工作目录与批次" }));
+    const unavailable = within(screen.getByRole("group", { name: "目录一" }));
+    expect(unavailable.getByText(/目录不存在/)).toBeInTheDocument();
+    expect(
+      unavailable.getByRole("button", { name: "工作目录设置 目录一" }),
+    ).toBeEnabled();
+    expect(unavailable.getByRole("button", { name: "新增策略 目录一" })).toBeDisabled();
+  });
+
+  it("提示词与技能同名时仍分别展示且没有重复 key", async () => {
+    const snapshot = await api.getBatchSnapshot("one", "s1");
+    snapshot.prompt.name = "shared";
+    snapshot.skills = [{ name: "shared", body: "skill", sha256: "skill" }];
+    vi.mocked(api.getBatchSnapshot).mockResolvedValue(snapshot);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      render(<LabelingPage />);
+      const context = await screen.findByRole("region", { name: "策略配置" });
+
+      expect(within(context).getAllByText("shared")).toHaveLength(2);
+      expect(errors).not.toHaveBeenCalled();
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it("顶栏展示批次快照的只读端点、提示词与技能上下文", async () => {
+    render(<LabelingPage />);
+    const context = await screen.findByRole("region", { name: "策略配置" });
+    expect(context).toHaveTextContent("Mock endpoint · mock-model");
+    expect(context).toHaveTextContent("Mock prompt");
+    expect(context).toHaveTextContent("Mock skill");
+  });
+
+  it("自动预览当前运行素材，手动查看与返回概览不会被运行刷新抢走", async () => {
+    let source: EventTarget | undefined;
+    vi.stubGlobal(
+      "EventSource",
+      class extends EventTarget {
+        constructor() {
+          super();
+          source = this;
+        }
+        close(): void {}
+      },
+    );
+    vi.mocked(api.currentRun).mockResolvedValue({
+      run_id: "run",
+      status: "running",
+      batch: 1,
+      mode: "full",
+      counters: { planned: 2, attempted: 0 },
+      current_item: "first",
+      error: null,
+    });
+    const initial = view("first");
+    initial.groups.done = [
+      ...(initial.groups.done ?? []),
+      ...(view("second").groups.done ?? []),
+    ];
+    vi.mocked(api.listItems).mockResolvedValue(initial);
+    const user = userEvent.setup();
+    render(<LabelingPage />);
+
+    expect(
+      await screen.findByRole("heading", { name: "first.jpg" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "second.jpg" }));
+    await act(async () => source?.dispatchEvent(new Event("run-started")));
+    expect(screen.getByRole("heading", { name: "second.jpg" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "返回概览" }));
+    await act(async () => source?.dispatchEvent(new Event("run-started")));
+    expect(
+      screen.queryByRole("heading", { name: "first.jpg" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "second.jpg" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("未导入删除先确认，成功刷新清单且保留同主干在册素材", async () => {
     const initial = view("first");
     initial.groups.unimported = [

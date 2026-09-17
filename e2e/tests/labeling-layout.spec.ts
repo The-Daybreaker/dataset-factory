@@ -59,5 +59,13 @@ test("打标页长名称下顶栏与条目列保持原型尺寸和对齐", async
   expect((await image.locator("..").boundingBox())?.height).toBe(384);
   await page.getByRole("button", { name: "返回概览" }).click();
   await expect(image).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileColumn = await column.boundingBox();
+  const mobileCreate = await create.boundingBox();
+  if (!mobileColumn || !mobileCreate) throw new Error("缺少窄屏布局元素");
+  expect(mobileColumn.width).toBe(358);
+  expect(mobileCreate.x + mobileCreate.width).toBeLessThanOrEqual(390);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  await page.screenshot({ path: testInfo.outputPath("labeling-mobile.png"), fullPage: true });
   expect(errors).toEqual([]);
 });

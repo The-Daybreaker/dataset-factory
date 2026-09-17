@@ -3,7 +3,15 @@ import { api, errorMessage } from "../../api";
 import type { components } from "../../api-types.gen";
 import { Button } from "../../components/ui/button";
 
-export function BatchConfiguration({ wid, batch }: { wid: string; batch: string }) {
+export function BatchConfiguration({
+  wid,
+  batch,
+  compact = false,
+}: {
+  wid: string;
+  batch: string;
+  compact?: boolean;
+}) {
   const [snapshot, setSnapshot] = useState<
     components["schemas"]["BatchSnapshotView"] | null
   >(null);
@@ -48,6 +56,35 @@ export function BatchConfiguration({ wid, batch }: { wid: string; batch: string 
       <p role="status" className="py-2 text-t-sm text-text-4">
         正在读取策略配置
       </p>
+    );
+  if (compact)
+    return (
+      <section
+        aria-label="策略配置"
+        className="flex min-w-0 flex-1 flex-wrap items-center gap-2"
+      >
+        {[
+          {
+            key: "endpoint",
+            value: `${snapshot.endpoint.name} · ${snapshot.endpoint.model}`,
+          },
+          { key: "prompt", value: snapshot.prompt.name },
+          ...snapshot.skills
+            .slice(0, 5)
+            .map((entry) => ({ key: `skill/${entry.name}`, value: entry.name })),
+          ...(snapshot.skills.length > 5
+            ? [{ key: "more", value: `+${snapshot.skills.length - 5}` }]
+            : []),
+        ].map(({ key, value }) => (
+          <span
+            key={key}
+            title={value}
+            className="max-w-full truncate rounded-full border border-border bg-card px-2 py-1 text-t-sm text-text-3"
+          >
+            {value}
+          </span>
+        ))}
+      </section>
     );
   return (
     <dl className="px-6 pb-3 text-t-sm">

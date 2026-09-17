@@ -12,6 +12,7 @@ export interface WorkdirBatches {
   id: string;
   title: string;
   batches: components["schemas"]["BatchView"][];
+  error?: string;
 }
 
 export interface BatchSelection {
@@ -75,6 +76,7 @@ export function BatchSelector({
                 {onNewStrategy && (
                   <button
                     type="button"
+                    disabled={!!entry.error}
                     className="flex size-(--h-sm) shrink-0 items-center justify-center rounded-md hover:bg-accent"
                     aria-label={`新增策略 ${entry.title}`}
                     title="新增策略"
@@ -101,7 +103,12 @@ export function BatchSelector({
                   </button>
                 )}
               </div>
-              {active.length === 0 && (
+              {entry.error && (
+                <p role="alert" className="px-6 py-2 text-t-sm text-bad-ink">
+                  {entry.error}
+                </p>
+              )}
+              {!entry.error && active.length === 0 && (
                 <p className="px-6 py-2 text-t-sm text-muted-foreground">
                   没有启用的批次
                 </p>

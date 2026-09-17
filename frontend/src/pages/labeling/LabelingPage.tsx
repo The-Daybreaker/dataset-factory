@@ -16,6 +16,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage } from "../../api";
 import type { components } from "../../api-types.gen";
 import { Button } from "../../components/ui/button";
+import { BatchConfiguration } from "./BatchConfiguration";
 import { BatchOverview } from "./BatchOverview";
 import {
   type BatchSelection,
@@ -40,6 +41,28 @@ import { RunControl } from "./RunControl";
 import { WorkdirSettings } from "./WorkdirSettings";
 
 type ItemRow = components["schemas"]["ItemRowView"];
+
+async function loadWorkdirBatches(): Promise<WorkdirBatches[]> {
+  const directories = await api.listWorkdirs();
+  return Promise.all(
+    directories.map(async (entry) => {
+      try {
+        return {
+          id: entry.id,
+          title: entry.title,
+          batches: await api.listBatches(entry.id),
+        };
+      } catch (reason) {
+        return {
+          id: entry.id,
+          title: entry.title,
+          batches: [],
+          error: errorMessage(reason),
+        };
+      }
+    }),
+  );
+}
 
 const MaterialRow = memo(function MaterialRow({
   row,
@@ -172,6 +195,7 @@ export function LabelingPage() {
     id: string;
   } | null>(null);
   const [selectedItem, setSelectedItem] = useState<string | null>(null);
+  const followRun = useRef(true);
   const [foldedItem, setFoldedItem] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
@@ -208,16 +232,8 @@ export function LabelingPage() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: directoriesRevision refreshes the registry after directory settings mutations.
   useEffect(() => {
     let current = true;
-    void api
-      .listWorkdirs()
-      .then(async (directories) => {
-        const loaded = await Promise.all(
-          directories.map(async (entry) => ({
-            id: entry.id,
-            title: entry.title,
-            batches: await api.listBatches(entry.id),
-          })),
-        );
+    void loadWorkdirBatches()
+      .then((loaded) => {
         if (!current) return;
         setWorkdirs(loaded);
         const directory = loaded.find((entry) =>
@@ -259,6 +275,7 @@ export function LabelingPage() {
     setError("");
     setItems(new Map());
     setSelectedItem(null);
+    followRun.current = true;
     setChecked(new Set());
     setSelectionMode(false);
     setSaving(false);
@@ -281,7 +298,10 @@ export function LabelingPage() {
   }, [selection]);
 
   const filtered = useMemo(() => groupedItems(items, query), [items, query]);
-  const choose = useCallback((row: ItemRow) => setSelectedItem(itemKey(row)), []);
+  const choose = useCallback((row: ItemRow) => {
+    followRun.current = false;
+    setSelectedItem(itemKey(row));
+  }, []);
   const recover = useCallback((row: ItemRow) => {
     setRecovery({
       names: [row.name],
@@ -405,16 +425,8 @@ export function LabelingPage() {
         onCreated={(value) => {
           setCreating(false);
           setSelection(value);
-          void api
-            .listWorkdirs()
-            .then(async (entries) => {
-              const loaded = await Promise.all(
-                entries.map(async (entry) => ({
-                  id: entry.id,
-                  title: entry.title,
-                  batches: await api.listBatches(entry.id),
-                })),
-              );
+          void loadWorkdirBatches()
+            .then((loaded) => {
               if (mounted.current) setWorkdirs(loaded);
             })
             .catch((reason: unknown) => {
@@ -476,8 +488,8 @@ export function LabelingPage() {
           onImported={() => void refreshItems()}
         />
       )}
-      <header className="flex shrink-0 items-center gap-4 px-6 pt-4 pb-3">
-        <div className="flex w-(--w-col-left) min-w-0 shrink-0 items-center gap-3 pr-3">
+      <header className="flex shrink-0 flex-wrap items-center gap-3 px-4 pt-4 pb-3 lg:flex-nowrap lg:gap-4 lg:px-6">
+        <div className="flex w-full min-w-0 shrink-0 items-center gap-3 lg:w-(--w-col-left) lg:pr-3">
           <div className="min-w-0 flex-1">
             <BatchSelector
               workdirs={workdirs}
@@ -497,6 +509,14 @@ export function LabelingPage() {
           </Button>
         </div>
         {selection && (
+          <BatchConfiguration
+            key={`config/${identity}`}
+            wid={selection.workdirId}
+            batch={selection.batchId}
+            compact
+          />
+        )}
+        {selection && (
           <RunControl
             key={`${selection.workdirId}/${selection.batchId}`}
             wid={selection.workdirId}
@@ -505,6 +525,9 @@ export function LabelingPage() {
               externalRun?.identity === identity ? externalRun.id : undefined
             }
             onFinish={() => refreshItems(true)}
+            onCurrentItem={(item) => {
+              if (followRun.current) setSelectedItem(item);
+            }}
             onItemUpdate={(event) => {
               refreshVersion.current += 1;
               setItems((previous) => withItemUpdate(previous, event));
@@ -527,9 +550,9 @@ export function LabelingPage() {
           {error}
         </p>
       )}
-      <div className="flex min-h-0 flex-1 gap-4 px-6 pb-6">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto px-4 pb-6 lg:flex-row lg:overflow-hidden lg:px-6">
         <aside
-          className="flex w-(--w-col-left) shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card"
+          className="flex max-h-80 w-full shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card lg:max-h-none lg:w-(--w-col-left)"
           aria-label="素材条目"
         >
           <div className="flex min-h-10 items-center gap-2 px-3 py-2 text-t-sm">
@@ -708,7 +731,7 @@ export function LabelingPage() {
               ))}
           </div>
         </aside>
-        <div className="flex min-w-0 flex-1 flex-col overflow-auto">
+        <div className="flex min-w-0 shrink-0 flex-col lg:flex-1 lg:overflow-auto">
           {!selected && selection && !loading && (
             <BatchOverview
               key={identity}
@@ -731,7 +754,14 @@ export function LabelingPage() {
           {selected && (
             <>
               <div className="mb-3 flex min-w-0 items-center gap-3">
-                <Button variant="ghost" size="sm" onClick={() => setSelectedItem(null)}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    followRun.current = false;
+                    setSelectedItem(null);
+                  }}
+                >
                   <ArrowLeftIcon />
                   返回概览
                 </Button>

@@ -75,6 +75,7 @@ export function PromptWorkbench({
   const [promptMenuOpen, setPromptMenuOpen] = useState(false);
   const [promptBusy, setPromptBusy] = useState(false);
   const [strategyBusy, setStrategyBusy] = useState(false);
+  const [endpointBusy, setEndpointBusy] = useState(false);
 
   // ---------- 对话列 ----------
   const [endpoints, setEndpoints] = useState<EndpointConfigSummary[]>([]);
@@ -99,6 +100,9 @@ export function PromptWorkbench({
   const promptRequestRef = useRef(0);
   const savingPromptRef = useRef(false);
   const interactionRef = useRef(0);
+  const activatingEndpointRef = useRef(false);
+  const sendingRef = useRef(false);
+  const mediaRequestRef = useRef(0);
 
   const selectPrompt = useCallback(async (name: string): Promise<void> => {
     const request = ++promptRequestRef.current;
@@ -130,6 +134,8 @@ export function PromptWorkbench({
   useEffect(
     () => () => {
       promptRequestRef.current += 1;
+      interactionRef.current += 1;
+      mediaRequestRef.current += 1;
     },
     [],
   );
@@ -189,7 +195,7 @@ export function PromptWorkbench({
         }
       } catch (err) {
         const noSessionYet = err instanceof ApiError && err.status === 404;
-        if (!cancelled && !noSessionYet) {
+        if (!cancelled && interaction === interactionRef.current && !noSessionYet) {
           setChatError(errorMessage(err));
         }
       }
@@ -289,6 +295,11 @@ export function PromptWorkbench({
   };
 
   const activateEndpoint = async (name: string): Promise<void> => {
+    if (activatingEndpointRef.current || sendingRef.current || strategyBusy) return;
+    interactionRef.current += 1;
+    activatingEndpointRef.current = true;
+    setEndpointBusy(true);
+    setChatError("");
     try {
       await api.activateEndpoint(name);
       setEndpoints((current) =>
@@ -297,10 +308,15 @@ export function PromptWorkbench({
       setActiveModel(endpoints.find((item) => item.name === name)?.model ?? "");
     } catch (err) {
       setChatError(errorMessage(err));
+    } finally {
+      activatingEndpointRef.current = false;
+      setEndpointBusy(false);
     }
   };
 
   const toggleSkill = (name: string): void => {
+    if (sendingRef.current || strategyBusy || activatingEndpointRef.current) return;
+    interactionRef.current += 1;
     setSkillNames((current) =>
       current.includes(name)
         ? current.filter((item) => item !== name)
@@ -314,9 +330,12 @@ export function PromptWorkbench({
     if (file === undefined) {
       return;
     }
+    interactionRef.current += 1;
+    const request = ++mediaRequestRef.current;
     const isVideo = file.type.startsWith("video/");
     const reader = new FileReader();
     reader.onload = () => {
+      if (request !== mediaRequestRef.current) return;
       setMedia({
         name: file.name,
         dataUrl: String(reader.result),
@@ -325,13 +344,26 @@ export function PromptWorkbench({
         maxFrames: 16,
       });
     };
+    reader.onerror = () => {
+      if (request === mediaRequestRef.current)
+        setChatError("附件读取失败，请重新选择。");
+    };
     reader.readAsDataURL(file);
   };
 
   const send = async (): Promise<void> => {
-    if (sending || (instruction.trim() === "" && media === null)) {
+    if (
+      sendingRef.current ||
+      activatingEndpointRef.current ||
+      strategyBusy ||
+      savingPromptRef.current ||
+      (instruction.trim() === "" && media === null)
+    ) {
       return;
     }
+    interactionRef.current += 1;
+    mediaRequestRef.current += 1;
+    sendingRef.current = true;
     setSending(true);
     setChatError("");
     const startedAt = Date.now();
@@ -404,6 +436,7 @@ export function PromptWorkbench({
     } catch (err) {
       setChatError(errorMessage(err));
     } finally {
+      sendingRef.current = false;
       setSending(false);
       setStreaming(null);
     }
@@ -441,7 +474,8 @@ export function PromptWorkbench({
 
   const bodyBytes = new TextEncoder().encode(draftBody).length;
   const byteOver = bodyBytes > PROMPT_BYTE_BUDGET;
-  const canSend = !sending && (instruction.trim() !== "" || media !== null);
+  const controlsBusy = sending || endpointBusy || strategyBusy || promptBusy;
+  const canSend = !controlsBusy && (instruction.trim() !== "" || media !== null);
   const bodyKiB = (bodyBytes / 1024).toFixed(1);
   const promptDirty =
     draftName !== savedPrompt.name ||
@@ -460,7 +494,7 @@ export function PromptWorkbench({
           prompts={prompts}
           skills={skills}
           endpoints={endpoints}
-          locked={promptDirty || sending || promptBusy || strategyBusy}
+          locked={promptDirty || controlsBusy}
           onSelect={async (strategy) => {
             interactionRef.current += 1;
             const request = ++promptRequestRef.current;
@@ -496,7 +530,7 @@ export function PromptWorkbench({
           }}
         />
         <fieldset
-          disabled={strategyBusy || promptBusy || sending}
+          disabled={controlsBusy}
           className="grid min-h-0 min-w-0 flex-1 grid-cols-1 overflow-auto lg:grid-cols-2 lg:overflow-hidden"
         >
           <section
@@ -684,6 +718,7 @@ export function PromptWorkbench({
               <h2 className="shrink-0 text-t-xl font-semibold">对话</h2>
               <EndpointSwitcher
                 endpoints={endpoints}
+                disabled={controlsBusy}
                 onActivate={(name) => void activateEndpoint(name)}
                 onManage={onNavigateToSettings}
               />
@@ -744,7 +779,7 @@ export function PromptWorkbench({
                       <DropdownMenuCheckboxItem
                         key={skill.name}
                         checked={skillNames.includes(skill.name)}
-                        disabled={!skill.enabled}
+                        disabled={!skill.enabled || controlsBusy}
                         onSelect={(event) => {
                           event.preventDefault();
                           toggleSkill(skill.name);
@@ -779,13 +814,19 @@ export function PromptWorkbench({
                 </div>
               }
               instruction={instruction}
-              onInstructionChange={setInstruction}
+              onInstructionChange={(value) => {
+                interactionRef.current += 1;
+                setInstruction(value);
+              }}
               onInstructionKeyDown={onInstructionKeyDown}
               media={media}
               onPickMedia={pickMedia}
               onMediaFpsChange={setMediaFps}
               onMediaMaxFramesChange={setMediaMaxFrames}
-              onClearMedia={() => setMedia(null)}
+              onClearMedia={() => {
+                mediaRequestRef.current += 1;
+                setMedia(null);
+              }}
               canSend={canSend}
               sending={sending}
               waitSeconds={waitSeconds}

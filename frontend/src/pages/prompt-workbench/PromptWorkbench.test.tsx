@@ -102,6 +102,112 @@ beforeEach(() => {
 });
 
 describe("PromptWorkbench", () => {
+  it("连续选择附件时只采用最后一次读取结果，移除后不被迟到读取恢复", async () => {
+    const readers: DeferredReader[] = [];
+    class DeferredReader {
+      result = "data:image/png;base64,AAAA";
+      onload: (() => void) | null = null;
+      readAsDataURL(): void {
+        readers.push(this);
+      }
+    }
+    vi.stubGlobal("FileReader", DeferredReader);
+    try {
+      render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+      await waitFor(() =>
+        expect(screen.getByLabelText("名称")).toHaveValue("h3-video"),
+      );
+
+      for (const name of ["first.png", "second.png"]) {
+        fireEvent.change(screen.getByLabelText("附图或视频"), {
+          target: { files: [new File([name], name, { type: "image/png" })] },
+        });
+      }
+      act(() => readers[1]?.onload?.());
+      expect(screen.getByAltText("待打标图片 second.png")).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "移除附件" }));
+      act(() => readers[0]?.onload?.());
+
+      expect(screen.queryByAltText(/待打标图片/)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("端点激活期间禁止发送，失败后恢复原端点与输入", async () => {
+    let rejectActivation!: (error: Error) => void;
+    apiMock.activateEndpoint.mockReturnValueOnce(
+      new Promise<void>((_resolve, reject) => {
+        rejectActivation = reject;
+      }),
+    );
+    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("h3-video"));
+    fireEvent.input(screen.getByLabelText("打标指令"), {
+      target: { value: "保留指令" },
+    });
+
+    await userEvent.click(screen.getByLabelText("端点配置切换器"));
+    await userEvent.click(screen.getByText("backup · model-b"));
+    expect(screen.getByLabelText("端点配置切换器")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+    fireEvent.keyDown(screen.getByLabelText("打标指令"), { key: "Enter" });
+    expect(apiMock.labelStream).not.toHaveBeenCalled();
+    await act(async () => rejectActivation(new Error("激活失败")));
+
+    expect(screen.getByText(/激活失败/)).toBeInTheDocument();
+    expect(screen.getByText("default · model-a")).toBeInTheDocument();
+    expect(screen.getByLabelText("打标指令")).toHaveValue("保留指令");
+    expect(screen.getByRole("button", { name: "发送" })).toBeEnabled();
+  });
+
+  it("选择 Skill 后迟到的会话恢复不替换当前组合", async () => {
+    let resolveSession!: (value: unknown) => void;
+    apiMock.latestSession.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSession = resolve;
+      }),
+    );
+    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("h3-video"));
+
+    await userEvent.click(screen.getByRole("button", { name: "添加 Skill" }));
+    await userEvent.click(screen.getByRole("menuitemcheckbox", { name: "h3-skill" }));
+    await act(async () =>
+      resolveSession({
+        session_id: "old",
+        settings: { prompt_name: "simple", skill_names: [] },
+        messages: [{ role: "user", text: "旧对话", attachment: null }],
+      }),
+    );
+    expect(screen.getByRole("menuitemcheckbox", { name: "h3-skill" })).toBeChecked();
+    await userEvent.keyboard("{Escape}");
+
+    expect(
+      screen.getByRole("button", { name: "移除 Skill h3-skill" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("旧对话")).not.toBeInTheDocument();
+    expect(apiMock.getPrompt).not.toHaveBeenCalledWith("simple");
+  });
+
+  it("开始输入指令后迟到的会话错误不打断当前对话", async () => {
+    let rejectSession!: (error: Error) => void;
+    apiMock.latestSession.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectSession = reject;
+      }),
+    );
+    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("h3-video"));
+
+    fireEvent.input(screen.getByLabelText("打标指令"), { target: { value: "新指令" } });
+    await act(async () => rejectSession(new Error("旧会话读取失败")));
+
+    expect(screen.queryByText(/旧会话读取失败/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("打标指令")).toHaveValue("新指令");
+  });
+
   const strategy = {
     id: "a1",
     name: "备用策略",

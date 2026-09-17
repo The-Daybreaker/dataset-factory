@@ -49,6 +49,101 @@ beforeEach(() => {
 });
 
 describe("运行控制", () => {
+  it("计数查询未返回时合并事件，结束后迟到快照不恢复运行态", async () => {
+    const view = {
+      run_id: "run",
+      status: "running",
+      batch: 1,
+      mode: "full",
+      counters: { planned: 10, attempted: 3, failed: 1 },
+      current_item: "frame",
+      error: null,
+    };
+    let resolveProgress: ((value: typeof view) => void) | undefined;
+    vi.mocked(api.currentRun)
+      .mockReset()
+      .mockResolvedValueOnce(view)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveProgress = resolve;
+          }),
+      )
+      .mockResolvedValue({
+        ...view,
+        counters: { planned: 10, attempted: 5, failed: 1 },
+      });
+    render(<RunControl wid="work" batch="s1" onFinish={vi.fn()} />);
+    await screen.findByText("3 / 10 · 失败 1");
+
+    act(() => {
+      FakeEventSource.last?.emit("run-started", {});
+      FakeEventSource.last?.emit("run-started", {});
+    });
+    expect(api.currentRun).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      resolveProgress?.(view);
+    });
+    expect(api.currentRun).toHaveBeenCalledTimes(3);
+    expect(screen.getByText("5 / 10 · 失败 1")).toBeInTheDocument();
+
+    vi.mocked(api.currentRun).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveProgress = resolve;
+        }),
+    );
+    act(() => {
+      FakeEventSource.last?.emit("run-started", {});
+      FakeEventSource.last?.emit("run-finished", {
+        run_id: "run",
+        batch: 1,
+        status: "completed",
+      });
+    });
+    await act(async () => {
+      resolveProgress?.(view);
+    });
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "开始打标" })).toBeEnabled();
+  });
+
+  it("显示当前运行计数并在条目完成后校准进度", async () => {
+    const view = {
+      run_id: "run",
+      status: "running",
+      batch: 1,
+      mode: "full",
+      counters: { planned: 10, attempted: 3, succeeded: 2, failed: 1 },
+      current_item: "frame",
+      error: null,
+    };
+    vi.mocked(api.currentRun).mockReset().mockResolvedValue(view);
+    render(<RunControl wid="work" batch="s1" onFinish={vi.fn()} />);
+    expect(await screen.findByText("3 / 10 · 失败 1")).toBeInTheDocument();
+
+    vi.mocked(api.currentRun).mockResolvedValue({
+      ...view,
+      counters: { planned: 10, attempted: 4, succeeded: 3, failed: 1 },
+    });
+    await act(async () => {
+      FakeEventSource.last?.emit("item-updated", {
+        batch: 1,
+        item: "frame",
+        status: "succeeded",
+        attempt: 1,
+        reason_code: null,
+        message: null,
+      });
+    });
+
+    expect(await screen.findByText("4 / 10 · 失败 1")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "运行进度" })).toHaveAttribute(
+      "aria-valuenow",
+      "4",
+    );
+  });
+
   it("待启动不算结束，失败帧保留原因", async () => {
     vi.mocked(api.currentRun).mockReset().mockResolvedValue({
       run_id: "run",

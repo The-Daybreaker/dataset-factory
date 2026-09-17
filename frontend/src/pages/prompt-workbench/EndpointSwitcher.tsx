@@ -14,10 +14,12 @@ import {
 
 export function EndpointSwitcher({
   endpoints,
+  disabled = false,
   onActivate,
   onManage,
 }: {
   endpoints: EndpointConfigSummary[];
+  disabled?: boolean;
   onActivate: (name: string) => void;
   onManage: () => void;
 }): ReactElement {
@@ -31,6 +33,7 @@ export function EndpointSwitcher({
           size="sm"
           className="min-w-0 max-w-60 shrink px-2 text-t-md text-text-2"
           aria-label="端点配置切换器"
+          disabled={disabled}
         >
           <span
             className={`size-1.5 shrink-0 rounded-full ${active ? "bg-ok-dot" : "bg-n-400"}`}
@@ -48,7 +51,11 @@ export function EndpointSwitcher({
           <DropdownMenuLabel>（还没有配置——去「管理配置」新增）</DropdownMenuLabel>
         )}
         {endpoints.map((item) => (
-          <DropdownMenuItem key={item.name} onSelect={() => onActivate(item.name)}>
+          <DropdownMenuItem
+            key={item.name}
+            disabled={disabled}
+            onSelect={() => onActivate(item.name)}
+          >
             <span className="flex-1 truncate">
               {item.name} · {item.model}
             </span>
@@ -56,7 +63,9 @@ export function EndpointSwitcher({
           </DropdownMenuItem>
         ))}
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={onManage}>管理配置…</DropdownMenuItem>
+        <DropdownMenuItem disabled={disabled} onSelect={onManage}>
+          管理配置…
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
