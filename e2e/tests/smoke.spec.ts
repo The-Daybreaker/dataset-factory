@@ -11,9 +11,33 @@
 import { expect, test } from "@playwright/test";
 
 test.describe("界面冒烟", () => {
+  test("移动导航的主题选择跨开关保留并与桌面及系统模式一致", async ({ page }) => {
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+    await page.getByRole("button", { name: "打开导航" }).click();
+    const navigation = page.getByRole("dialog", { name: "导航" });
+    await navigation.getByRole("button", { name: "主题：跟随系统，切换为亮色" }).click();
+    await navigation.getByRole("button", { name: "主题：亮色，切换为暗色" }).click();
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    await navigation.getByRole("button", { name: "打标", exact: true }).click();
+    await page.getByRole("button", { name: "打开导航" }).click();
+    await expect(navigation.getByRole("button", { name: "主题：暗色，切换为跟随系统" })).toBeVisible();
+    await navigation.getByRole("button", { name: "打标", exact: true }).click();
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await expect(page.getByRole("button", { name: "主题：暗色，切换为跟随系统" })).toBeVisible();
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.emulateMedia({ colorScheme: "light" });
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    await page.getByRole("button", { name: "主题：暗色，切换为跟随系统" }).click();
+    await expect(page.locator("html")).not.toHaveClass(/dark/);
+    await page.emulateMedia({ colorScheme: "dark" });
+    await expect(page.locator("html")).toHaveClass(/dark/);
+  });
+
   test("页面加载：品牌（副标题 + 版本）与工作区两项导航就位", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText("Dataset Factory")).toBeVisible();
+    await expect(page.getByTestId("sidebar").getByText("Dataset Factory", { exact: true })).toBeVisible();
     await expect(page.getByText("打标流水线工具")).toBeVisible();
     await expect(page.getByText("v0.1.0")).toBeVisible();
     await expect(
@@ -22,6 +46,14 @@ test.describe("界面冒烟", () => {
     await expect(
       page.getByRole("button", { name: "设置", exact: true }),
     ).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByTestId("sidebar")).not.toBeVisible();
+    await page.getByRole("button", { name: "打开导航" }).click();
+    const navigation = page.getByRole("dialog", { name: "导航" });
+    await expect(navigation.getByText("Dataset Factory", { exact: true })).toBeVisible();
+    await navigation.getByRole("button", { name: "打标", exact: true }).click();
+    await expect(navigation).not.toBeVisible();
+    await expect(page.getByRole("region", { name: "打标", exact: true })).toBeVisible();
   });
 });
 

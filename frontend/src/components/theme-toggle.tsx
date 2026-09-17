@@ -1,7 +1,7 @@
 import { MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
 import type { ReactElement } from "react";
 
-import { type ThemeMode, useTheme } from "../hooks/use-theme";
+import type { ThemeMode } from "../hooks/use-theme";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
@@ -19,8 +19,15 @@ function modeIcon(mode: ThemeMode) {
 }
 
 /** 主题切换按钮：点击在三态间循环，选择记进 localStorage（跟随系统时实时响应系统切换）。 */
-export function ThemeToggle({ sidebar = false }: { sidebar?: boolean }): ReactElement {
-  const { mode, setMode } = useTheme();
+export function ThemeToggle({
+  sidebar = false,
+  mode,
+  onModeChange,
+}: {
+  sidebar?: boolean;
+  mode: ThemeMode;
+  onModeChange: (mode: ThemeMode) => void;
+}): ReactElement {
   // noUncheckedIndexedAccess 下数组下标访问带 undefined，兜底回 system（三态循环不会真走到）。
   const next =
     (CYCLE[(CYCLE.indexOf(mode) + 1) % CYCLE.length] satisfies ThemeMode | undefined) ??
@@ -40,7 +47,7 @@ export function ThemeToggle({ sidebar = false }: { sidebar?: boolean }): ReactEl
               : "border-border bg-card text-muted-foreground hover:bg-accent hover:text-accent-foreground"
           }
           aria-label={`主题：${MODE_LABEL[mode]}，切换为${MODE_LABEL[next]}`}
-          onClick={() => setMode(next)}
+          onClick={() => onModeChange(next)}
         >
           <Icon />
         </Button>

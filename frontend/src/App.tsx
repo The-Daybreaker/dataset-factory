@@ -25,6 +25,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "./components/ui/tooltip";
+import { useTheme } from "./hooks/use-theme";
 import { cn } from "./lib/utils";
 import logo from "./logo-speed-d.png";
 import { LabelingPage } from "./pages/labeling/LabelingPage";
@@ -67,6 +68,7 @@ const APP_VERSION = "v0.1.0";
 
 /** 可折叠侧栏、全局操作与独立滚动的工作画布。 */
 export function App(): ReactElement {
+  const { mode, setMode } = useTheme();
   const [page, setPage] = useState<PageKey>("prompts");
   const [collapsed, setCollapsed] = useState(false);
   const [navigationOpen, setNavigationOpen] = useState(false);
@@ -245,7 +247,7 @@ export function App(): ReactElement {
         )}
       >
         <ShutdownButton sidebar />
-        <ThemeToggle sidebar />
+        <ThemeToggle sidebar mode={mode} onModeChange={setMode} />
         <Tooltip>
           <TooltipTrigger asChild>
             <button
