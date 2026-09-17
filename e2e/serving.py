@@ -13,6 +13,7 @@ app 上，E2E 测试只需要一个端口；打标请求经真实浏览器 → �
 from __future__ import annotations
 
 import atexit
+import logging
 import os
 import shutil
 import sys
@@ -119,6 +120,7 @@ def build_fake_llm_app() -> FastAPI:
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.WARNING)
     # 端点配置预先写进临时数据根：打标请求将指向同源 /fake-llm/v1。
     create_config(
         DEFAULT_CONFIG_NAME,

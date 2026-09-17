@@ -1,6 +1,9 @@
 /** 消息流：历史消息渲染 + 流式增量面板（本轮生成中的临时消息）。 */
-import { FilmIcon, ImageIcon, SparklesIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, FilmIcon, ImageIcon } from "lucide-react";
 import type { ReactElement } from "react";
+import { Button } from "../../components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
+import logo from "../../logo-speed-d.png";
 import type { ChatMessage } from "./types";
 
 /** 视频扩展名清单（与后端 MIME 映射同一份）：历史消息只带文件名，靠它认素材类型。 */
@@ -26,20 +29,18 @@ export function MessageList({
     <div
       role="log"
       aria-label="消息流"
-      className="mt-1 min-h-0 flex-1 space-y-[18px] overflow-y-auto pr-1"
+      className="min-h-0 flex-1 space-y-4 overflow-y-auto py-1"
     >
       {messages.length === 0 && (
-        <p className="mt-8 text-center text-[12px] text-muted-foreground">
-          （还没有消息——发图片或视频 + 指令开始打标）
-        </p>
+        <p className="mt-8 text-center text-t-sm text-text-4">暂无消息</p>
       )}
       {messages.map((message) =>
         message.role === "user" ? (
           <div key={message.id} className="flex justify-end">
-            <div className="max-w-[94%] rounded-xl rounded-br-[4px] bg-primary/10 px-3.5 py-[11px] text-[13.5px] whitespace-pre-wrap">
+            <div className="max-w-[94%] rounded-xl rounded-br-sm bg-primary/10 px-4 py-3 text-t-md wrap-anywhere whitespace-pre-wrap">
               {message.text}
               {message.attachment !== null && (
-                <span className="mt-2.5 flex items-center gap-2.5 rounded-lg bg-card py-2 pr-3.5 pl-2 text-[12px] text-muted-foreground shadow-sm">
+                <span className="mt-2 flex items-center gap-2 rounded-lg bg-card p-2 text-t-sm text-text-3">
                   {isVideoAttachment(message.attachment) ? (
                     <FilmIcon className="size-7 shrink-0 rounded-md bg-muted p-1.5" />
                   ) : (
@@ -53,30 +54,30 @@ export function MessageList({
         ) : (
           <div key={message.id} className="flex items-start">
             <span
-              className="mt-0.5 mr-2.5 flex size-[26px] shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground"
+              className="mt-0.5 mr-3 flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-sm bg-black"
               aria-hidden
             >
-              <SparklesIcon className="size-3.5" />
+              <img src={logo} className="size-5 object-contain" alt="" />
             </span>
             <div className="min-w-0 flex-1">
               {/* 生成结束后的思考过程保留可回看（本轮内存态，不落盘；历史恢复的消息没有）。 */}
               {message.reasoning !== undefined && message.reasoning !== "" && (
                 <details className="mb-2 max-w-full overflow-hidden rounded-lg border border-border bg-muted/40">
-                  <summary className="cursor-pointer px-3 py-1.5 text-[12px] text-muted-foreground">
+                  <summary className="cursor-pointer px-3 py-2 text-t-sm text-text-3">
                     思考过程
                   </summary>
-                  <p className="px-3 pb-2.5 text-[12.5px] leading-[1.65] text-muted-foreground whitespace-pre-wrap">
+                  <p className="px-3 pb-3 text-t-md leading-(--lh-loose) text-text-3 wrap-anywhere whitespace-pre-wrap">
                     {message.reasoning}
                   </p>
                 </details>
               )}
-              <div className="inline-block max-w-full rounded-xl rounded-bl-[4px] bg-muted/55 px-3.5 py-[11px] text-[13.5px] whitespace-pre-wrap">
+              <div className="inline-block max-w-full rounded-xl rounded-bl-sm border border-input bg-muted/55 px-4 py-3 text-t-md wrap-anywhere whitespace-pre-wrap">
                 {message.text}
               </div>
-              <div className="mt-2 flex items-center gap-2.5 text-[11.5px] text-muted-foreground">
+              <div className="mt-2 flex flex-wrap items-center gap-3 text-t-sm text-text-4">
                 {(message.model !== undefined ||
                   message.durationSeconds !== undefined) && (
-                  <span>
+                  <span className="min-w-0 truncate">
                     {[
                       message.model,
                       message.durationSeconds !== undefined
@@ -87,14 +88,21 @@ export function MessageList({
                       .join(" · ")}
                   </span>
                 )}
-                <button
-                  type="button"
-                  className="text-primary underline underline-offset-[3px] hover:opacity-80"
-                  aria-label="复制 caption"
-                  onClick={() => onCopy(message)}
-                >
-                  {copiedId === message.id ? "已复制" : "复制"}
-                </button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="复制 caption"
+                      onClick={() => onCopy(message)}
+                    >
+                      {copiedId === message.id ? <CheckIcon /> : <CopyIcon />}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {copiedId === message.id ? "已复制" : "复制"}
+                  </TooltipContent>
+                </Tooltip>
                 {message.createdAt !== undefined && (
                   <span className="ml-auto">
                     {message.createdAt.toLocaleTimeString("zh-CN", {
@@ -111,30 +119,30 @@ export function MessageList({
       {streaming !== null && (
         <div className="flex items-start">
           <span
-            className="mt-0.5 mr-2.5 flex size-[26px] shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground"
+            className="mt-0.5 mr-3 flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-sm bg-black"
             aria-hidden
           >
-            <SparklesIcon className="size-3.5" />
+            <img src={logo} className="size-5 object-contain" alt="" />
           </span>
           <div className="min-w-0 flex-1">
             {streaming.reasoning !== "" && (
               <details className="mb-2 max-w-full overflow-hidden rounded-lg border border-border bg-muted/40">
-                <summary className="cursor-pointer px-3 py-1.5 text-[12px] text-muted-foreground">
+                <summary className="cursor-pointer px-3 py-2 text-t-sm text-text-3">
                   思考过程
                 </summary>
-                <p className="px-3 pb-2.5 text-[12.5px] leading-[1.65] text-muted-foreground whitespace-pre-wrap">
+                <p className="px-3 pb-3 text-t-md leading-(--lh-loose) text-text-3 wrap-anywhere whitespace-pre-wrap">
                   {streaming.reasoning}
                 </p>
               </details>
             )}
-            <div className="inline-block max-w-full rounded-xl rounded-bl-[4px] bg-muted/55 px-3.5 py-[11px] text-[13.5px] whitespace-pre-wrap">
+            <div className="inline-block max-w-full rounded-xl rounded-bl-sm border border-input bg-muted/55 px-4 py-3 text-t-md wrap-anywhere whitespace-pre-wrap">
               {streaming.content}
               <span
                 className="ml-0.5 inline-block h-[14px] w-[7px] animate-pulse bg-primary align-[-2px]"
                 aria-hidden
               />
             </div>
-            <div className="mt-2 text-[11.5px] text-muted-foreground">生成中…</div>
+            <div className="mt-2 text-t-sm text-text-4">生成中…</div>
           </div>
         </div>
       )}

@@ -113,6 +113,63 @@
         "title": "BatchIntegrity",
         "type": "object"
       },
+      "BatchSnapshotView": {
+        "description": "批次快照全文与最近一次运行的文件哈希比对。",
+        "properties": {
+          "built_at": {
+            "title": "Built At",
+            "type": "string"
+          },
+          "changed": {
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "endpoint": {
+            "$ref": "#/components/schemas/SnapshotEndpointView"
+          },
+          "prompt": {
+            "$ref": "#/components/schemas/SnapshotTextView"
+          },
+          "recorded_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recorded Sha256"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/SnapshotTextView"
+            },
+            "title": "Skills",
+            "type": "array"
+          },
+          "tool_version": {
+            "title": "Tool Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "endpoint",
+          "prompt",
+          "skills",
+          "built_at",
+          "tool_version",
+          "sha256",
+          "recorded_sha256",
+          "changed"
+        ],
+        "title": "BatchSnapshotView",
+        "type": "object"
+      },
       "BatchUpdateRequest": {
         "additionalProperties": false,
         "description": "PATCH /api/workdirs/{wid}/batches/{sN} 的请求体：改名 / 描述。\n\n组合不可改（工作目录下的策略是库策略的应用副本，想换组合 = 新建批次）；\n未声明字段一律拒绝，让「发错字段」当场 422 而不是被静默忽略。",
@@ -371,6 +428,28 @@
         "title": "ConfigUpdateRequest",
         "type": "object"
       },
+      "CreateDirectoryRequest": {
+        "additionalProperties": false,
+        "description": "在既有父目录下创建一层目录。",
+        "properties": {
+          "name": {
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "parent": {
+            "minLength": 1,
+            "title": "Parent",
+            "type": "string"
+          }
+        },
+        "required": [
+          "parent",
+          "name"
+        ],
+        "title": "CreateDirectoryRequest",
+        "type": "object"
+      },
       "DeletionPreview": {
         "description": "二次确认展示的实际删除范围。",
         "properties": {
@@ -429,6 +508,114 @@
           "remaining_path"
         ],
         "title": "DeletionResult",
+        "type": "object"
+      },
+      "DirectoryEntry": {
+        "description": "当前目录的一项；文件只提供元信息。",
+        "properties": {
+          "kind": {
+            "enum": [
+              "directory",
+              "file"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "modified_at": {
+            "title": "Modified At",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          }
+        },
+        "required": [
+          "name",
+          "path",
+          "kind",
+          "modified_at",
+          "size"
+        ],
+        "title": "DirectoryEntry",
+        "type": "object"
+      },
+      "DirectoryListing": {
+        "description": "服务器身份、规范路径与当前层条目。",
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/DirectoryEntry"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "hostname": {
+            "title": "Hostname",
+            "type": "string"
+          },
+          "parent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "system": {
+            "title": "System",
+            "type": "string"
+          },
+          "unavailable_count": {
+            "title": "Unavailable Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "hostname",
+          "system",
+          "path",
+          "parent",
+          "entries",
+          "unavailable_count"
+        ],
+        "title": "DirectoryListing",
+        "type": "object"
+      },
+      "DirectoryPath": {
+        "description": "目录操作返回的服务器绝对路径。",
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "DirectoryPath",
         "type": "object"
       },
       "EndpointConfigSummary": {
@@ -977,6 +1164,20 @@
           "batch"
         ],
         "title": "ExportStartRequest",
+        "type": "object"
+      },
+      "FilesystemCapabilities": {
+        "description": "后端当前桌面会话的可选能力。",
+        "properties": {
+          "open_in_file_manager": {
+            "title": "Open In File Manager",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "open_in_file_manager"
+        ],
+        "title": "FilesystemCapabilities",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -1631,6 +1832,14 @@
       "ReimportRequest": {
         "description": "恢复指定文件，省略名单则恢复全部可找回的缺失素材。",
         "properties": {
+          "force_names": {
+            "description": "异名同容时仍按新名恢复的文件名清单",
+            "items": {
+              "type": "string"
+            },
+            "title": "Force Names",
+            "type": "array"
+          },
           "names": {
             "anyOf": [
               {
@@ -1647,6 +1856,30 @@
           }
         },
         "title": "ReimportRequest",
+        "type": "object"
+      },
+      "RenameDirectoryRequest": {
+        "additionalProperties": false,
+        "description": "把指定目录改名到同一父目录下的新名称。",
+        "properties": {
+          "new_name": {
+            "description": "新的目录名，不含路径分隔符",
+            "minLength": 1,
+            "title": "New Name",
+            "type": "string"
+          },
+          "path": {
+            "description": "现有目录的绝对路径",
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "new_name"
+        ],
+        "title": "RenameDirectoryRequest",
         "type": "object"
       },
       "RetryListRequest": {
@@ -1736,9 +1969,179 @@
         "title": "RunCleanupEntry",
         "type": "object"
       },
+      "RunCounters": {
+        "description": "运行记录中的计数，读取时拒绝负数与隐式类型转换。",
+        "properties": {
+          "attempted": {
+            "minimum": 0.0,
+            "title": "Attempted",
+            "type": "integer"
+          },
+          "failed": {
+            "minimum": 0.0,
+            "title": "Failed",
+            "type": "integer"
+          },
+          "planned": {
+            "minimum": 0.0,
+            "title": "Planned",
+            "type": "integer"
+          },
+          "skipped": {
+            "minimum": 0.0,
+            "title": "Skipped",
+            "type": "integer"
+          },
+          "succeeded": {
+            "minimum": 0.0,
+            "title": "Succeeded",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "planned",
+          "attempted",
+          "succeeded",
+          "failed",
+          "skipped"
+        ],
+        "title": "RunCounters",
+        "type": "object"
+      },
+      "RunHistoryView": {
+        "description": "最近运行的磁盘摘要及可定位的日志绝对路径。",
+        "properties": {
+          "items_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Items Path"
+          },
+          "log_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Log Path"
+          },
+          "record": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunRecord"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "record",
+          "log_path",
+          "items_path"
+        ],
+        "title": "RunHistoryView",
+        "type": "object"
+      },
+      "RunRecord": {
+        "description": "磁盘上的一次运行摘要；与当前进程的运行活性分开。",
+        "properties": {
+          "batch": {
+            "minimum": 1.0,
+            "title": "Batch",
+            "type": "integer"
+          },
+          "counters": {
+            "$ref": "#/components/schemas/RunCounters"
+          },
+          "dsf_version": {
+            "title": "Dsf Version",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "snapshot": {
+            "title": "Snapshot",
+            "type": "string"
+          },
+          "started_at": {
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "strategy_hash": {
+            "title": "Strategy Hash",
+            "type": "string"
+          },
+          "trigger": {
+            "title": "Trigger",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "batch",
+          "mode",
+          "trigger",
+          "strategy_hash",
+          "snapshot",
+          "dsf_version",
+          "status",
+          "counters",
+          "started_at",
+          "finished_at"
+        ],
+        "title": "RunRecord",
+        "type": "object"
+      },
       "RunStartRequest": {
         "description": "启动跑批的请求体。",
         "properties": {
+          "items": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "retry 模式的可选明确条目；省略时使用整份重试名单",
+            "title": "Items"
+          },
           "mode": {
             "description": "full = 全量打未完成的条目；retry = 只打重试列表快照",
             "enum": [
@@ -1821,6 +2224,25 @@
           "error"
         ],
         "title": "RunStatusView",
+        "type": "object"
+      },
+      "RunTextView": {
+        "description": "指定运行的只读文件内容与绝对路径。",
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "text"
+        ],
+        "title": "RunTextView",
         "type": "object"
       },
       "ServiceLogs": {
@@ -1990,6 +2412,37 @@
         "title": "SkillFileInfo",
         "type": "object"
       },
+      "SkillFileSaveRequest": {
+        "additionalProperties": false,
+        "description": "保存技能文本文件，并核对编辑时的原始内容。",
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "original_content": {
+            "title": "Original Content",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content",
+          "original_content"
+        ],
+        "title": "SkillFileSaveRequest",
+        "type": "object"
+      },
       "SkillFilesResponse": {
         "description": "GET /api/skills/{name}/files 的响应体。",
         "properties": {
@@ -2084,6 +2537,70 @@
           "body_chars"
         ],
         "title": "SkillInfo",
+        "type": "object"
+      },
+      "SnapshotEndpointView": {
+        "description": "快照端点的公开配置白名单，不返回凭据字段。",
+        "properties": {
+          "api_format": {
+            "title": "Api Format",
+            "type": "string"
+          },
+          "base_url": {
+            "title": "Base Url",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "request_params": {
+            "additionalProperties": true,
+            "title": "Request Params",
+            "type": "object"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "base_url",
+          "model",
+          "api_format",
+          "request_params",
+          "sha256"
+        ],
+        "title": "SnapshotEndpointView",
+        "type": "object"
+      },
+      "SnapshotTextView": {
+        "description": "快照中的提示词或 Skill 全文。",
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "body",
+          "sha256"
+        ],
+        "title": "SnapshotTextView",
         "type": "object"
       },
       "StrategyRebindRequest": {
@@ -2531,6 +3048,27 @@
         ],
         "title": "WorkdirRelocationStatus",
         "type": "object"
+      },
+      "WorkdirStatsView": {
+        "description": "工作目录统计——当前素材清单的真实数量与字节数。",
+        "properties": {
+          "asset_bytes": {
+            "description": "当前素材字节数（不包含产物与 .dsf）",
+            "title": "Asset Bytes",
+            "type": "integer"
+          },
+          "asset_count": {
+            "description": "当前素材条目数（同主干多扩展只计当前一个）",
+            "title": "Asset Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "asset_count",
+          "asset_bytes"
+        ],
+        "title": "WorkdirStatsView",
+        "type": "object"
       }
     }
   },
@@ -2904,6 +3442,281 @@
         "summary": "Activate",
         "tags": [
           "端点配置"
+        ]
+      }
+    },
+    "/api/filesystem": {
+      "get": {
+        "description": "列出服务器当前层目录，可按后缀筛选文件；默认从用户主目录开始。\n\n浏览范围由服务进程的系统权限决定；文件预览端点继续使用各自的路径边界。\n扫描时消失或无权读取的单项计入 unavailable_count，不影响其他条目。",
+        "operationId": "list_directory_api_filesystem_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "path",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Path"
+            }
+          },
+          {
+            "in": "query",
+            "name": "show_files",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Show Files",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "show_hidden",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Show Hidden",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "suffixes",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Suffixes"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectoryListing"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "路径无效或不是目录"
+          },
+          "403": {
+            "description": "服务进程无权读取目录"
+          },
+          "404": {
+            "description": "目录不存在"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "description": "目录读取失败"
+          }
+        },
+        "summary": "List Directory",
+        "tags": [
+          "服务器目录"
+        ]
+      }
+    },
+    "/api/filesystem/capabilities": {
+      "get": {
+        "description": "按后端环境报告能力，不推断浏览器是否与后端同机。",
+        "operationId": "filesystem_capabilities_api_filesystem_capabilities_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FilesystemCapabilities"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Filesystem Capabilities",
+        "tags": [
+          "服务器目录"
+        ]
+      }
+    },
+    "/api/filesystem/directories": {
+      "post": {
+        "description": "创建一层新目录，已有同名项不覆盖；文件操作失败明确反馈。",
+        "operationId": "create_directory_api_filesystem_directories_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDirectoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectoryPath"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Directory",
+        "tags": [
+          "服务器目录"
+        ]
+      }
+    },
+    "/api/filesystem/open": {
+      "post": {
+        "description": "在后端的桌面文件管理器中显示目录，不读取其文件内容。",
+        "operationId": "open_directory_api_filesystem_open_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectoryPath"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Open Directory",
+        "tags": [
+          "服务器目录"
+        ]
+      }
+    },
+    "/api/filesystem/rename": {
+      "post": {
+        "description": "受理目录改名，已登记工作目录通过搬迁流程保留身份和恢复记录。",
+        "operationId": "rename_directory_api_filesystem_rename_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameDirectoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkdirRelocateAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rename Directory",
+        "tags": [
+          "服务器目录"
         ]
       }
     },
@@ -3923,6 +4736,96 @@
           }
         },
         "summary": "Read Package File",
+        "tags": [
+          "Skill 库"
+        ]
+      },
+      "put": {
+        "description": "写回现有技能文本文件，SKILL.md 同时校验其 frontmatter。",
+        "operationId": "save_package_file_api_skills__name__files__path__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillFileSaveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillFileContent"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "文件或内容不合法"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "文件不存在"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "文件已被其他写者修改"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Save Package File",
         "tags": [
           "Skill 库"
         ]
@@ -5652,6 +6555,68 @@
         ]
       }
     },
+    "/api/workdirs/{wid}/batches/{sN}/runs/latest": {
+      "get": {
+        "description": "按批次回读最近一次磁盘记录；尚无运行时返回空摘要。",
+        "operationId": "latest_run_api_workdirs__wid__batches__sN__runs_latest_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sN",
+            "required": true,
+            "schema": {
+              "title": "Sn",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunHistoryView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Latest Run",
+        "tags": [
+          "跑批"
+        ]
+      }
+    },
     "/api/workdirs/{wid}/batches/{sN}/runs/stop": {
       "post": {
         "description": "请求停止当前跑批（协作取消）：置位信号即返回，当前条目在安全点停下。",
@@ -5766,6 +6731,154 @@
         "summary": "Stream Run",
         "tags": [
           "跑批"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/batches/{sN}/runs/{run_id}/text": {
+      "get": {
+        "description": "指定运行查看日志，打开后不因新运行出现而切换文件。",
+        "operationId": "run_text_api_workdirs__wid__batches__sN__runs__run_id__text_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sN",
+            "required": true,
+            "schema": {
+              "title": "Sn",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "file",
+            "required": false,
+            "schema": {
+              "default": "run.log",
+              "enum": [
+                "run.log",
+                "items.jsonl"
+              ],
+              "title": "File",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunTextView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Text",
+        "tags": [
+          "跑批"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/batches/{sN}/snapshot": {
+      "get": {
+        "description": "只读返回已保存的全文；哈希不一致仅标记，不改变运行资格。",
+        "operationId": "get_batch_snapshot_api_workdirs__wid__batches__sN__snapshot_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sN",
+            "required": true,
+            "schema": {
+              "title": "Sn",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchSnapshotView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "工作目录、批次或快照不存在，或快照损坏"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Batch Snapshot",
+        "tags": [
+          "批次（策略实例）"
         ]
       }
     },
@@ -7528,6 +8641,168 @@
           }
         },
         "summary": "Get Relocation Status",
+        "tags": [
+          "工作目录"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/stats": {
+      "get": {
+        "description": "当前在盘素材数量与字节数，含尚未登记的素材。",
+        "operationId": "get_workdir_stats_api_workdirs__wid__stats_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkdirStatsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Workdir Stats",
+        "tags": [
+          "工作目录"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/unimported/remove": {
+      "post": {
+        "description": "确认后移出仍未登记的文件，并返回保留原始字节的恢复目录。",
+        "operationId": "remove_selected_unimported_api_workdirs__wid__unimported_remove_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CleanupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CleanupResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Selected Unimported",
         "tags": [
           "工作目录"
         ]

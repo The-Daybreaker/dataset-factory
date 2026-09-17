@@ -1,4 +1,11 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EndpointConfigSummary, PromptInfo, SkillInfo } from "../../api";
@@ -16,6 +23,7 @@ const apiMock = vi.hoisted(() => ({
   activateEndpoint: vi.fn(),
   labelStream: vi.fn(),
   latestSession: vi.fn(),
+  listStrategies: vi.fn(),
 }));
 
 vi.mock("../../api", () => {
@@ -76,6 +84,7 @@ const SKILLS: SkillInfo[] = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  apiMock.listStrategies.mockResolvedValue([]);
   apiMock.listPrompts.mockResolvedValue(PROMPTS);
   apiMock.listSkills.mockResolvedValue(SKILLS);
   apiMock.listEndpoints.mockResolvedValue(ENDPOINTS);
@@ -93,6 +102,131 @@ beforeEach(() => {
 });
 
 describe("PromptWorkbench", () => {
+  const strategy = {
+    id: "a1",
+    name: "备用策略",
+    description: "",
+    prompt: "simple",
+    endpoint: "backup",
+    skills: ["h3-skill"],
+    available: true,
+    missing_refs: [],
+    created_at: "",
+    updated_at: "",
+  };
+
+  it("提示词草稿锁定策略切换，保存后应用完整组合", async () => {
+    apiMock.listStrategies.mockResolvedValue([strategy]);
+    apiMock.savePrompt.mockResolvedValue(undefined);
+    apiMock.activateEndpoint.mockResolvedValue(undefined);
+    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("h3-video"));
+
+    fireEvent.input(screen.getByLabelText("描述"), { target: { value: "新描述" } });
+    expect(screen.getByRole("button", { name: "切换策略" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "切换提示词" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "切换策略" })).toBeEnabled(),
+    );
+    apiMock.getPrompt.mockResolvedValue({
+      name: "simple",
+      description: "",
+      body: "简短",
+    });
+    await userEvent.click(screen.getByRole("button", { name: "切换策略" }));
+    await userEvent.click(screen.getByRole("button", { name: "备用策略" }));
+
+    await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("simple"));
+    expect(screen.getByText("backup · model-b")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "移除 Skill h3-skill" }),
+    ).toBeInTheDocument();
+  });
+
+  it("策略端点激活失败保留原提示词与端点并允许重试", async () => {
+    apiMock.listStrategies.mockResolvedValue([strategy]);
+    apiMock.activateEndpoint.mockRejectedValueOnce(new Error("端点不可用"));
+    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("h3-video"));
+    apiMock.getPrompt.mockResolvedValue({
+      name: "simple",
+      description: "",
+      body: "简短",
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "切换策略" }));
+    await userEvent.click(screen.getByRole("button", { name: "备用策略" }));
+
+    expect(await screen.findByText(/端点不可用/)).toBeInTheDocument();
+    expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
+    expect(screen.getByText("default · model-a")).toBeInTheDocument();
+  });
+
+  it("迟到的会话恢复不覆盖已经编辑的提示词", async () => {
+    let resolveSession!: (value: unknown) => void;
+    apiMock.latestSession.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSession = resolve;
+      }),
+    );
+    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("h3-video"));
+
+    fireEvent.input(screen.getByLabelText("描述"), { target: { value: "保留编辑" } });
+    await act(async () =>
+      resolveSession({
+        session_id: "old",
+        settings: { prompt_name: "simple", skill_names: ["h3-skill"] },
+        messages: [],
+      }),
+    );
+
+    expect(screen.getByLabelText("描述")).toHaveValue("保留编辑");
+    expect(apiMock.getPrompt).not.toHaveBeenCalledWith("simple");
+  });
+
+  it("改名后写正文失败，保留草稿并按新名称重试保存", async () => {
+    apiMock.renamePrompt.mockResolvedValue(undefined);
+    apiMock.savePrompt
+      .mockRejectedValueOnce(new Error("写入失败"))
+      .mockResolvedValueOnce(undefined);
+    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("h3-video"));
+
+    fireEvent.input(screen.getByLabelText("名称"), { target: { value: "renamed" } });
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(await screen.findByText(/写入失败/)).toBeInTheDocument();
+    expect(screen.getByLabelText("正文（Markdown）")).toHaveValue(FULL_PROMPT.body);
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(await screen.findByText("已保存提示词「renamed」")).toBeInTheDocument();
+    expect(apiMock.renamePrompt).toHaveBeenCalledTimes(1);
+    expect(apiMock.savePrompt).toHaveBeenLastCalledWith("renamed", {
+      description: FULL_PROMPT.description,
+      body: FULL_PROMPT.body,
+    });
+  });
+
+  it("读取旧提示词迟到时不覆盖新建草稿", async () => {
+    let resolvePrompt!: (value: typeof FULL_PROMPT) => void;
+    apiMock.getPrompt.mockReturnValueOnce(
+      new Promise<typeof FULL_PROMPT>((resolve) => {
+        resolvePrompt = resolve;
+      }),
+    );
+    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    await waitFor(() => expect(apiMock.getPrompt).toHaveBeenCalledWith("h3-video"));
+
+    await userEvent.click(screen.getByRole("button", { name: "切换提示词" }));
+    await userEvent.click(screen.getByRole("button", { name: "新建提示词" }));
+    fireEvent.input(screen.getByLabelText("名称"), { target: { value: "我的草稿" } });
+    await act(async () => resolvePrompt(FULL_PROMPT));
+
+    await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("我的草稿"));
+    expect(screen.getByLabelText("正文（Markdown）")).toHaveValue("");
+  });
+
   it("进页拉取列表与端点配置；无会话恢复时自动选中首条作为本轮基础提示词", async () => {
     render(<PromptWorkbench onNavigateToSettings={() => {}} />);
 
@@ -104,7 +238,7 @@ describe("PromptWorkbench", () => {
     expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
     expect(screen.getByLabelText("描述")).toHaveValue("视频打标");
     expect(screen.getByLabelText("正文（Markdown）")).toHaveValue("你是打标助手。");
-    expect(screen.getByText("基础提示词：h3-video")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "切换提示词" })).toBeEnabled();
   });
 
   it("改名保存：先 renamePrompt（改文件名）再按新名 savePrompt", async () => {
@@ -139,6 +273,7 @@ describe("PromptWorkbench", () => {
     await waitFor(() => {
       expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
     });
+    await userEvent.click(screen.getByRole("button", { name: "切换提示词" }));
     await userEvent.click(screen.getByRole("button", { name: "新建提示词" }));
     await userEvent.type(screen.getByLabelText("名称"), "new-prompt");
     await userEvent.type(screen.getByLabelText("描述"), "新条目");
@@ -241,11 +376,7 @@ describe("PromptWorkbench", () => {
     apiMock.listPrompts.mockResolvedValue([]);
     render(<PromptWorkbench onNavigateToSettings={() => {}} />);
 
-    await waitFor(() =>
-      expect(
-        screen.getByText("（提示词库为空——点「新建」写一条）"),
-      ).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(apiMock.listPrompts).toHaveBeenCalled());
     await userEvent.type(screen.getByLabelText("打标指令"), "打标");
     await userEvent.click(screen.getByRole("button", { name: "发送" }));
 
@@ -279,7 +410,8 @@ describe("PromptWorkbench", () => {
       expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
     });
     // 编辑器列的「删除」打开确认对话框；对话框内的「删除」才真正调接口（危险动作二次确认）。
-    await userEvent.click(screen.getByRole("button", { name: "删除" }));
+    await userEvent.click(screen.getByRole("button", { name: "切换提示词" }));
+    await userEvent.click(screen.getByRole("button", { name: "删除提示词 h3-video" }));
     const dialog = screen.getByRole("dialog");
     await userEvent.click(within(dialog).getByRole("button", { name: "删除" }));
 

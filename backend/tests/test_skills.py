@@ -26,6 +26,7 @@ from dataset_factory.skills import (
     read_skill_file,
     set_enabled,
 )
+from dataset_factory.skills.store import save_skill_file
 
 _FIXTURE_PACK = Path(__file__).parent / "fixtures" / "skill-pack"
 _FIXTURE_NAME = "example-caption-skill"
@@ -51,6 +52,73 @@ def test_parse_golden_fixture() -> None:
 
     assert name == _FIXTURE_NAME
     assert description.startswith("示例 skill")
+
+
+@pytest.mark.parametrize("path", ["SKILL.md", "references/detail.md"])
+def test_save_skill_file_roundtrip(temp_data_root: Path, path: str) -> None:
+    """保存主文件和参考文件后，磁盘与注入内容同步更新。"""
+    import_skill(_FIXTURE_PACK)
+    original = read_skill_file(_FIXTURE_NAME, path)
+    updated = original + "\n新增写作要求\n"
+
+    result = save_skill_file(_FIXTURE_NAME, path, updated, original_content=original)
+
+    assert result == updated
+    assert (_skills_dir(temp_data_root) / _FIXTURE_NAME / path).read_text(
+        encoding="utf-8"
+    ) == updated
+    assert "新增写作要求" in read_skill(_FIXTURE_NAME)
+
+
+def test_save_skill_file_rejects_stale_draft(temp_data_root: Path) -> None:
+    """迟到保存不能覆盖另一编辑器已写入的内容。"""
+    import_skill(_FIXTURE_PACK)
+    original = read_skill_file(_FIXTURE_NAME, "SKILL.md")
+    save_skill_file(
+        _FIXTURE_NAME, "SKILL.md", original + "\n先保存", original_content=original
+    )
+
+    with pytest.raises(SkillExistsError, match="其他写者"):
+        save_skill_file(
+            _FIXTURE_NAME, "SKILL.md", original + "\n迟到", original_content=original
+        )
+
+    assert read_skill_file(_FIXTURE_NAME, "SKILL.md") == original + "\n先保存"
+
+
+@pytest.mark.parametrize("description", ["old\n", "|\n  old\n", ">\n  old\n"])
+def test_save_skill_description_preserves_other_metadata(
+    temp_data_root: Path, tmp_path: Path, description: str
+) -> None:
+    """描述支持多行 YAML，修改时保留其他字段、注释和正文。"""
+    original = (
+        "---\n# 保留注释\nname: s\ndescription: "
+        + description
+        + "license: MIT\nmetadata: {owner: team}\n---\n\n正文\n"
+    )
+    import_skill(_make_source(tmp_path, original))
+
+    result = save_skill_file(
+        "s", "SKILL.md", original, original_content=original, description="新描述\n次行"
+    )
+
+    assert parse_skill_frontmatter(result) == ("s", "新描述\n次行")
+    assert "# 保留注释" in result
+    assert "license: MIT\nmetadata: {owner: team}\n---\n\n正文\n" in result
+
+
+@pytest.mark.parametrize("updated", ["正文", "---\nname: other\ndescription: d\n---\n"])
+def test_save_skill_file_rejects_invalid_metadata(
+    temp_data_root: Path, updated: str
+) -> None:
+    """无效元数据与包名变更不能损坏原文件。"""
+    import_skill(_FIXTURE_PACK)
+    original = read_skill_file(_FIXTURE_NAME, "SKILL.md")
+
+    with pytest.raises(SkillFormatError):
+        save_skill_file(_FIXTURE_NAME, "SKILL.md", updated, original_content=original)
+
+    assert read_skill_file(_FIXTURE_NAME, "SKILL.md") == original
 
 
 def test_parse_tolerates_extra_fields() -> None:

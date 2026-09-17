@@ -212,6 +212,16 @@ class SkillImportRequest(BaseModel):
     path: str = Field(description="skill 目录的本地路径（服务端可访问）")
 
 
+class SkillFileSaveRequest(BaseModel):
+    """保存技能文本文件，并核对编辑时的原始内容。"""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    content: str
+    original_content: str
+    description: str | None = None
+
+
 class SkillImportResponse(BaseModel):
     """导入结果。"""
 
@@ -331,6 +341,13 @@ class WorkdirInfo(BaseModel):
     path: str = Field(description="工作目录的规范绝对路径")
     title: str = Field(description="显示名（默认 = 目录名，可改、允许重名）")
     last_used_at: float = Field(description="最后使用时刻（Unix 秒，UTC）")
+
+
+class WorkdirStatsView(BaseModel):
+    """工作目录统计——当前素材清单的真实数量与字节数。"""
+
+    asset_count: int = Field(description="当前素材条目数（同主干多扩展只计当前一个）")
+    asset_bytes: int = Field(description="当前素材字节数（不包含产物与 .dsf）")
 
 
 class WorkdirCreateRequest(BaseModel):
@@ -525,6 +542,40 @@ class BatchView(BaseModel):
     product_count: int = Field(description="该批次现有产物 txt 数")
 
 
+class SnapshotTextView(BaseModel):
+    """快照中的提示词或 Skill 全文。"""
+
+    model_config = ConfigDict(strict=True)
+    name: str
+    body: str
+    sha256: str
+
+
+class SnapshotEndpointView(BaseModel):
+    """快照端点的公开配置白名单，不返回凭据字段。"""
+
+    model_config = ConfigDict(strict=True)
+    name: str
+    base_url: str
+    model: str
+    api_format: str
+    request_params: dict[str, object]
+    sha256: str
+
+
+class BatchSnapshotView(BaseModel):
+    """批次快照全文与最近一次运行的文件哈希比对。"""
+
+    endpoint: SnapshotEndpointView
+    prompt: SnapshotTextView
+    skills: list[SnapshotTextView]
+    built_at: str
+    tool_version: str
+    sha256: str
+    recorded_sha256: str | None
+    changed: bool
+
+
 class BatchCreateRequest(BaseModel):
     """POST /api/workdirs/{wid}/batches 的请求体：新建批次。
 
@@ -609,6 +660,18 @@ class RunStartRequest(BaseModel):
     mode: Literal["full", "retry"] = Field(
         description="full = 全量打未完成的条目；retry = 只打重试列表快照"
     )
+    items: list[str] | None = Field(
+        default=None,
+        min_length=1,
+        description="retry 模式的可选明确条目；省略时使用整份重试名单",
+    )
+
+    @model_validator(mode="after")
+    def validate_retry_selection(self) -> RunStartRequest:
+        """明确条目只能用于重试，防止全量运行静默忽略选择。"""
+        if self.items is not None and self.mode != "retry":
+            raise ValueError("items 只可用于 retry 模式")
+        return self
 
 
 class RunAccepted(BaseModel):

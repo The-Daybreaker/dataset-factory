@@ -79,6 +79,46 @@ def test_reimport_reports_unavailable_source_without_creating_files(
     assert not (root / "a.jpg").exists()
 
 
+def test_cli_forced_restore_only_recovers_selected_duplicate(tmp_path: Path) -> None:
+    """异名同容默认跳过，明确放行只恢复所选文件且来源内容不变。"""
+    root = tmp_path / "work"
+    source = tmp_path / "source"
+    root.mkdir()
+    source.mkdir()
+    names = {"a.jpg", "b.jpg", "c.jpg"}
+    for name in names:
+        (source / name).write_bytes(b"same-content")
+    WorkdirRegistry.register(root)
+    import_assets(root, source, force_names=names)
+    for name in ("b.jpg", "c.jpg"):
+        (root / name).rename(tmp_path / name)
+
+    skipped = reimport_missing(root, {"b.jpg", "c.jpg"})
+    result = runner.invoke(
+        app,
+        ["workdir", "reimport", str(root), "--name", "b.jpg", "--force-name", "b.jpg"],
+    )
+
+    assert len(skipped["imports"][0]["skipped_duplicate"]) == 2
+    assert result.exit_code == 0, result.stderr
+    assert json.loads(result.stdout)["imports"][0]["imported"] == ["b.jpg"]
+    assert (root / "b.jpg").read_bytes() == b"same-content"
+    assert (root / "a.jpg").read_bytes() == b"same-content"
+    assert not (root / "c.jpg").exists()
+    assert all((source / name).read_bytes() == b"same-content" for name in names)
+
+
+def test_forced_restore_rejects_files_outside_selection(tmp_path: Path) -> None:
+    """强制名单不能扩大本次明确选择的恢复范围。"""
+    root = tmp_path / "work"
+    root.mkdir()
+
+    with pytest.raises(WorkdirPathError, match="本次恢复名单"):
+        reimport_missing(root, set(), force_names={"a.jpg"})
+
+    assert WorkdirStore(root).read_import_records() == []
+
+
 def test_selected_import_rejects_path_and_unknown_reimport_name(tmp_path: Path) -> None:
     """选择参数不能含路径，重新导入仅接受登记过的文件名。"""
     root = tmp_path / "work"

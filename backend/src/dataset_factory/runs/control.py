@@ -12,7 +12,7 @@ from .errors import RunNotActiveError
 def current_run(workdir: Path, seq: int) -> dict[str, Any]:
     """读取正在持锁的指定批次进度，不将历史快照当作运行中。"""
     dsf = workdir / ".dsf"
-    with maintenance_guard(workdir):
+    with maintenance_guard(workdir, timeout=10):
         owner = read_live_occupier(dsf)
         if owner is None or owner.get("batch") != f"s{seq}":
             raise RunNotActiveError("该批次当前没有进行中的跑批。")
@@ -37,7 +37,7 @@ def current_run(workdir: Path, seq: int) -> dict[str, Any]:
 
 def request_stop(workdir: Path, seq: int) -> str:
     """请求当前运行在安全点停止；运行 ID 防止误停后续运行。"""
-    with maintenance_guard(workdir):
+    with maintenance_guard(workdir, timeout=10):
         progress = current_run(workdir, seq)
         if progress["status"] in {"completed", "interrupted", "failed"}:
             raise RunNotActiveError("该批次当前没有进行中的跑批。")

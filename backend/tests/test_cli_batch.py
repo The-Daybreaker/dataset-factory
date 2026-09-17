@@ -260,8 +260,18 @@ def test_cli_export_preserves_existing_zip_and_original_names(prepared: Path) ->
     assert destination.read_bytes() == original
 
 
-def test_strategy_crud_and_missing_reference_rebind(prepared: Path) -> None:
+def test_strategy_crud_and_missing_reference_rebind(
+    prepared: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """库策略失效可查看并重新绑定，复制与删除不影响已有批次。"""
+    tokens = iter(["-first12345x", "-copy123456x"])
+
+    def random_token(size: int) -> str:
+        return next(tokens)
+
+    monkeypatch.setattr(
+        "dataset_factory.strategies.store.secrets.token_urlsafe", random_token
+    )
     created = runner.invoke(
         app,
         ["strategy", "add", "Reusable", "--endpoint", "main", "--prompt", "caption"],
@@ -291,16 +301,8 @@ def test_strategy_crud_and_missing_reference_rebind(prepared: Path) -> None:
     removed = runner.invoke(app, ["strategy", "rm", identity, "--yes"])
     remaining = runner.invoke(app, ["strategy", "list"])
 
-    assert (
-        created.exit_code
-        == missing.exit_code
-        == rebound.exit_code
-        == edited.exit_code
-        == copied.exit_code
-        == removed.exit_code
-        == remaining.exit_code
-        == 0
-    )
+    for result in (created, missing, rebound, edited, copied, removed, remaining):
+        assert result.exit_code == 0, result.stderr
     assert json.loads(missing.stdout)["available"] is False
     assert json.loads(rebound.stdout)["available"] is True
     assert json.loads(edited.stdout)["description"] == "New description"
@@ -308,6 +310,32 @@ def test_strategy_crud_and_missing_reference_rebind(prepared: Path) -> None:
     assert refused.exit_code == 2
     assert len(json.loads(remaining.stdout)) == 1
     assert (prepared / ".dsf" / "strategies" / "s1.json").is_file()
+
+
+def test_legacy_strategy_id_accepts_cli_option_terminator(
+    prepared: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """旧版连字符开头的 ID 可经标准参数分隔符查看、编辑和删除。"""
+
+    def legacy_id() -> str:
+        return "-legacy1234"
+
+    monkeypatch.setattr("dataset_factory.strategies.store._generate_id", legacy_id)
+    entry = create_strategy(
+        name="Legacy", endpoint="main", prompt="caption", skills=[], description=""
+    )
+
+    shown = runner.invoke(app, ["strategy", "show", "--", entry.id])
+    edited = runner.invoke(
+        app, ["strategy", "edit", "--name", "Renamed", "--", entry.id]
+    )
+    removed = runner.invoke(app, ["strategy", "rm", "--yes", "--", entry.id])
+
+    for result in (shown, edited, removed):
+        assert result.exit_code == 0, result.stderr
+    assert json.loads(shown.stdout)["id"] == entry.id
+    assert json.loads(edited.stdout)["name"] == "Renamed"
+    assert json.loads(removed.stdout)["deleted"] == entry.id
 
 
 def test_batch_removal_requires_confirmation_and_clears_attached_state(

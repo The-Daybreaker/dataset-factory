@@ -17,7 +17,7 @@ test.describe("界面冒烟", () => {
     await expect(page.getByText("打标流水线工具")).toBeVisible();
     await expect(page.getByText("v0.1.0")).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "提示词", exact: true }),
+      page.getByRole("button", { name: "策略", exact: true }),
     ).toBeVisible();
     await expect(
       page.getByRole("button", { name: "设置", exact: true }),
@@ -26,20 +26,21 @@ test.describe("界面冒烟", () => {
 });
 
 test.describe("提示词工作台", () => {
-  test("新建提示词 → 列表卡片出现并被选为本轮基础提示词（后端写盘 + 界面刷新）", async ({ page }) => {
+  test("新建提示词后保存并在下拉库中出现", async ({ page }) => {
     await page.goto("/");
+    await page.getByRole("button", { name: "切换提示词" }).click();
     await page.getByRole("button", { name: "新建提示词" }).click();
 
-    await page.getByLabel("名称").fill("e2e-prompt");
-    await page.getByLabel("描述").fill("E2E 建的条目");
+    await page.getByLabel("名称", { exact: true }).fill("e2e-prompt");
+    await page.getByLabel("描述", { exact: true }).fill("E2E 建的条目");
     await page.getByLabel("正文（Markdown）").fill("你是打标助手（E2E）");
-    await page.getByRole("button", { name: "保存" }).click();
+    await page.getByRole("button", { name: "保存", exact: true }).click();
 
     await expect(page.getByText("已保存提示词「e2e-prompt」")).toBeVisible();
-    await expect(page.getByText("基础提示词：e2e-prompt")).toBeVisible();
-    // 列表里出现新卡片（精确匹配名称文本，避免命中其他含 e2e-prompt 的元素）。
+    await expect(page.getByLabel("名称", { exact: true })).toHaveValue("e2e-prompt");
+    await page.getByRole("button", { name: "切换提示词" }).click();
     await expect(
-      page.getByRole("button", { name: /e2e-prompt E2E 建的条目/ }),
+      page.getByRole("button", { name: "选择提示词 e2e-prompt", exact: true }),
     ).toBeVisible();
   });
 });
@@ -48,10 +49,11 @@ test.describe("打标全链路", () => {
   test("发指令打标：假模型回复直达界面（浏览器 → HTTP → 引擎 → 假端点）", async ({ page }) => {
     // 先建一条基础提示词（打标请求要求已选定基础提示词）；保存后自动选中。
     await page.goto("/");
+    await page.getByRole("button", { name: "切换提示词" }).click();
     await page.getByRole("button", { name: "新建提示词" }).click();
-    await page.getByLabel("名称").fill("e2e-label-prompt");
+    await page.getByLabel("名称", { exact: true }).fill("e2e-label-prompt");
     await page.getByLabel("正文（Markdown）").fill("你是打标助手");
-    await page.getByRole("button", { name: "保存" }).click();
+    await page.getByRole("button", { name: "保存", exact: true }).click();
     await expect(page.getByText("已保存提示词「e2e-label-prompt」")).toBeVisible();
 
     // 发指令、等待假模型回复上屏（请求条里应带着刚建的基础提示词）。

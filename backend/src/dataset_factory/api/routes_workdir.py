@@ -50,6 +50,7 @@ from ..workdir.cleanup import (
     cleanup_runs,
     preview_cleanup,
     preview_run_cleanup,
+    remove_unimported,
 )
 from ..workdir.deletion import (
     DeletionPreview,
@@ -64,6 +65,7 @@ from ..workdir.relocation import (
     relocation_status,
     retry_relocation_cleanup,
 )
+from ..workdir.stats import scan_workdir_stats
 from .schemas import (
     ImportAccepted,
     ImportRecord,
@@ -77,6 +79,7 @@ from .schemas import (
     WorkdirRelocateAccepted,
     WorkdirRelocateRequest,
     WorkdirRelocationStatus,
+    WorkdirStatsView,
 )
 
 router = APIRouter(prefix="/api/workdirs", tags=["工作目录"])
@@ -144,6 +147,19 @@ def delete_registered_workdir(wid: str, body: WorkdirDeleteRequest) -> DeletionR
 def clean_selected_products(wid: str, body: CleanupRequest) -> CleanupResult:
     """确认后清理选中的孤立产物，删除失败时返回暂存位置。"""
     return cleanup_products(Path(WorkdirRegistry.get(wid).path), body.names)
+
+
+@router.post(
+    "/{wid}/unimported/remove",
+    response_model=CleanupResult,
+    responses={
+        code: {"model": Problem, "content": {"application/problem+json": {}}}
+        for code in (400, 404, 409)
+    },
+)
+def remove_selected_unimported(wid: str, body: CleanupRequest) -> CleanupResult:
+    """确认后移出仍未登记的文件，并返回保留原始字节的恢复目录。"""
+    return remove_unimported(Path(WorkdirRegistry.get(wid).path), body.names)
 
 
 @router.get(
@@ -394,7 +410,9 @@ def _spawn_import_task(
             if rebuild:
                 return rebuild_import_records(workdir, should_stop=should_stop)
             if restore:
-                return reimport_missing(workdir, names, should_stop=should_stop)
+                return reimport_missing(
+                    workdir, names, force_names=force_names, should_stop=should_stop
+                )
             return import_assets(
                 workdir,
                 source,
@@ -504,6 +522,22 @@ def list_imports(wid: str) -> list[ImportRecord]:
     return [ImportRecord.model_validate(record) for record in records]
 
 
+@router.get(
+    "/{wid}/stats",
+    response_model=WorkdirStatsView,
+    responses={
+        code: {"model": Problem, "content": {"application/problem+json": {}}}
+        for code in (400, 404, 409)
+    },
+)
+def get_workdir_stats(wid: str) -> WorkdirStatsView:
+    """当前在盘素材数量与字节数，含尚未登记的素材。"""
+    stats = scan_workdir_stats(Path(WorkdirRegistry.get(wid).path))
+    return WorkdirStatsView(
+        asset_count=stats.asset_count, asset_bytes=stats.asset_bytes
+    )
+
+
 @router.post(
     "/{wid}/imports",
     status_code=202,
@@ -555,6 +589,9 @@ class ReimportRequest(BaseModel):
     """恢复指定文件，省略名单则恢复全部可找回的缺失素材。"""
 
     names: list[str] | None = None
+    force_names: list[str] = Field(
+        default_factory=list, description="异名同容时仍按新名恢复的文件名清单"
+    )
 
 
 @router.post(
@@ -573,6 +610,7 @@ async def reimport_workdir(
         root,
         None,
         restore=True,
+        force_names=frozenset(body.force_names),
         names=set(body.names) if body.names is not None else None,
     )
     return _accepted_response(ImportAccepted(task_id=task_id))

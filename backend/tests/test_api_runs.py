@@ -9,6 +9,7 @@ sleep 赌调度）。
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 from collections.abc import Iterator
@@ -26,6 +27,7 @@ from dataset_factory.prompts import Prompt, save_prompt
 from dataset_factory.runs import RunJournal, add_retry_items, read_retry_list
 from dataset_factory.strategies import create_batch, set_batch_active
 from dataset_factory.workdir import WorkdirRegistry, WorkdirStore, import_assets
+from dataset_factory.workdir.locks import RunLock
 
 _WAIT_TIMEOUT = 10.0
 
@@ -128,8 +130,142 @@ def test_start_run_accepts_and_completes(
                 encoding="utf-8"
             )
             assert '"status": "completed"' in run_json
+            history = await http.get(f"/api/workdirs/{wid}/batches/s1/runs/latest")
+            assert history.status_code == 200
+            summary = history.json()
+            assert summary["record"]["run_id"] == run_id
+            assert summary["record"]["counters"]["succeeded"] == 2
+            assert summary["log_path"] == str(
+                workdir / ".dsf" / "runs" / run_id / "run.log"
+            )
+            logs = await http.get(f"/api/workdirs/{wid}/batches/s1/runs/{run_id}/text")
+            assert logs.status_code == 200
+            assert "启动" in logs.json()["text"]
+            items = await http.get(
+                f"/api/workdirs/{wid}/batches/s1/runs/{run_id}/text?file=items.jsonl"
+            )
+            assert items.status_code == 200
+            assert "cat_001" in items.json()["text"]
+
+            record_path = workdir / ".dsf" / "runs" / run_id / "run.json"
+            unfinished = json.loads(run_json)
+            unfinished["status"] = "running"
+            unfinished["finished_at"] = None
+            record_path.write_text(json.dumps(unfinished), encoding="utf-8")
+            recovered = await http.get(f"/api/workdirs/{wid}/batches/s1/runs/latest")
+            assert recovered.json()["record"]["status"] == "interrupted"
+            assert recovered.json()["record"]["finished_at"] is None
+            assert json.loads(record_path.read_text(encoding="utf-8")) == unfinished
 
     asyncio.run(scenario())
+
+
+def test_start_failure_remains_readable_and_allows_next_run(
+    batch_env: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """后台抢锁失败可在断流后读取原因，释放占用后再次启动可完成。"""
+    workdir, wid = batch_env
+    _inject_fake_completer(monkeypatch, GatedCompleter([]))
+    lock = RunLock(WorkdirStore(workdir).dsf_path)
+    lock.acquire({"batch": "s1", "pid": 123})
+
+    async def scenario() -> None:
+        transport = httpx.ASGITransport(app=create_app(frontend_dir=Path("no-dist")))
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as http:
+            url = f"/api/workdirs/{wid}/batches/s1/runs"
+            accepted = await http.post(url, json={"mode": "full"})
+            assert accepted.status_code == 202
+            deadline = time.monotonic() + _WAIT_TIMEOUT
+            while time.monotonic() < deadline:
+                progress = await http.get(f"{url}/current")
+                if (
+                    progress.status_code == 200
+                    and progress.json()["status"] == "failed"
+                ):
+                    break
+                await asyncio.sleep(0.01)
+            else:
+                pytest.fail("后台失败状态未保留")
+            assert "占用" in progress.json()["error"]
+            assert (await http.get(f"{url}/current")).json()["status"] == "failed"
+            assert (await http.get(f"{url}/stream")).status_code == 404
+            lock.release()
+            assert (await http.post(url, json={"mode": "full"})).status_code == 202
+            await _wait_current_404(http, wid)
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        lock.release()
+
+    assert (workdir / "s1__cat_001.txt").exists()
+
+
+def test_explicit_retry_api_preserves_other_retry_entries(
+    batch_env: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """明确重打经真实 HTTP 只执行选中条目，不消费既有的其他重试意愿。"""
+    workdir, wid = batch_env
+    for stem in ("cat_001", "cat_002"):
+        (workdir / f"s1__{stem}.txt").write_text("旧描述", encoding="utf-8")
+    add_retry_items(workdir, 1, ["cat_002"])
+    fake = GatedCompleter([])
+    _inject_fake_completer(monkeypatch, fake)
+
+    async def scenario() -> None:
+        transport = httpx.ASGITransport(app=create_app(frontend_dir=Path("no-dist")))
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as http:
+            response = await http.post(
+                f"/api/workdirs/{wid}/batches/s1/runs",
+                json={"mode": "retry", "items": ["cat_001"]},
+            )
+            assert response.status_code == 202
+            await _wait_current_404(http, wid)
+
+    asyncio.run(scenario())
+
+    assert fake.calls == 1
+    assert (workdir / "s1__cat_001.txt").read_text(encoding="utf-8") == "打标结果"
+    assert (workdir / "s1__cat_002.txt").read_text(encoding="utf-8") == "旧描述"
+    assert read_retry_list(workdir, 1) == ["cat_002"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"mode": "full", "items": ["cat_001"]},
+        {"mode": "retry", "items": []},
+        {"mode": "retry", "items": ["not-imported"]},
+        {"mode": "retry", "items": ["cat_001"]},
+    ],
+)
+def test_explicit_retry_api_rejects_invalid_selection(
+    batch_env: tuple[Path, str], body: dict[str, object]
+) -> None:
+    """空列表、模式冲突、未登记及排队中素材均在受理前拒绝，名单不变。"""
+    workdir, wid = batch_env
+    with TestClient(create_app(frontend_dir=Path("no-dist"))) as client:
+        response = client.post(f"/api/workdirs/{wid}/batches/s1/runs", json=body)
+
+    assert response.status_code == 422
+    assert read_retry_list(workdir, 1) == []
+
+
+def test_run_history_empty_and_missing_batch(batch_env: tuple[Path, str]) -> None:
+    """尚未跑批的空摘要与批次不存在的 404 分开表达。"""
+    _, wid = batch_env
+    with TestClient(create_app(frontend_dir=Path("no-dist"))) as client:
+        response = client.get(f"/api/workdirs/{wid}/batches/s1/runs/latest")
+        assert response.status_code == 200
+        assert response.json() == {"record": None, "log_path": None, "items_path": None}
+        assert (
+            client.get(f"/api/workdirs/{wid}/batches/s99/runs/latest").status_code
+            == 404
+        )
 
 
 def test_start_run_rejects_second_run_with_409(
@@ -299,6 +435,12 @@ def test_current_run_reports_progress_then_404(
             assert running["mode"] == "full"
             assert running["counters"]["planned"] == 2
             assert running["error"] is None
+
+            history = await http.get(f"/api/workdirs/{wid}/batches/s1/runs/latest")
+            assert history.status_code == 200
+            assert history.json()["record"]["run_id"] == running["run_id"]
+            assert history.json()["record"]["status"] == "running"
+            assert history.json()["record"]["counters"] == running["counters"]
 
             gates[0].set()
             gates[1].set()

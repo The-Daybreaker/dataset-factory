@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -14,6 +16,7 @@ from dataset_factory.api import create_app
 from dataset_factory.llm import create_config
 from dataset_factory.prompts import Prompt, delete_prompt, save_prompt
 from dataset_factory.skills import import_skill
+from dataset_factory.workdir import WorkdirRegistry, WorkdirStore
 
 _FIXTURE_PACK = Path(__file__).parent / "fixtures" / "skill-pack"
 _SKILL_NAME = "example-caption-skill"
@@ -162,6 +165,120 @@ def test_library_unknown_id_returns_problem_json_404(
 # --------------------------------------------------------------------------
 # 批次
 # --------------------------------------------------------------------------
+
+
+def test_snapshot_reads_stored_content_after_library_edit(
+    client: TestClient, assets: None, wid: str
+) -> None:
+    """快照读取返回应用时的内容及原始字节哈希，不受库正文改写影响。"""
+    strategy = client.post("/api/strategies", json=_strategy_payload()).json()
+    client.post(
+        f"/api/workdirs/{wid}/batches", json={"type": "library", "id": strategy["id"]}
+    )
+    path = WorkdirStore(Path(WorkdirRegistry.get(wid).path)).strategies_dir / "s1.json"
+    original = path.read_bytes()
+    save_prompt(Prompt(name="详细描述", description="", body="新的库正文"))
+
+    response = client.get(f"/api/workdirs/{wid}/batches/s1/snapshot")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["prompt"]["body"] == "你是打标器"
+    assert body["sha256"] == hashlib.sha256(original).hexdigest()
+    assert body["recorded_sha256"] is None
+    assert body["changed"] is False
+    assert "api_key" not in body["endpoint"]
+    assert path.read_bytes() == original
+
+
+def test_snapshot_warns_after_manual_change_without_rewriting(
+    client: TestClient, assets: None, wid: str
+) -> None:
+    """现算快照哈希与本批最近运行对比，手改只标记且不回写。"""
+    client.post(
+        f"/api/workdirs/{wid}/batches",
+        json={
+            "type": "scratch",
+            "name": "测试",
+            "endpoint": "main",
+            "prompt": "详细描述",
+        },
+    )
+    store = WorkdirStore(Path(WorkdirRegistry.get(wid).path))
+    path = store.strategies_dir / "s1.json"
+    original_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    run_dir = store.runs_dir / "20260917-120000"
+    run_dir.mkdir(parents=True)
+    (run_dir / "run.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "batch": 1,
+                "mode": "full",
+                "trigger": "web",
+                "strategy_hash": original_hash,
+                "snapshot": "strategies/s1.json",
+                "dsf_version": "0.1.0",
+                "status": "completed",
+                "counters": {
+                    "planned": 0,
+                    "attempted": 0,
+                    "succeeded": 0,
+                    "failed": 0,
+                    "skipped": 0,
+                },
+                "started_at": "2026-09-17T12:00:00Z",
+                "finished_at": "2026-09-17T12:00:01Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["prompt"]["body"] = "手动修改正文"
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    changed = path.read_bytes()
+
+    response = client.get(f"/api/workdirs/{wid}/batches/s1/snapshot")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["prompt"]["body"] == "手动修改正文"
+    assert body["recorded_sha256"] == original_hash
+    assert body["sha256"] == hashlib.sha256(changed).hexdigest()
+    assert body["changed"] is True
+    assert path.read_bytes() == changed
+
+
+@pytest.mark.parametrize("contents", [b"not-json", b"\xff", b'{"endpoint": null}'])
+def test_snapshot_invalid_file_returns_problem(
+    client: TestClient, assets: None, wid: str, contents: bytes
+) -> None:
+    """损坏快照返回可处理的错误且不修写原文件。"""
+    client.post(
+        f"/api/workdirs/{wid}/batches",
+        json={
+            "type": "scratch",
+            "name": "测试",
+            "endpoint": "main",
+            "prompt": "详细描述",
+        },
+    )
+    path = WorkdirStore(Path(WorkdirRegistry.get(wid).path)).strategies_dir / "s1.json"
+    path.write_bytes(contents)
+
+    response = client.get(f"/api/workdirs/{wid}/batches/s1/snapshot")
+
+    assert response.status_code == 404
+    assert response.headers["content-type"] == "application/problem+json"
+    assert path.read_bytes() == contents
+
+
+def test_snapshot_unknown_batch_returns_problem(client: TestClient, wid: str) -> None:
+    """未创建的批次不可通过快照接口读取。"""
+    response = client.get(f"/api/workdirs/{wid}/batches/s99/snapshot")
+
+    assert response.status_code == 404
+    assert response.json()["type"] == "batch-not-found"
 
 
 def test_create_batch_from_library_with_location(

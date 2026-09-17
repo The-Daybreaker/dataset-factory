@@ -1,5 +1,6 @@
 """工作目录清理接口：预览与选择性清理的真实文件行为。"""
 
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -9,10 +10,78 @@ from fastapi.testclient import TestClient
 
 from dataset_factory.api import create_app
 from dataset_factory.workdir import WorkdirPathError, WorkdirRegistry, WorkdirStore
+from dataset_factory.workdir.cleanup import remove_unimported
 from dataset_factory.workdir.locks import RunLock, import_guard, maintenance_record
 from dataset_factory.workdir.relocation import relocate_workdir
 
 pytestmark = pytest.mark.usefixtures("temp_data_root")
+
+
+def test_remove_unimported_preserves_exact_files_in_recovery(tmp_path: Path) -> None:
+    """按完整名称移出一份文件，保留同主干文件、工具产物和恢复字节。"""
+    store = WorkdirStore(tmp_path)
+    for name in ("sample.png", "sample.jpg", "s1__sample.txt"):
+        (tmp_path / name).write_bytes(name.encode())
+
+    result = remove_unimported(tmp_path, ["sample.png", "sample.png"])
+
+    assert result.count == 1
+    assert result.recovery_path is not None
+    assert (Path(result.recovery_path) / "sample.png").read_bytes() == b"sample.png"
+    assert not (tmp_path / "sample.png").exists()
+    assert (tmp_path / "sample.jpg").read_bytes() == b"sample.jpg"
+    assert (tmp_path / "s1__sample.txt").read_bytes() == b"s1__sample.txt"
+    assert store.read_import_records() == []
+
+
+@pytest.mark.parametrize("name", ["registered.jpg", "s1__a.txt", "../outside", ""])
+def test_remove_unimported_rejects_whole_stale_selection(
+    tmp_path: Path, name: str
+) -> None:
+    """名单中混入在册、产物或非法名称时整单拒绝，不先移动有效项。"""
+    store = WorkdirStore(tmp_path)
+    for filename in ("fresh.png", "registered.jpg", "s1__a.txt"):
+        (tmp_path / filename).write_bytes(filename.encode())
+    store.append_import_record(
+        {
+            "source": str(tmp_path),
+            "imported_at": "2026-09-17T00:00:00Z",
+            "files": [
+                {
+                    "name": "registered.jpg",
+                    "sha256": hashlib.sha256(b"registered.jpg").hexdigest(),
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(WorkdirPathError):
+        remove_unimported(tmp_path, ["fresh.png", name])
+
+    assert (tmp_path / "fresh.png").read_bytes() == b"fresh.png"
+    assert (tmp_path / "registered.jpg").read_bytes() == b"registered.jpg"
+    assert (tmp_path / "s1__a.txt").read_bytes() == b"s1__a.txt"
+
+
+def test_http_remove_unimported_returns_recoverable_file(tmp_path: Path) -> None:
+    """HTTP 精确移出未导入文件，返回可恢复位置，其他文件保持原样。"""
+    WorkdirStore(tmp_path)
+    entry = WorkdirRegistry.register(tmp_path)
+    (tmp_path / "sample.png").write_bytes(b"selected")
+    (tmp_path / "sample.jpg").write_bytes(b"keep")
+    client = TestClient(create_app(frontend_dir=tmp_path / "frontend"))
+
+    response = client.post(
+        f"/api/workdirs/{entry.id}/unimported/remove", json={"names": ["sample.png"]}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["count"] == 1
+    assert not (tmp_path / "sample.png").exists()
+    assert (tmp_path / "sample.jpg").read_bytes() == b"keep"
+    recovery = Path(response.json()["recovery_path"])
+    assert recovery.is_relative_to(tmp_path / ".dsf" / "trash")
+    assert (recovery / "sample.png").read_bytes() == b"selected"
 
 
 def test_http_retry_completes_partial_copy_after_app_restart(tmp_path: Path) -> None:
@@ -274,7 +343,7 @@ def test_run_cleanup_preserves_unselected_records_and_products(
     assert (tmp_path / "s1__a.txt").read_bytes() == b"caption"
 
 
-@pytest.mark.parametrize("endpoint", ["cleanup", "cleanup-runs"])
+@pytest.mark.parametrize("endpoint", ["cleanup", "cleanup-runs", "unimported/remove"])
 def test_cleanup_rejects_running_workdir(
     tmp_path: Path, temp_data_root: Path, endpoint: str
 ) -> None:
@@ -294,7 +363,7 @@ def test_cleanup_rejects_running_workdir(
     assert response.status_code == 409
 
 
-@pytest.mark.parametrize("endpoint", ["cleanup", "cleanup-runs"])
+@pytest.mark.parametrize("endpoint", ["cleanup", "cleanup-runs", "unimported/remove"])
 @pytest.mark.parametrize("name", ["../outside", "..\\outside", "missing"])
 def test_cleanup_invalid_selection_is_rejected(
     tmp_path: Path, temp_data_root: Path, endpoint: str, name: str
@@ -309,8 +378,9 @@ def test_cleanup_invalid_selection_is_rejected(
     assert result.status_code == 400
 
 
+@pytest.mark.parametrize("endpoint", ["cleanup", "unimported/remove"])
 def test_cleanup_rejects_import_in_progress(
-    tmp_path: Path, temp_data_root: Path
+    tmp_path: Path, temp_data_root: Path, endpoint: str
 ) -> None:
     """导入期间不能清理产物，以免恢复配对与清理竞争。"""
     store = WorkdirStore(tmp_path)
@@ -321,7 +391,7 @@ def test_cleanup_rejects_import_in_progress(
 
     with import_guard(store.dsf_path):
         result = client.post(
-            f"/api/workdirs/{entry.id}/cleanup", json={"names": [path.name]}
+            f"/api/workdirs/{entry.id}/{endpoint}", json={"names": [path.name]}
         )
 
     assert result.status_code == 409

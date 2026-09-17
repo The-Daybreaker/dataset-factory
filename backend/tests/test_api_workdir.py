@@ -141,6 +141,73 @@ def test_get_unknown_wid_returns_problem_json_404(client: TestClient) -> None:
     assert "detail" in body
 
 
+def test_workdir_stats_counts_current_assets_and_bytes(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """统计体积分母用当前素材清单，不为同一主干的多扩展名重复计数。"""
+    target = tmp_path / "photos"
+    target.mkdir()
+    entry = WorkdirRegistry.register(target)
+    (target / "cat_001.jpg").write_bytes(b"abc")
+    (target / "cat_001.png").write_bytes(b"current-png")
+    (target / "dog_001.mp4").write_bytes(b"xy")
+    (target / "notes.txt").write_bytes(b"ignore")
+
+    response = client.get(f"/api/workdirs/{entry.id}/stats")
+
+    assert response.status_code == 200
+    assert response.json() == {"asset_count": 2, "asset_bytes": 13}
+
+
+@pytest.mark.parametrize("name", [None, "中文素材.png"])
+def test_workdir_stats_supports_empty_and_unicode_assets(
+    client: TestClient, tmp_path: Path, name: str | None
+) -> None:
+    """空目录统计为零，中文名按真实字节计数且原始内容保持不变。"""
+    entry = WorkdirRegistry.register(tmp_path)
+    if name is not None:
+        (tmp_path / name).write_bytes(b"image")
+
+    response = client.get(f"/api/workdirs/{entry.id}/stats")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "asset_count": int(name is not None),
+        "asset_bytes": 5 if name is not None else 0,
+    }
+    if name is not None:
+        assert (tmp_path / name).read_bytes() == b"image"
+
+
+@pytest.mark.parametrize("stage", ["scan", "stat"])
+def test_workdir_stats_read_failure_returns_actionable_problem(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    """扫描或取体积失败时明确报错，不返回成功的空统计或部分总量。"""
+    from dataset_factory.workdir import stats
+
+    entry = WorkdirRegistry.register(tmp_path)
+
+    def denied_scan(workdir: Path) -> dict[str, Path]:
+        raise PermissionError("denied")
+
+    def vanished_asset(workdir: Path, asset: Path) -> Path:
+        return tmp_path / "vanished.jpg"
+
+    if stage == "scan":
+        monkeypatch.setattr(stats, "scan_assets", denied_scan)
+    else:
+        (tmp_path / "image.jpg").write_bytes(b"image")
+        monkeypatch.setattr(stats, "confine_to_workdir", vanished_asset)
+
+    response = client.get(f"/api/workdirs/{entry.id}/stats")
+
+    assert response.status_code == 400
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json()["type"] == "workdir-path-invalid"
+    assert "重试" in response.json()["detail"]
+
+
 def test_get_imports_unknown_wid_returns_problem_json_404(
     client: TestClient,
 ) -> None:

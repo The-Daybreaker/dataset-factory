@@ -118,6 +118,109 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/filesystem": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Directory
+         * @description 列出服务器当前层目录，可按后缀筛选文件；默认从用户主目录开始。
+         *
+         *     浏览范围由服务进程的系统权限决定；文件预览端点继续使用各自的路径边界。
+         *     扫描时消失或无权读取的单项计入 unavailable_count，不影响其他条目。
+         */
+        get: operations["list_directory_api_filesystem_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/filesystem/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Filesystem Capabilities
+         * @description 按后端环境报告能力，不推断浏览器是否与后端同机。
+         */
+        get: operations["filesystem_capabilities_api_filesystem_capabilities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/filesystem/directories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Directory
+         * @description 创建一层新目录，已有同名项不覆盖；文件操作失败明确反馈。
+         */
+        post: operations["create_directory_api_filesystem_directories_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/filesystem/open": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Open Directory
+         * @description 在后端的桌面文件管理器中显示目录，不读取其文件内容。
+         */
+        post: operations["open_directory_api_filesystem_open_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/filesystem/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rename Directory
+         * @description 受理目录改名，已登记工作目录通过搬迁流程保留身份和恢复记录。
+         */
+        post: operations["rename_directory_api_filesystem_rename_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/label": {
         parameters: {
             query?: never;
@@ -481,7 +584,11 @@ export interface paths {
          * @description 读技能包内一个可预览文件的文本内容（UTF-8；仅 SKILL.md 与 references/ 开放）。
          */
         get: operations["read_package_file_api_skills__name__files__path__get"];
-        put?: never;
+        /**
+         * Save Package File
+         * @description 写回现有技能文本文件，SKILL.md 同时校验其 frontmatter。
+         */
+        put: operations["save_package_file_api_skills__name__files__path__put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -924,6 +1031,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workdirs/{wid}/batches/{sN}/runs/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Latest Run
+         * @description 按批次回读最近一次磁盘记录；尚无运行时返回空摘要。
+         */
+        get: operations["latest_run_api_workdirs__wid__batches__sN__runs_latest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workdirs/{wid}/batches/{sN}/runs/stop": {
         parameters: {
             query?: never;
@@ -959,6 +1086,46 @@ export interface paths {
          *     事件经线程安全队列从跑批线程转发到流。
          */
         get: operations["stream_run_api_workdirs__wid__batches__sN__runs_stream_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/batches/{sN}/runs/{run_id}/text": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run Text
+         * @description 指定运行查看日志，打开后不因新运行出现而切换文件。
+         */
+        get: operations["run_text_api_workdirs__wid__batches__sN__runs__run_id__text_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/batches/{sN}/snapshot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Batch Snapshot
+         * @description 只读返回已保存的全文；哈希不一致仅标记，不改变运行资格。
+         */
+        get: operations["get_batch_snapshot_api_workdirs__wid__batches__sN__snapshot_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1325,6 +1492,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workdirs/{wid}/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Workdir Stats
+         * @description 当前在盘素材数量与字节数，含尚未登记的素材。
+         */
+        get: operations["get_workdir_stats_api_workdirs__wid__stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/unimported/remove": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove Selected Unimported
+         * @description 确认后移出仍未登记的文件，并返回保留原始字节的恢复目录。
+         */
+        post: operations["remove_selected_unimported_api_workdirs__wid__unimported_remove_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1382,6 +1589,26 @@ export interface components {
             batch: string;
             /** Items */
             items: components["schemas"]["IntegrityItem"][];
+        };
+        /**
+         * BatchSnapshotView
+         * @description 批次快照全文与最近一次运行的文件哈希比对。
+         */
+        BatchSnapshotView: {
+            /** Built At */
+            built_at: string;
+            /** Changed */
+            changed: boolean;
+            endpoint: components["schemas"]["SnapshotEndpointView"];
+            prompt: components["schemas"]["SnapshotTextView"];
+            /** Recorded Sha256 */
+            recorded_sha256: string | null;
+            /** Sha256 */
+            sha256: string;
+            /** Skills */
+            skills: components["schemas"]["SnapshotTextView"][];
+            /** Tool Version */
+            tool_version: string;
         };
         /**
          * BatchUpdateRequest
@@ -1508,6 +1735,16 @@ export interface components {
             model: string;
         };
         /**
+         * CreateDirectoryRequest
+         * @description 在既有父目录下创建一层目录。
+         */
+        CreateDirectoryRequest: {
+            /** Name */
+            name: string;
+            /** Parent */
+            parent: string;
+        };
+        /**
          * DeletionPreview
          * @description 二次确认展示的实际删除范围。
          */
@@ -1532,6 +1769,51 @@ export interface components {
             deleted: boolean;
             /** Remaining Path */
             remaining_path: string | null;
+        };
+        /**
+         * DirectoryEntry
+         * @description 当前目录的一项；文件只提供元信息。
+         */
+        DirectoryEntry: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "directory" | "file";
+            /** Modified At */
+            modified_at: string;
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
+            /** Size */
+            size: number | null;
+        };
+        /**
+         * DirectoryListing
+         * @description 服务器身份、规范路径与当前层条目。
+         */
+        DirectoryListing: {
+            /** Entries */
+            entries: components["schemas"]["DirectoryEntry"][];
+            /** Hostname */
+            hostname: string;
+            /** Parent */
+            parent: string | null;
+            /** Path */
+            path: string;
+            /** System */
+            system: string;
+            /** Unavailable Count */
+            unavailable_count: number;
+        };
+        /**
+         * DirectoryPath
+         * @description 目录操作返回的服务器绝对路径。
+         */
+        DirectoryPath: {
+            /** Path */
+            path: string;
         };
         /**
          * EndpointConfigSummary
@@ -1868,6 +2150,14 @@ export interface components {
              * @default true
              */
             sequential: boolean;
+        };
+        /**
+         * FilesystemCapabilities
+         * @description 后端当前桌面会话的可选能力。
+         */
+        FilesystemCapabilities: {
+            /** Open In File Manager */
+            open_in_file_manager: boolean;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -2246,8 +2536,29 @@ export interface components {
          * @description 恢复指定文件，省略名单则恢复全部可找回的缺失素材。
          */
         ReimportRequest: {
+            /**
+             * Force Names
+             * @description 异名同容时仍按新名恢复的文件名清单
+             */
+            force_names?: string[];
             /** Names */
             names?: string[] | null;
+        };
+        /**
+         * RenameDirectoryRequest
+         * @description 把指定目录改名到同一父目录下的新名称。
+         */
+        RenameDirectoryRequest: {
+            /**
+             * New Name
+             * @description 新的目录名，不含路径分隔符
+             */
+            new_name: string;
+            /**
+             * Path
+             * @description 现有目录的绝对路径
+             */
+            path: string;
         };
         /**
          * RetryListRequest
@@ -2305,10 +2616,69 @@ export interface components {
             size: number;
         };
         /**
+         * RunCounters
+         * @description 运行记录中的计数，读取时拒绝负数与隐式类型转换。
+         */
+        RunCounters: {
+            /** Attempted */
+            attempted: number;
+            /** Failed */
+            failed: number;
+            /** Planned */
+            planned: number;
+            /** Skipped */
+            skipped: number;
+            /** Succeeded */
+            succeeded: number;
+        };
+        /**
+         * RunHistoryView
+         * @description 最近运行的磁盘摘要及可定位的日志绝对路径。
+         */
+        RunHistoryView: {
+            /** Items Path */
+            items_path: string | null;
+            /** Log Path */
+            log_path: string | null;
+            record: components["schemas"]["RunRecord"] | null;
+        };
+        /**
+         * RunRecord
+         * @description 磁盘上的一次运行摘要；与当前进程的运行活性分开。
+         */
+        RunRecord: {
+            /** Batch */
+            batch: number;
+            counters: components["schemas"]["RunCounters"];
+            /** Dsf Version */
+            dsf_version: string;
+            /** Finished At */
+            finished_at: string | null;
+            /** Mode */
+            mode: string;
+            /** Run Id */
+            run_id: string;
+            /** Snapshot */
+            snapshot: string;
+            /** Started At */
+            started_at: string;
+            /** Status */
+            status: string;
+            /** Strategy Hash */
+            strategy_hash: string;
+            /** Trigger */
+            trigger: string;
+        };
+        /**
          * RunStartRequest
          * @description 启动跑批的请求体。
          */
         RunStartRequest: {
+            /**
+             * Items
+             * @description retry 模式的可选明确条目；省略时使用整份重试名单
+             */
+            items?: string[] | null;
             /**
              * Mode
              * @description full = 全量打未完成的条目；retry = 只打重试列表快照
@@ -2358,6 +2728,16 @@ export interface components {
              * @description running | completed | interrupted | failed（failed = 启动失败）
              */
             status: string;
+        };
+        /**
+         * RunTextView
+         * @description 指定运行的只读文件内容与绝对路径。
+         */
+        RunTextView: {
+            /** Path */
+            path: string;
+            /** Text */
+            text: string;
         };
         /**
          * ServiceLogs
@@ -2464,6 +2844,18 @@ export interface components {
             role: string;
         };
         /**
+         * SkillFileSaveRequest
+         * @description 保存技能文本文件，并核对编辑时的原始内容。
+         */
+        SkillFileSaveRequest: {
+            /** Content */
+            content: string;
+            /** Description */
+            description?: string | null;
+            /** Original Content */
+            original_content: string;
+        };
+        /**
          * SkillFilesResponse
          * @description GET /api/skills/{name}/files 的响应体。
          */
@@ -2514,6 +2906,38 @@ export interface components {
             enabled: boolean;
             /** Name */
             name: string;
+        };
+        /**
+         * SnapshotEndpointView
+         * @description 快照端点的公开配置白名单，不返回凭据字段。
+         */
+        SnapshotEndpointView: {
+            /** Api Format */
+            api_format: string;
+            /** Base Url */
+            base_url: string;
+            /** Model */
+            model: string;
+            /** Name */
+            name: string;
+            /** Request Params */
+            request_params: {
+                [key: string]: unknown;
+            };
+            /** Sha256 */
+            sha256: string;
+        };
+        /**
+         * SnapshotTextView
+         * @description 快照中的提示词或 Skill 全文。
+         */
+        SnapshotTextView: {
+            /** Body */
+            body: string;
+            /** Name */
+            name: string;
+            /** Sha256 */
+            sha256: string;
         };
         /**
          * StrategyRebindRequest
@@ -2806,6 +3230,22 @@ export interface components {
              * @enum {string}
              */
             status: "cleanup-pending" | "copy-retained" | "location-changed";
+        };
+        /**
+         * WorkdirStatsView
+         * @description 工作目录统计——当前素材清单的真实数量与字节数。
+         */
+        WorkdirStatsView: {
+            /**
+             * Asset Bytes
+             * @description 当前素材字节数（不包含产物与 .dsf）
+             */
+            asset_bytes: number;
+            /**
+             * Asset Count
+             * @description 当前素材条目数（同主干多扩展只计当前一个）
+             */
+            asset_count: number;
         };
     };
     responses: never;
@@ -3105,6 +3545,215 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_directory_api_filesystem_get: {
+        parameters: {
+            query?: {
+                path?: string | null;
+                show_files?: boolean;
+                show_hidden?: boolean;
+                suffixes?: string[] | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectoryListing"];
+                };
+            };
+            /** @description 路径无效或不是目录 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 服务进程无权读取目录 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 目录不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description 目录读取失败 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    filesystem_capabilities_api_filesystem_capabilities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FilesystemCapabilities"];
+                };
+            };
+        };
+    };
+    create_directory_api_filesystem_directories_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateDirectoryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectoryPath"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    open_directory_api_filesystem_open_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DirectoryPath"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_directory_api_filesystem_rename_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameDirectoryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkdirRelocateAccepted"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -3922,6 +4571,69 @@ export interface operations {
             };
             /** @description skill 或包内文件不存在 */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_package_file_api_skills__name__files__path__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+                path: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillFileSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillFileContent"];
+                };
+            };
+            /** @description 文件或内容不合法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description 文件不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description 文件已被其他写者修改 */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5158,6 +5870,47 @@ export interface operations {
             };
         };
     };
+    latest_run_api_workdirs__wid__batches__sN__runs_latest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+                sN: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunHistoryView"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     stop_run_api_workdirs__wid__batches__sN__runs_stop_post: {
         parameters: {
             query?: never;
@@ -5220,6 +5973,92 @@ export interface operations {
                 };
             };
             /** @description 该批次当前没有进行中的跑批（problem+json: run-not-active） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_text_api_workdirs__wid__batches__sN__runs__run_id__text_get: {
+        parameters: {
+            query?: {
+                file?: "run.log" | "items.jsonl";
+            };
+            header?: never;
+            path: {
+                wid: string;
+                sN: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunTextView"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_batch_snapshot_api_workdirs__wid__batches__sN__snapshot_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+                sN: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchSnapshotView"];
+                };
+            };
+            /** @description 工作目录、批次或快照不存在，或快照损坏 */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -6502,6 +7341,132 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_workdir_stats_api_workdirs__wid__stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkdirStatsView"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_selected_unimported_api_workdirs__wid__unimported_remove_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CleanupRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CleanupResult"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

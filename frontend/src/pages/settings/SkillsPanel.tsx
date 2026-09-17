@@ -4,12 +4,17 @@ import {
   FileTextIcon,
   FolderOpenIcon,
   ImageIcon,
+  ImportIcon,
+  SaveIcon,
   SearchIcon,
+  Trash2Icon,
+  Undo2Icon,
 } from "lucide-react";
 import type { ReactElement } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SkillFileInfo, SkillImportResponse, SkillInfo } from "../../api";
 import { api, errorMessage } from "../../api";
+import { DirectoryPicker } from "../../components/DirectoryPicker";
 import { Alert, AlertDescription } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -25,6 +30,7 @@ import { Input } from "../../components/ui/input";
 import { Switch } from "../../components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
 import { cn } from "../../lib/utils";
+import { readSkillDrop } from "./skill-drop";
 import type { Feedback } from "./types";
 
 /** 注入正文字符数（SKILL.md + references）→ 列表徽标文案（即打标请求的实际注入量）。 */
@@ -41,22 +47,24 @@ function formatChars(count: number): string {
 function SkillFileChip({
   entry,
   active,
+  disabled,
   onSelect,
 }: {
   entry: SkillFileInfo;
   active: boolean;
+  disabled: boolean;
   onSelect: (path: string) => void;
 }): ReactElement {
   const chip = (
     <button
       type="button"
-      disabled={!entry.previewable}
+      disabled={disabled || !entry.previewable}
       onClick={() => onSelect(entry.path)}
       className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] transition-colors",
+        "inline-flex max-w-full items-center gap-1 rounded-full border px-3 py-1 text-t-sm transition-colors [overflow-wrap:anywhere]",
         entry.previewable
-          ? "border-border bg-card hover:border-primary/50 hover:text-primary"
-          : "cursor-not-allowed border-dashed border-border text-muted-foreground/60 opacity-70",
+          ? "border-border bg-card hover:bg-accent"
+          : "cursor-not-allowed border-border bg-muted text-n-400 line-through",
         active && entry.previewable && "border-primary bg-primary/10 text-primary",
       )}
     >
@@ -90,10 +98,21 @@ export function SkillsPanel(): ReactElement {
   const [files, setFiles] = useState<SkillFileInfo[]>([]);
   const [previewPath, setPreviewPath] = useState("");
   const [previewContent, setPreviewContent] = useState("");
+  const [originalContent, setOriginalContent] = useState("");
+  const [descriptionDraft, setDescriptionDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const previewGeneration = useRef(0);
+  const savePending = useRef(false);
+  const dirty = previewContent !== originalContent || descriptionDraft !== null;
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [readingDrop, setReadingDrop] = useState(false);
+  const dropPending = useRef(false);
   const [pathValue, setPathValue] = useState("");
+  const [pickingPath, setPickingPath] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mdInputRef = useRef<HTMLInputElement>(null);
 
@@ -116,6 +135,11 @@ export function SkillsPanel(): ReactElement {
 
   // 选中变化 → 拉包文件清单；默认预览 SKILL.md（注入源）。
   useEffect(() => {
+    const generation = ++previewGeneration.current;
+    setPreviewPath("");
+    setPreviewContent("");
+    setOriginalContent("");
+    setDescriptionDraft(null);
     if (selected === "") {
       setFiles([]);
       setPreviewPath("");
@@ -123,6 +147,7 @@ export function SkillsPanel(): ReactElement {
       return;
     }
     let cancelled = false;
+    setLoadingPreview(true);
     void (async () => {
       try {
         const result = await api.listSkillFiles(selected);
@@ -133,19 +158,24 @@ export function SkillsPanel(): ReactElement {
         const first = result.files.find((entry) => entry.previewable);
         if (first !== undefined) {
           const content = await api.readSkillFile(selected, first.path);
-          if (!cancelled) {
+          if (!cancelled && generation === previewGeneration.current) {
             setPreviewPath(first.path);
             setPreviewContent(content.content);
+            setOriginalContent(content.content);
           }
         }
       } catch (err) {
         if (!cancelled) {
           setFeedback({ kind: "error", text: errorMessage(err) });
         }
+      } finally {
+        if (!cancelled && generation === previewGeneration.current)
+          setLoadingPreview(false);
       }
     })();
     return () => {
       cancelled = true;
+      previewGeneration.current += 1;
     };
   }, [selected]);
 
@@ -161,6 +191,7 @@ export function SkillsPanel(): ReactElement {
         );
 
   const pick = (name: string): void => {
+    if (dirty || saving) return;
     setSelected(name);
     setFeedback(null);
   };
@@ -227,6 +258,26 @@ export function SkillsPanel(): ReactElement {
     }
   };
 
+  const drop = async (transfer: DataTransfer): Promise<void> => {
+    if (dropPending.current || importing) return;
+    dropPending.current = true;
+    setReadingDrop(true);
+    try {
+      const picked = await readSkillDrop(transfer);
+      if (picked.length === 0) throw new Error("没有可导入的文件。");
+      if (picked.length === 1 && !(picked[0]?.webkitRelativePath ?? "").includes("/")) {
+        await doImportFile(picked[0]);
+      } else {
+        await doImport(picked);
+      }
+    } catch (err) {
+      setFeedback({ kind: "error", text: errorMessage(err) });
+    } finally {
+      dropPending.current = false;
+      setReadingDrop(false);
+    }
+  };
+
   const remove = async (): Promise<void> => {
     if (selected === "") {
       return;
@@ -244,28 +295,74 @@ export function SkillsPanel(): ReactElement {
   };
 
   const openPreview = async (path: string): Promise<void> => {
-    if (selected === "") {
+    if (selected === "" || dirty || savePending.current) {
       return;
     }
+    const generation = ++previewGeneration.current;
+    setLoadingPreview(true);
     try {
       const content = await api.readSkillFile(selected, path);
+      if (generation !== previewGeneration.current) return;
       setPreviewPath(path);
       setPreviewContent(content.content);
+      setOriginalContent(content.content);
+      setDescriptionDraft(null);
     } catch (err) {
-      setFeedback({ kind: "error", text: errorMessage(err) });
+      if (generation === previewGeneration.current)
+        setFeedback({ kind: "error", text: errorMessage(err) });
+    } finally {
+      if (generation === previewGeneration.current) setLoadingPreview(false);
+    }
+  };
+
+  const save = async (): Promise<void> => {
+    if (savePending.current || loadingPreview || !dirty) return;
+    savePending.current = true;
+    setSaving(true);
+    const generation = previewGeneration.current;
+    try {
+      const result = await api.saveSkillFile(selected, previewPath, {
+        content: previewContent,
+        original_content: originalContent,
+        ...(descriptionDraft !== null ? { description: descriptionDraft } : {}),
+      });
+      if (generation !== previewGeneration.current) return;
+      setPreviewContent(result.content);
+      setOriginalContent(result.content);
+      setDescriptionDraft(null);
+      setFeedback({ kind: "success", text: "已保存" });
+      await reload();
+    } catch (err) {
+      if (generation === previewGeneration.current)
+        setFeedback({ kind: "error", text: errorMessage(err) });
+    } finally {
+      savePending.current = false;
+      setSaving(false);
     }
   };
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-[340px_1fr] overflow-hidden rounded-lg border border-border bg-card shadow-sm">
+    <div className="grid h-full min-h-0 grid-cols-1 overflow-auto bg-card lg:grid-cols-[340px_minmax(0,1fr)] lg:overflow-hidden">
       {/* 左：列表 + 导入 */}
-      <div className="flex min-h-0 flex-col p-2">
-        <div className="flex items-baseline gap-2 px-3 pt-2.5 pb-1.5">
-          <h3 className="text-[13px] font-semibold">技能</h3>
-          <span className="text-[11px] text-muted-foreground">{skills.length} 个</span>
+      <fieldset disabled={dirty || saving} className="flex min-w-0 min-h-0 flex-col">
+        <div className="flex items-center gap-2 px-6 pt-6 pb-2">
+          <h3 className="text-t-sm font-medium">技能列表</h3>
+          <span className="text-t-sm text-muted-foreground">{skills.length} 个</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="ml-auto"
+            onClick={() => {
+              setFeedback(null);
+              setImportOpen(true);
+            }}
+          >
+            <ImportIcon />
+            导入 Skill
+          </Button>
         </div>
-        <div className="relative mx-1 mb-2">
-          <SearchIcon className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+        <div className="relative mx-6 my-2">
+          <SearchIcon className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             aria-label="搜索技能"
             placeholder="搜索名称或描述…"
@@ -274,10 +371,10 @@ export function SkillsPanel(): ReactElement {
             onInput={(event) => setSearch(event.currentTarget.value)}
           />
         </div>
-        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-1">
+        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-6 pb-3">
           {visible.length === 0 && (
-            <p className="px-1 text-[12px] text-muted-foreground">
-              （{skills.length === 0 ? "Skill 库为空——下方导入" : "没有匹配的技能"}）
+            <p className="px-1 text-t-sm text-muted-foreground">
+              {skills.length === 0 ? "Skill 库为空" : "没有匹配的技能"}
             </p>
           )}
           {visible.map((skill) => {
@@ -286,10 +383,8 @@ export function SkillsPanel(): ReactElement {
               <div
                 key={skill.name}
                 className={
-                  "rounded-lg border p-2.5 transition-colors " +
-                  (active
-                    ? "border-primary bg-primary/10"
-                    : "border-border bg-card hover:border-primary/40")
+                  "rounded-md px-3 py-2 transition-colors " +
+                  (active ? "bg-primary/10" : "bg-card hover:bg-accent")
                 }
               >
                 <div className="flex items-center gap-2">
@@ -303,19 +398,19 @@ export function SkillsPanel(): ReactElement {
                     onClick={() => pick(skill.name)}
                     className="min-w-0 flex-1 text-left"
                   >
-                    <span className="flex min-w-0 items-center gap-1.5">
-                      <span className="min-w-0 truncate text-[13px] font-medium">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="min-w-0 truncate text-t-md font-medium">
                         {skill.name}
                       </span>
                       <span
-                        className="shrink-0 rounded-full bg-muted px-1.5 text-[10.5px] leading-[1.6] text-muted-foreground"
+                        className="shrink-0 text-t-sm text-muted-foreground"
                         title="注入正文字符数（SKILL.md + references，即打标请求的注入量）"
                       >
                         {formatChars(skill.body_chars)}
                       </span>
                     </span>
                     {skill.description === "" ? (
-                      <span className="line-clamp-2 text-[12px] leading-relaxed text-muted-foreground">
+                      <span className="line-clamp-2 text-t-sm text-muted-foreground">
                         （无描述）
                       </span>
                     ) : (
@@ -326,7 +421,7 @@ export function SkillsPanel(): ReactElement {
                               左栏宽度，2026-09-13 用户反馈）；anywhere 断长词兜底 */}
                           <span
                             className={
-                              "line-clamp-2 text-[12px] leading-relaxed [overflow-wrap:anywhere] " +
+                              "line-clamp-2 text-t-sm [overflow-wrap:anywhere] " +
                               (skill.description.startsWith("文件损坏：")
                                 ? "text-destructive"
                                 : "text-muted-foreground")
@@ -341,125 +436,190 @@ export function SkillsPanel(): ReactElement {
                       </Tooltip>
                     )}
                   </button>
-                  <Badge variant={skill.enabled ? "success" : "muted"}>
-                    {skill.enabled ? "已启用" : "已停用"}
-                  </Badge>
+                  <span className="sr-only">{skill.enabled ? "已启用" : "已停用"}</span>
                 </div>
               </div>
             );
           })}
         </div>
-        <div className="mt-2 border-t border-border px-3 pt-3 pb-1">
-          <p className="mb-2 text-[12px] font-medium">
-            导入 skill 包（agentskills.io 标准）
-          </p>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            hidden
-            aria-label="选择 skill 文件夹"
-            // @ts-expect-error -- webkitdirectory 为浏览器非标准属性，React DOM 类型未收录
-            webkitdirectory=""
-            onChange={(event) => {
-              const picked = Array.from(event.currentTarget.files ?? []);
-              if (picked.length > 0) {
-                void doImport(picked);
-              }
-              event.currentTarget.value = "";
-            }}
-          />
-          <input
-            ref={mdInputRef}
-            type="file"
-            accept=".md"
-            hidden
-            aria-label="选择 SKILL.md 文件"
-            onChange={(event) => {
-              void doImportFile(event.currentTarget.files?.[0]);
-              event.currentTarget.value = "";
-            }}
-          />
-          <div className="grid grid-cols-2 gap-2">
-            <Button
+      </fieldset>
+      <Dialog
+        open={importOpen}
+        onOpenChange={(open) => {
+          if (!importing && !readingDrop) setImportOpen(open);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>导入 Skill 包</DialogTitle>
+            <DialogDescription>agentskills.io 标准</DialogDescription>
+          </DialogHeader>
+          <fieldset disabled={importing || readingDrop} className="min-w-0 space-y-3">
+            <button
               type="button"
-              variant="outline"
-              disabled={importing}
+              aria-label="拖入 Skill 包"
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                void drop(event.dataTransfer);
+              }}
               onClick={() => fileInputRef.current?.click()}
+              className="flex w-full items-center justify-center gap-3 rounded-md border border-dashed border-input bg-card p-8 text-t-md text-muted-foreground"
             >
-              <FolderOpenIcon className="size-4" />
-              文件夹…
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={importing}
-              onClick={() => mdInputRef.current?.click()}
-            >
-              <FileTextIcon className="size-4" />
-              SKILL.md 文件…
-            </Button>
-          </div>
-          <div className="mt-2 flex gap-2">
-            <Input
-              aria-label="skill 本机路径"
-              placeholder="粘贴本机路径后导入…"
-              value={pathValue}
-              onInput={(event) => setPathValue(event.currentTarget.value)}
+              <ImportIcon className="size-4" />
+              拖文件夹 / SKILL.md 到这里导入
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              hidden
+              aria-label="选择 skill 文件夹"
+              // @ts-expect-error -- webkitdirectory 为浏览器非标准属性，React DOM 类型未收录
+              webkitdirectory=""
+              onChange={(event) => {
+                const picked = Array.from(event.currentTarget.files ?? []);
+                if (picked.length > 0) {
+                  void doImport(picked);
+                }
+                event.currentTarget.value = "";
+              }}
             />
-            <Button
-              type="button"
-              variant="outline"
-              disabled={importing || pathValue.trim() === ""}
-              onClick={() => void doImportPath()}
-            >
-              导入
-            </Button>
-          </div>
-          {feedback !== null && (
-            <Alert
-              variant={feedback.kind === "error" ? "destructive" : "success"}
-              className="mt-2"
-            >
-              <AlertDescription>{feedback.text}</AlertDescription>
-            </Alert>
-          )}
-        </div>
-      </div>
+            <input
+              ref={mdInputRef}
+              type="file"
+              accept=".md"
+              hidden
+              aria-label="选择 SKILL.md 文件"
+              onChange={(event) => {
+                void doImportFile(event.currentTarget.files?.[0]);
+                event.currentTarget.value = "";
+              }}
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={importing}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <FolderOpenIcon className="size-4" />
+                文件夹
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={importing}
+                onClick={() => mdInputRef.current?.click()}
+              >
+                <FileTextIcon className="size-4" />
+                SKILL.md 文件
+              </Button>
+            </div>
+            <div className="mt-2 flex gap-2">
+              <Input
+                aria-label="skill 服务器路径"
+                placeholder="服务器上的目录或文件"
+                value={pathValue}
+                onInput={(event) => setPathValue(event.currentTarget.value)}
+              />
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-lg"
+                    aria-label="选择技能目录或文件"
+                    disabled={importing}
+                    onClick={() => setPickingPath(true)}
+                  >
+                    <FolderOpenIcon />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>选择目录或文件</TooltipContent>
+              </Tooltip>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={importing || pathValue.trim() === ""}
+                onClick={() => void doImportPath()}
+              >
+                导入
+              </Button>
+            </div>
+            {feedback !== null && (
+              <Alert
+                variant={feedback.kind === "error" ? "destructive" : "success"}
+                className="mt-2"
+              >
+                <AlertDescription>{feedback.text}</AlertDescription>
+              </Alert>
+            )}
+          </fieldset>
+        </DialogContent>
+      </Dialog>
 
       {/* 右：详情 + 包内容预览 */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto border-l border-border p-5">
+      <div className="flex min-w-0 min-h-0 flex-1 flex-col overflow-y-auto border-border p-4 lg:border-l lg:px-8 lg:py-6">
+        {!importOpen && feedback !== null && (
+          <Alert variant={feedback.kind === "error" ? "destructive" : "success"}>
+            <AlertDescription>{feedback.text}</AlertDescription>
+          </Alert>
+        )}
         {current !== undefined ? (
-          <div className="space-y-4">
+          <div className="flex min-h-0 flex-1 flex-col gap-3">
             <div className="flex items-center gap-2">
-              <h3 className="text-[15px] font-semibold">{current.name}</h3>
+              <h3 className="min-w-0 flex-1 truncate text-t-xl font-medium">
+                {current.name}
+              </h3>
               <Badge variant={current.enabled ? "success" : "muted"}>
                 {current.enabled ? "已启用" : "已停用"}
               </Badge>
-              <Button
-                type="button"
-                variant="destructive"
-                size="sm"
-                className="ml-auto"
-                onClick={() => setDeleteDialogOpen(true)}
-              >
-                删除
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label="删除技能"
+                    className="ml-auto"
+                    disabled={dirty || saving || loadingPreview}
+                    onClick={() => setDeleteDialogOpen(true)}
+                  >
+                    <Trash2Icon className="text-bad-ink" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>删除技能</TooltipContent>
+              </Tooltip>
             </div>
-            <p className="text-[13px] text-muted-foreground">
-              {current.description === "" ? "（无描述）" : current.description}
-            </p>
+            <label
+              htmlFor="skill-description"
+              className="flex items-center gap-3 text-t-sm"
+            >
+              <span className="shrink-0 text-muted-foreground">描述</span>
+              <Input
+                aria-label="技能描述"
+                id="skill-description"
+                value={descriptionDraft ?? current.description}
+                disabled={saving || loadingPreview || previewPath !== "SKILL.md"}
+                onChange={(event) =>
+                  setDescriptionDraft(
+                    event.currentTarget.value === current.description
+                      ? null
+                      : event.currentTarget.value,
+                  )
+                }
+              />
+            </label>
 
             <div>
-              <p className="mb-1.5 text-[12px] text-muted-foreground">
-                包文件——SKILL.md 与 references/ 注入请求；assets / scripts 不参与注入
-              </p>
               <div className="flex flex-wrap gap-1.5">
                 {files.map((entry) => (
                   <SkillFileChip
                     key={entry.path}
                     entry={entry}
                     active={entry.path === previewPath}
+                    disabled={dirty || saving}
                     onSelect={(path) => void openPreview(path)}
                   />
                 ))}
@@ -467,15 +627,44 @@ export function SkillsPanel(): ReactElement {
             </div>
 
             {previewPath !== "" && (
-              <div className="min-h-0 overflow-hidden rounded-md border border-border">
-                <div className="border-b border-border bg-muted/40 px-3 py-1.5 text-[12px] text-muted-foreground">
-                  {previewPath}
-                </div>
-                <pre className="max-h-96 overflow-auto p-3 font-mono text-[12.5px] leading-[1.7] whitespace-pre-wrap">
-                  {previewContent}
-                </pre>
+              <div className="flex min-h-40 flex-1 flex-col gap-2">
+                <label
+                  htmlFor="skill-content"
+                  className="text-t-sm text-muted-foreground"
+                >
+                  内容预览
+                </label>
+                <textarea
+                  aria-label="技能文件内容"
+                  id="skill-content"
+                  spellCheck={false}
+                  value={previewContent}
+                  disabled={saving || loadingPreview}
+                  onChange={(event) => setPreviewContent(event.currentTarget.value)}
+                  className="min-h-40 w-full flex-1 resize-y rounded-md border border-input bg-card px-4 py-3 font-sans text-t-sm leading-(--lh-loose) hover:border-n-400 focus:border-n-400"
+                />
               </div>
             )}
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                disabled={!dirty || saving}
+                onClick={() => {
+                  setPreviewContent(originalContent);
+                  setDescriptionDraft(null);
+                }}
+              >
+                <Undo2Icon />
+                放弃更改
+              </Button>
+              <Button
+                disabled={!dirty || saving || loadingPreview}
+                onClick={() => void save()}
+              >
+                <SaveIcon />
+                保存更改
+              </Button>
+            </div>
           </div>
         ) : (
           <div className="flex h-full items-center justify-center text-[13px] text-muted-foreground">
@@ -484,6 +673,17 @@ export function SkillsPanel(): ReactElement {
         )}
       </div>
 
+      {pickingPath && (
+        <DirectoryPicker
+          files
+          suffixes={[".md", ".txt"]}
+          onClose={() => setPickingPath(false)}
+          onSelect={(path) => {
+            setPathValue(path);
+            setPickingPath(false);
+          }}
+        />
+      )}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent>
           <DialogHeader>

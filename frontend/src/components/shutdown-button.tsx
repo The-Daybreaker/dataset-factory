@@ -21,8 +21,10 @@ import {
 
 export function ShutdownButton({
   expanded = false,
+  sidebar = false,
 }: {
   expanded?: boolean;
+  sidebar?: boolean;
 }): ReactElement {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -57,9 +59,13 @@ export function ShutdownButton({
       ) : (
         <Button
           type="button"
-          variant="outline"
+          variant={sidebar ? "ghost" : "outline"}
           size="icon"
-          className="border-border bg-card text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          className={
+            sidebar
+              ? "text-bad-ink hover:bg-bad-bg hover:text-bad-ink-strong"
+              : "border-border bg-card text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          }
           aria-label="关闭服务"
           onClick={() => setOpen(true)}
         >

@@ -12,7 +12,11 @@ from .store import WorkdirStore
 
 
 def reimport_missing(
-    workdir: Path, names: set[str] | None = None, *, should_stop: Event | None = None
+    workdir: Path,
+    names: set[str] | None = None,
+    *,
+    force_names: frozenset[str] | set[str] = frozenset(),
+    should_stop: Event | None = None,
 ) -> dict[str, Any]:
     """恢复指定缺失文件或全部可恢复文件，来源失效逐条报告，不导入额外文件。"""
     store = WorkdirStore(workdir)
@@ -21,6 +25,8 @@ def reimport_missing(
         selected = set(origins) if names is None else names
         if selected - origins.keys():
             raise WorkdirPathError("所选文件不在导入记录中，请检查文件名。")
+        if force_names - selected:
+            raise WorkdirPathError("强制导入的文件必须包含在本次恢复名单中。")
         sources: dict[Path, set[str]] = {}
         unavailable: list[dict[str, str]] = []
         for name in sorted(selected):
@@ -41,7 +47,13 @@ def reimport_missing(
                 continue
             sources.setdefault(source, set()).add(name)
         reports = [
-            import_assets(workdir, source, names=chosen, should_stop=should_stop)
+            import_assets(
+                workdir,
+                source,
+                names=chosen,
+                force_names=force_names & chosen,
+                should_stop=should_stop,
+            )
             for source, chosen in sources.items()
         ]
         return {"imports": reports, "unavailable": unavailable}

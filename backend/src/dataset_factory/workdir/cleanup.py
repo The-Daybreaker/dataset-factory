@@ -3,7 +3,13 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from .assets import confine_to_workdir, is_product_name, scan_assets
+from .assets import (
+    confine_to_workdir,
+    is_product_name,
+    registered_origins,
+    scan_assets,
+    unimported_files,
+)
 from .errors import WorkdirPathError
 from .locks import RunLock, import_guard
 from .store import WorkdirStore
@@ -41,6 +47,32 @@ class CleanupResult:
 
     count: int
     recovery_path: str | None
+
+
+def remove_unimported(workdir: Path, names: list[str]) -> CleanupResult:
+    """将仍未登记的指定文件移入可恢复暂存区，保留其原始字节。
+
+    导入锁覆盖资格复查与移动，避免文件已入册却仍按旧清单移出。
+    素材使用完整文件名定位，同主干的其他扩展名不受影响。
+    """
+    if not workdir.is_dir():
+        raise WorkdirPathError("工作目录不存在，请检查路径后重试。")
+    store = WorkdirStore(workdir)
+    lock = RunLock(store.dsf_path)
+    try:
+        lock.acquire({"operation": "remove-unimported"})
+        with import_guard(store.dsf_path):
+            candidates = {
+                row.name
+                for row in unimported_files(workdir, set(registered_origins(store)))
+            }
+            selected = list(dict.fromkeys(names))
+            if not selected or not set(selected).issubset(candidates):
+                raise WorkdirPathError("选择为空或文件已不在未导入清单，请刷新后重试。")
+            recovery = store.quarantine_paths([workdir / name for name in selected])
+            return CleanupResult(len(selected), str(recovery) if recovery else None)
+    finally:
+        lock.release()
 
 
 def cleanup_products(workdir: Path, names: list[str]) -> CleanupResult:

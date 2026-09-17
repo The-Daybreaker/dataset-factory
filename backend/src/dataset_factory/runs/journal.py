@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from .._fs import atomic_write_text
 from .errors import RunJournalCorruptedError
 
@@ -33,6 +35,84 @@ _RUN_LOG_NAME = "run.log"
 
 #: items.jsonl 的合法终态（断点续跑哈希只认 succeeded 行——产物出自成功打标）。
 _ITEM_STATUSES = frozenset({"succeeded", "failed"})
+
+
+class RunCounters(BaseModel):
+    """运行记录中的计数，读取时拒绝负数与隐式类型转换。"""
+
+    model_config = ConfigDict(strict=True)
+    planned: int = Field(ge=0)
+    attempted: int = Field(ge=0)
+    succeeded: int = Field(ge=0)
+    failed: int = Field(ge=0)
+    skipped: int = Field(ge=0)
+
+
+class RunRecord(BaseModel):
+    """磁盘上的一次运行摘要；与当前进程的运行活性分开。"""
+
+    model_config = ConfigDict(strict=True)
+    run_id: str
+    batch: int = Field(ge=1)
+    mode: str
+    trigger: str
+    strategy_hash: str
+    snapshot: str
+    dsf_version: str
+    status: str
+    counters: RunCounters
+    started_at: str
+    finished_at: str | None
+
+
+def load_latest_run(runs_dir: Path, seq: int) -> RunRecord | None:
+    """按目录时间序回读本批次最近一次运行，不把其他批次的统计混入。"""
+    if not runs_dir.is_dir():
+        return None
+    for directory in sorted(runs_dir.iterdir(), key=lambda p: p.name, reverse=True):
+        path = directory / _RUN_JSON_NAME
+        if not directory.is_dir() or not path.exists():
+            continue
+        if not path.resolve().is_relative_to(runs_dir.resolve()):
+            raise RunJournalCorruptedError("运行记录路径不在运行目录内。")
+        try:
+            record = RunRecord.model_validate_json(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RunJournalCorruptedError(f"运行记录无法读取：{path}") from exc
+        if record.run_id != directory.name:
+            raise RunJournalCorruptedError(f"运行记录标识与目录不一致：{path}")
+        if record.batch == seq:
+            return record
+    return None
+
+
+def read_run_text(runs_dir: Path, run_id: str, seq: int, filename: str) -> str:
+    """读取指定运行的人读日志或原始流水，仅接受两种固定文件名。"""
+    if filename not in {_RUN_LOG_NAME, _ITEMS_JSONL_NAME}:
+        raise RunJournalCorruptedError("不支持的运行记录文件。")
+    directory = runs_dir / run_id
+    if directory.parent != runs_dir or not directory.resolve().is_relative_to(
+        runs_dir.resolve()
+    ):
+        raise RunJournalCorruptedError("运行记录路径无效。")
+    try:
+        meta_path = directory / _RUN_JSON_NAME
+        text_path = directory / filename
+        if not all(
+            p.resolve().is_relative_to(runs_dir.resolve())
+            for p in (meta_path, text_path)
+        ):
+            raise RunJournalCorruptedError("运行记录路径不在运行目录内。")
+        record = RunRecord.model_validate_json(meta_path.read_text(encoding="utf-8"))
+        if record.batch != seq or record.run_id != run_id:
+            raise RunJournalCorruptedError("运行记录不属于当前批次。")
+        if not text_path.exists():
+            return ""
+        return text_path.read_text(encoding="utf-8")
+    except (OSError, ValueError) as exc:
+        raise RunJournalCorruptedError(
+            "运行记录无法读取，请检查文件是否仍在。"
+        ) from exc
 
 
 class RunJournal:

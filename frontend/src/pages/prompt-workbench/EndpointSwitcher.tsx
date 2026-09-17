@@ -27,12 +27,15 @@ export function EndpointSwitcher({
       <DropdownMenuTrigger asChild>
         <Button
           type="button"
-          variant="outline"
+          variant="ghost"
           size="sm"
-          className="h-[30px] max-w-60 rounded-full border-border bg-card px-3 text-[12px] text-muted-foreground"
+          className="min-w-0 max-w-60 shrink px-2 text-t-md text-text-2"
           aria-label="端点配置切换器"
         >
-          <span className="size-[7px] shrink-0 rounded-full bg-success" aria-hidden />
+          <span
+            className={`size-1.5 shrink-0 rounded-full ${active ? "bg-ok-dot" : "bg-n-400"}`}
+            aria-hidden
+          />
           <span className="truncate">
             {active ? `${active.name} · ${active.model}` : "未配置端点"}
           </span>

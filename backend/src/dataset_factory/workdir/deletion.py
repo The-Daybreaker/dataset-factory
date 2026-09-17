@@ -111,7 +111,7 @@ def _require_original_directory(root: Path, payload: dict[str, object]) -> None:
 def preview_workdir_deletion(wid: str) -> DeletionPreview:
     """列出整个目录的文件数量与大小，就地采用时明确标记原始素材风险。"""
     root = _root(wid)
-    with maintenance_guard(root):
+    with maintenance_guard(root, timeout=10):
         if _root(wid) != root:
             raise WorkdirPathError("工作目录位置已变化，请刷新后重试。")
         previous = _read_record(root)

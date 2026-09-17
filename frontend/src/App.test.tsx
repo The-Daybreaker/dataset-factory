@@ -26,6 +26,7 @@ vi.mock("./api", () => {
   }
   return {
     api: {
+      listStrategies: vi.fn().mockResolvedValue([]),
       listPrompts: vi.fn().mockResolvedValue([]),
       listSkills: vi.fn().mockResolvedValue([]),
       listEndpoints: vi.fn().mockResolvedValue([]),
@@ -48,13 +49,33 @@ vi.mock("./api", () => {
 });
 
 describe("App 外壳", () => {
+  it("设置侧栏切换子页并返回进入前的工作页", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "设置" }));
+    await user.click(screen.getByRole("button", { name: "技能" }));
+
+    expect(screen.getByRole("heading", { name: "技能", level: 1 })).toBeVisible();
+    expect(
+      screen.queryByRole("navigation", { name: "设置二级导航" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "返回工作区" }));
+    expect(screen.getByRole("button", { name: "策略" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await user.click(screen.getByRole("button", { name: "切换提示词" }));
+    expect(screen.getByRole("button", { name: "新建提示词" })).toBeVisible();
+  });
+
   it("渲染品牌（副标题 + 版本脚注）与工作区两项导航", () => {
     render(<App />);
 
     expect(screen.getByText("Dataset Factory")).toBeInTheDocument();
     expect(screen.getByText("打标流水线工具")).toBeInTheDocument();
     expect(screen.getByText("v0.1.0")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "提示词" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "策略" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "设置" })).toBeEnabled();
   });
 

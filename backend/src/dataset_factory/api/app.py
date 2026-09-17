@@ -88,6 +88,7 @@ from . import (
     routes_config,
     routes_endpoints,
     routes_export,
+    routes_filesystem,
     routes_items,
     routes_labeling,
     routes_prompts,
@@ -128,6 +129,7 @@ def create_app(frontend_dir: Path | None = None) -> FastAPI:
     app.include_router(routes_endpoints.router)
     app.include_router(routes_config.router)
     app.include_router(routes_service.router)
+    app.include_router(routes_filesystem.router)
     app.include_router(routes_tasks.router)
     app.include_router(routes_workdir.router)
     app.include_router(routes_export.router)

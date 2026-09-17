@@ -21,6 +21,8 @@ const apiMock = vi.hoisted(() => ({
   deleteSkill: vi.fn(),
   listSkillFiles: vi.fn(),
   readSkillFile: vi.fn(),
+  saveSkillFile: vi.fn(),
+  listDirectory: vi.fn(),
 }));
 
 vi.mock("../../api", () => ({
@@ -333,9 +335,7 @@ describe("SettingsPage · 端点配置·高级参数", () => {
 
 describe("SettingsPage · 能力·技能", () => {
   async function openSkills(): Promise<void> {
-    render(<SettingsPage />);
-    await waitFor(() => screen.getByLabelText("Base URL"));
-    await userEvent.click(screen.getByRole("button", { name: "技能" }));
+    render(<SettingsPage section="skills" />);
     await waitFor(() => screen.getByLabelText("启用 h3-skill"));
   }
 
@@ -383,9 +383,8 @@ describe("SettingsPage · 能力·技能", () => {
         body_chars: 0,
       },
     ] satisfies SkillInfo[]);
-    render(<SettingsPage />);
-    await waitFor(() => screen.getByLabelText("Base URL"));
-    await userEvent.click(screen.getByRole("button", { name: "技能" }));
+    render(<SettingsPage section="skills" />);
+    await screen.findByLabelText("启用 bad");
 
     // TooltipContent 会另渲染一份描述文本（portal 到 body），断言收窄到列表行内的 span
     const row = screen.getByLabelText("启用 bad").parentElement;
@@ -403,6 +402,7 @@ describe("SettingsPage · 能力·技能", () => {
     });
     await openSkills();
 
+    await userEvent.click(screen.getByRole("button", { name: "导入 Skill" }));
     const input = document.body.querySelector('input[type="file"]');
     expect(input).not.toBeNull();
     const folderFile = new File(["# U"], "SKILL.md", { type: "text/markdown" });
@@ -419,6 +419,46 @@ describe("SettingsPage · 能力·技能", () => {
     ).toBeInTheDocument();
   });
 
+  it("服务器选择器确认后回填技能文件，点击导入才提交", async () => {
+    apiMock.listDirectory.mockResolvedValue({
+      hostname: "skill-server",
+      system: "Linux",
+      path: "/srv/skills",
+      parent: "/srv",
+      unavailable_count: 0,
+      entries: [
+        {
+          name: "notes.txt",
+          path: "/srv/skills/notes.txt",
+          kind: "file",
+          size: 24,
+          modified_at: "2026-09-17T00:00:00Z",
+        },
+      ],
+    });
+    apiMock.importSkill.mockResolvedValue({ name: "notes", total_bytes: 24 });
+    await openSkills();
+
+    await userEvent.click(screen.getByRole("button", { name: "导入 Skill" }));
+    await userEvent.click(screen.getByRole("button", { name: "选择技能目录或文件" }));
+    const picker = within(
+      await screen.findByRole("dialog", { name: "选择目录或文件" }),
+    );
+    await userEvent.click(await picker.findByRole("button", { name: "notes.txt" }));
+    await userEvent.click(picker.getByRole("button", { name: "选择此文件" }));
+
+    expect(apiMock.listDirectory).toHaveBeenCalledWith("", true, false, [
+      ".md",
+      ".txt",
+    ]);
+    expect(screen.getByLabelText("skill 服务器路径")).toHaveValue(
+      "/srv/skills/notes.txt",
+    );
+    expect(apiMock.importSkill).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "导入" }));
+    expect(apiMock.importSkill).toHaveBeenCalledWith("/srv/skills/notes.txt");
+  });
+
   it("路径导入：粘贴路径点导入调 importSkill；空路径时导入按钮禁用", async () => {
     apiMock.importSkill.mockResolvedValue({
       name: "path-skill",
@@ -428,10 +468,11 @@ describe("SettingsPage · 能力·技能", () => {
     });
     await openSkills();
 
+    await userEvent.click(screen.getByRole("button", { name: "导入 Skill" }));
     const importButton = screen.getByRole("button", { name: "导入" });
     expect(importButton).toBeDisabled();
 
-    await userEvent.type(screen.getByLabelText("skill 本机路径"), "C:/skills/demo");
+    await userEvent.type(screen.getByLabelText("skill 服务器路径"), "C:/skills/demo");
     expect(importButton).toBeEnabled();
     await userEvent.click(importButton);
 
@@ -450,6 +491,7 @@ describe("SettingsPage · 能力·技能", () => {
     });
     await openSkills();
 
+    await userEvent.click(screen.getByRole("button", { name: "导入 Skill" }));
     fireEvent.change(screen.getByLabelText("选择 SKILL.md 文件"), {
       target: {
         files: [new File(["# S"], "my-skill.md", { type: "text/markdown" })],
@@ -480,5 +522,62 @@ describe("SettingsPage · 能力·技能", () => {
         "references/detail.md",
       );
     });
+  });
+
+  it("技能正文与描述保存携带原始基线，失败后保留草稿并可重试", async () => {
+    apiMock.saveSkillFile.mockRejectedValueOnce(new Error("文件已被修改"));
+    apiMock.saveSkillFile.mockResolvedValueOnce({
+      path: "SKILL.md",
+      content: "保存后的正文",
+    });
+    await openSkills();
+    const editor = await screen.findByLabelText("技能文件内容");
+    await waitFor(() => expect(editor).toHaveValue("# Example\n按格式输出 caption。"));
+
+    fireEvent.change(editor, { target: { value: "新的正文" } });
+    fireEvent.change(screen.getByLabelText("技能描述"), {
+      target: { value: "新的描述" },
+    });
+    expect(screen.getByRole("button", { name: "references/detail.md" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "保存更改" }));
+
+    expect(await screen.findByText(/文件已被修改/)).toBeInTheDocument();
+    expect(editor).toHaveValue("新的正文");
+    expect(apiMock.saveSkillFile).toHaveBeenCalledWith("h3-skill", "SKILL.md", {
+      content: "新的正文",
+      original_content: "# Example\n按格式输出 caption。",
+      description: "新的描述",
+    });
+    await userEvent.click(screen.getByRole("button", { name: "保存更改" }));
+    await waitFor(() => expect(editor).toHaveValue("保存后的正文"));
+    expect(screen.getByRole("button", { name: "保存更改" })).toBeDisabled();
+  });
+
+  it("放弃技能草稿恢复内容并解锁文件切换", async () => {
+    await openSkills();
+    const editor = await screen.findByLabelText("技能文件内容");
+    await waitFor(() => expect(editor).toHaveValue("# Example\n按格式输出 caption。"));
+
+    fireEvent.change(editor, { target: { value: "未保存" } });
+    await userEvent.click(screen.getByRole("button", { name: "放弃更改" }));
+
+    expect(editor).toHaveValue("# Example\n按格式输出 caption。");
+    expect(screen.getByRole("button", { name: "references/detail.md" })).toBeEnabled();
+  });
+
+  it("拖入单文件通过导入接口提交一次并显示结果", async () => {
+    apiMock.importSkillFile.mockResolvedValue({ name: "dropped", total_bytes: 12 });
+    await openSkills();
+    await userEvent.click(screen.getByRole("button", { name: "导入 Skill" }));
+    const file = new File(["skill"], "SKILL.md");
+
+    fireEvent.drop(screen.getByRole("button", { name: "拖入 Skill 包" }), {
+      dataTransfer: { items: [], files: [file] },
+    });
+
+    await waitFor(() =>
+      expect(apiMock.importSkillFile).toHaveBeenCalledExactlyOnceWith(file),
+    );
+    expect(await screen.findByText(/已导入「dropped」/)).toBeInTheDocument();
   });
 });

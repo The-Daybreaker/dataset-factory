@@ -4,6 +4,7 @@ import io
 import json
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -16,7 +17,7 @@ from dataset_factory.cli.main import app
 from dataset_factory.cli.workdir import remove_workdir
 from dataset_factory.workdir import WorkdirPathError, WorkdirRegistry, WorkdirStore
 from dataset_factory.workdir.deletion import delete_workdir, preview_workdir_deletion
-from dataset_factory.workdir.locks import RunLock
+from dataset_factory.workdir.locks import RunLock, maintenance_guard
 
 pytestmark = pytest.mark.usefixtures("temp_data_root")
 
@@ -61,6 +62,36 @@ def test_http_deletion_previews_original_materials_and_requires_matching_path(
     with pytest.raises(WorkdirPathError):
         store.mutate_state(lambda state: state.update({"unexpected": True}))
     assert not root.exists()
+
+
+def test_deletion_preview_waits_for_short_maintenance(tmp_path: Path) -> None:
+    """删除预览等待并发状态读取结束，返回登记中的当前路径。"""
+    root = tmp_path / "relocated"
+    root.mkdir()
+    entry = WorkdirRegistry.register(root)
+    client = TestClient(create_app(frontend_dir=tmp_path / "frontend"))
+    started = threading.Event()
+    finished = threading.Event()
+    responses: list[tuple[int, str | None]] = []
+
+    def read_preview() -> None:
+        started.set()
+        try:
+            response = client.get(f"/api/workdirs/{entry.id}/delete-preview")
+            responses.append((response.status_code, response.json().get("path")))
+        finally:
+            finished.set()
+
+    with maintenance_guard(root):
+        reader = threading.Thread(target=read_preview)
+        reader.start()
+        assert started.wait(5)
+        finished_early = finished.wait(0.1)
+    reader.join(5)
+
+    assert not reader.is_alive()
+    assert not finished_early
+    assert responses == [(200, str(root.resolve()))]
 
 
 def test_failed_deletion_keeps_registration_and_can_retry(

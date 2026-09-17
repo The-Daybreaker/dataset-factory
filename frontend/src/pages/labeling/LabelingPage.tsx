@@ -1,0 +1,819 @@
+import {
+  ArrowLeftIcon,
+  ChevronDownIcon,
+  FileIcon,
+  FileImageIcon,
+  FilmIcon,
+  Maximize2Icon,
+  Minimize2Icon,
+  PlusIcon,
+  RefreshCwIcon,
+  SearchIcon,
+  Trash2Icon,
+  XIcon,
+} from "lucide-react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api, errorMessage } from "../../api";
+import type { components } from "../../api-types.gen";
+import { Button } from "../../components/ui/button";
+import { BatchOverview } from "./BatchOverview";
+import {
+  type BatchSelection,
+  BatchSelector,
+  type WorkdirBatches,
+} from "./BatchSelector";
+import { CaptionPreview } from "./CaptionPreview";
+import { ImportMaterialsDialog } from "./ImportMaterialsDialog";
+import {
+  groupedItems,
+  ITEM_GROUPS,
+  type ItemMap,
+  itemKey,
+  itemsFromGroups,
+  withItemUpdate,
+  withRetryItems,
+} from "./items-state";
+import { NewBatchForm } from "./NewBatchForm";
+import { NewStrategyDialog } from "./NewStrategyDialog";
+import { RemoveUnimportedDialog } from "./RemoveUnimportedDialog";
+import { RunControl } from "./RunControl";
+import { WorkdirSettings } from "./WorkdirSettings";
+
+type ItemRow = components["schemas"]["ItemRowView"];
+
+const MaterialRow = memo(function MaterialRow({
+  row,
+  selected,
+  onSelect,
+  selectionMode,
+  checked,
+  onCheck,
+  retryGroup,
+  saving,
+  onRemoveRetry,
+  onRecover,
+  onRemoveUnimported,
+}: {
+  row: ItemRow;
+  selected: boolean;
+  onSelect: (row: ItemRow) => void;
+  selectionMode: boolean;
+  checked: boolean;
+  onCheck: (item: string) => void;
+  retryGroup: boolean;
+  saving: boolean;
+  onRemoveRetry: (item: string) => void;
+  onRecover: (row: ItemRow) => void;
+  onRemoveUnimported: (row: ItemRow) => void;
+}) {
+  return (
+    <div className="group flex items-center gap-2 rounded-md px-2 hover:bg-accent">
+      {selectionMode &&
+        !retryGroup &&
+        (row.status === "done" || row.status === "failed") && (
+          <input
+            type="checkbox"
+            aria-label={`选择 ${row.name}`}
+            checked={checked}
+            disabled={!row.can_retry || row.in_retry || saving}
+            onChange={() => onCheck(row.item)}
+          />
+        )}
+      <button
+        type="button"
+        aria-pressed={selected}
+        onClick={() => onSelect(row)}
+        className={`flex min-w-0 flex-1 items-center gap-2 rounded-md py-2 text-left text-t-md ${selected ? "bg-primary/10" : ""} ${row.status === "missing" ? "opacity-[0.62]" : ""}`}
+      >
+        <span className="flex h-[27px] w-9 shrink-0 items-center justify-center rounded-sm border border-border bg-muted/60 text-text-3">
+          {row.media === "video" ? (
+            <FilmIcon className="size-[13px]" />
+          ) : row.media === "image" ? (
+            <FileImageIcon className="size-[13px]" />
+          ) : (
+            <FileIcon className="size-[13px]" />
+          )}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate">{row.name}</span>
+          {(row.message || row.reason) && (
+            <span className="block break-words text-t-xs text-text-3">
+              {row.message || row.reason}
+            </span>
+          )}
+          {row.in_retry && (
+            <span className="text-t-xs text-muted-foreground">已排重试</span>
+          )}
+          {row.status === "missing" && !row.recoverable && (
+            <span className="block text-t-xs text-text-3">原始来源不可用</span>
+          )}
+        </span>
+      </button>
+      {row.status === "missing" && (
+        <Button
+          variant="ghost"
+          size="xs"
+          className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+          title={
+            row.recoverable ? `来源：${row.source}` : "原始来源不可用，请从别处导入"
+          }
+          onClick={() => onRecover(row)}
+        >
+          {row.recoverable ? "重新导入" : "从别处导入"}
+        </Button>
+      )}
+      {row.status === "unimported" && (
+        <Button
+          variant="ghost"
+          size="xs"
+          disabled={row.reason !== "未登记"}
+          title={row.reason === "未登记" ? "导入此文件" : (row.reason ?? "不能导入")}
+          onClick={() => onRecover(row)}
+        >
+          导入
+        </Button>
+      )}
+      {retryGroup && (
+        <Button
+          variant="ghost"
+          size="xs"
+          disabled={saving}
+          title="移出重试列表"
+          aria-label={`移出重试 ${row.name}`}
+          onClick={() => onRemoveRetry(row.item)}
+        >
+          <XIcon />
+        </Button>
+      )}
+      {row.status === "unimported" && (
+        <Button
+          variant="destructive"
+          size="xs"
+          className="w-(--h-xs) p-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [&_svg]:size-[13px]"
+          aria-label={`删除未导入 ${row.name}`}
+          title="删除"
+          onClick={() => onRemoveUnimported(row)}
+        >
+          <Trash2Icon />
+        </Button>
+      )}
+    </div>
+  );
+});
+
+/** 目录与批次切换以成对身份取数，过期请求不能覆盖新选择。 */
+export function LabelingPage() {
+  const [workdirs, setWorkdirs] = useState<WorkdirBatches[]>([]);
+  const [selection, setSelection] = useState<BatchSelection | null>(null);
+  const [items, setItems] = useState<ItemMap>(new Map());
+  const [exportRevision, setExportRevision] = useState(0);
+  const [externalRun, setExternalRun] = useState<{
+    identity: string;
+    id: string;
+  } | null>(null);
+  const [selectedItem, setSelectedItem] = useState<string | null>(null);
+  const [foldedItem, setFoldedItem] = useState<string | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
+  const [saving, setSaving] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [removal, setRemoval] = useState<{ identity: string; name: string } | null>(
+    null,
+  );
+  const [recovery, setRecovery] = useState<{
+    names: string[];
+    mode: "copy" | "restore" | "inplace";
+  } | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [settingsWid, setSettingsWid] = useState<string | null>(null);
+  const [newStrategyWid, setNewStrategyWid] = useState<string | null>(null);
+  const [directoriesRevision, setDirectoriesRevision] = useState(0);
+  const [query, setQuery] = useState("");
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const identity = `${selection?.workdirId}/${selection?.batchId}`;
+  const identityRef = useRef(identity);
+  identityRef.current = identity;
+  const mounted = useRef(false);
+  const refreshVersion = useRef(0);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const selected = selectedItem ? (items.get(selectedItem) ?? null) : null;
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: directoriesRevision refreshes the registry after directory settings mutations.
+  useEffect(() => {
+    let current = true;
+    void api
+      .listWorkdirs()
+      .then(async (directories) => {
+        const loaded = await Promise.all(
+          directories.map(async (entry) => ({
+            id: entry.id,
+            title: entry.title,
+            batches: await api.listBatches(entry.id),
+          })),
+        );
+        if (!current) return;
+        setWorkdirs(loaded);
+        const directory = loaded.find((entry) =>
+          entry.batches.some((batch) => batch.active),
+        );
+        const batch = directory?.batches.find((entry) => entry.active);
+        setSelection((previous) => {
+          if (
+            previous &&
+            loaded.some(
+              (entry) =>
+                entry.id === previous.workdirId &&
+                entry.batches.some(
+                  (candidate) => candidate.id === previous.batchId && candidate.active,
+                ),
+            )
+          )
+            return previous;
+          return directory && batch
+            ? { workdirId: directory.id, batchId: batch.id }
+            : null;
+        });
+      })
+      .catch((reason: unknown) => {
+        if (current) setError(errorMessage(reason));
+      })
+      .finally(() => {
+        if (current) setLoading(false);
+      });
+    return () => {
+      current = false;
+    };
+  }, [directoriesRevision]);
+
+  useEffect(() => {
+    if (!selection) return;
+    let current = true;
+    setLoading(true);
+    setError("");
+    setItems(new Map());
+    setSelectedItem(null);
+    setChecked(new Set());
+    setSelectionMode(false);
+    setSaving(false);
+    setRecovery(null);
+    setRemoval(null);
+    void api
+      .listItems(selection.workdirId, selection.batchId)
+      .then((view) => {
+        if (current) setItems(itemsFromGroups(view.groups));
+      })
+      .catch((reason: unknown) => {
+        if (current) setError(errorMessage(reason));
+      })
+      .finally(() => {
+        if (current) setLoading(false);
+      });
+    return () => {
+      current = false;
+    };
+  }, [selection]);
+
+  const filtered = useMemo(() => groupedItems(items, query), [items, query]);
+  const choose = useCallback((row: ItemRow) => setSelectedItem(itemKey(row)), []);
+  const recover = useCallback((row: ItemRow) => {
+    setRecovery({
+      names: [row.name],
+      mode:
+        row.status === "unimported" ? "inplace" : row.recoverable ? "restore" : "copy",
+    });
+  }, []);
+  const requestRemoval = useCallback(
+    (row: ItemRow) => {
+      setRemoval({ identity, name: row.name });
+    },
+    [identity],
+  );
+  const toggleCheck = useCallback((item: string) => {
+    setChecked((previous) => {
+      const next = new Set(previous);
+      if (next.has(item)) next.delete(item);
+      else next.add(item);
+      return next;
+    });
+  }, []);
+  const retryChanged = useCallback(
+    (retry: string[]) => {
+      if (mounted.current && identityRef.current === identity) {
+        setItems((previous) => withRetryItems(previous, retry));
+      }
+    },
+    [identity],
+  );
+  const refreshItems = useCallback(
+    async (requireSuccess = false) => {
+      if (!selection) return;
+      const version = ++refreshVersion.current;
+      try {
+        const view = await api.listItems(selection.workdirId, selection.batchId);
+        if (
+          !mounted.current ||
+          identityRef.current !== identity ||
+          version !== refreshVersion.current
+        )
+          return;
+        setItems(itemsFromGroups(view.groups));
+        setExportRevision((value) => value + 1);
+        setError("");
+      } catch (reason) {
+        if (
+          mounted.current &&
+          identityRef.current === identity &&
+          version === refreshVersion.current
+        )
+          setError(errorMessage(reason));
+        if (requireSuccess) throw reason;
+      }
+    },
+    [selection, identity],
+  );
+  const removeRetry = useCallback(
+    async (item?: string) => {
+      if (!selection || saving) return;
+      setSaving(true);
+      try {
+        const result = item
+          ? await api.removeRetryItem(selection.workdirId, selection.batchId, item)
+          : await api.clearRetryItems(selection.workdirId, selection.batchId);
+        if (!mounted.current || identityRef.current !== identity) return;
+        retryChanged(result.items);
+        setError("");
+      } catch (reason) {
+        if (mounted.current && identityRef.current === identity)
+          setError(errorMessage(reason));
+      } finally {
+        if (mounted.current && identityRef.current === identity) setSaving(false);
+      }
+    },
+    [selection, saving, identity, retryChanged],
+  );
+  async function addSelected() {
+    if (!selection || saving || !checked.size) return;
+    setSaving(true);
+    setError("");
+    try {
+      const result = await api.addRetryItems(selection.workdirId, selection.batchId, [
+        ...checked,
+      ]);
+      if (!mounted.current || identityRef.current !== identity) return;
+      retryChanged(result.items);
+      setChecked(new Set());
+    } catch (reason) {
+      if (mounted.current && identityRef.current === identity)
+        setError(errorMessage(reason));
+    } finally {
+      if (mounted.current && identityRef.current === identity) setSaving(false);
+    }
+  }
+  const asset =
+    selected && selection
+      ? `/api/workdirs/${encodeURIComponent(selection.workdirId)}/items/${encodeURIComponent(selected.item)}/asset`
+      : null;
+
+  if (settingsWid)
+    return (
+      <WorkdirSettings
+        key={settingsWid}
+        wid={settingsWid}
+        onBack={() => {
+          setSettingsWid(null);
+          void refreshItems();
+        }}
+        onChanged={() => setDirectoriesRevision((value) => value + 1)}
+        onDeleted={() => {
+          setSettingsWid(null);
+          setDirectoriesRevision((value) => value + 1);
+        }}
+      />
+    );
+
+  if (creating)
+    return (
+      <NewBatchForm
+        onBack={() => setCreating(false)}
+        onCreated={(value) => {
+          setCreating(false);
+          setSelection(value);
+          void api
+            .listWorkdirs()
+            .then(async (entries) => {
+              const loaded = await Promise.all(
+                entries.map(async (entry) => ({
+                  id: entry.id,
+                  title: entry.title,
+                  batches: await api.listBatches(entry.id),
+                })),
+              );
+              if (mounted.current) setWorkdirs(loaded);
+            })
+            .catch((reason: unknown) => {
+              if (mounted.current) setError(errorMessage(reason));
+            });
+        }}
+      />
+    );
+
+  return (
+    <section className="flex h-full min-h-0 flex-col" aria-label="打标">
+      {newStrategyWid && (
+        <NewStrategyDialog
+          key={newStrategyWid}
+          wid={newStrategyWid}
+          title={
+            workdirs.find((entry) => entry.id === newStrategyWid)?.title ??
+            newStrategyWid
+          }
+          onClose={() => setNewStrategyWid(null)}
+          onCreated={(batch) => {
+            setWorkdirs((previous) =>
+              previous.map((entry) =>
+                entry.id === newStrategyWid
+                  ? { ...entry, batches: [...entry.batches, batch] }
+                  : entry,
+              ),
+            );
+            setSelection({ workdirId: newStrategyWid, batchId: batch.id });
+            setNewStrategyWid(null);
+            setDirectoriesRevision((value) => value + 1);
+          }}
+        />
+      )}
+      {selection && removal?.identity === identity && (
+        <RemoveUnimportedDialog
+          key={`${identity}/${removal.name}`}
+          wid={selection.workdirId}
+          name={removal.name}
+          onClose={() => setRemoval(null)}
+          onRemoved={() => void refreshItems()}
+        />
+      )}
+      {selection && recovery && (
+        <ImportMaterialsDialog
+          key={`recover/${identity}`}
+          wid={selection.workdirId}
+          names={recovery.names}
+          initialMode={recovery.mode}
+          onClose={() => setRecovery(null)}
+          onImported={() => void refreshItems()}
+        />
+      )}
+      {selection && importOpen && (
+        <ImportMaterialsDialog
+          key={identity}
+          wid={selection.workdirId}
+          onClose={() => setImportOpen(false)}
+          onImported={() => void refreshItems()}
+        />
+      )}
+      <header className="flex shrink-0 items-center gap-4 px-6 pt-4 pb-3">
+        <div className="flex w-(--w-col-left) min-w-0 shrink-0 items-center gap-3 pr-3">
+          <div className="min-w-0 flex-1">
+            <BatchSelector
+              workdirs={workdirs}
+              value={selection}
+              onChange={setSelection}
+              onSettings={setSettingsWid}
+              onNewStrategy={setNewStrategyWid}
+            />
+          </div>
+          <Button
+            variant="ghost"
+            size="icon-lg"
+            aria-label="新建跑批"
+            onClick={() => setCreating(true)}
+          >
+            <PlusIcon />
+          </Button>
+        </div>
+        {selection && (
+          <RunControl
+            key={`${selection.workdirId}/${selection.batchId}`}
+            wid={selection.workdirId}
+            batch={selection.batchId}
+            externalRunId={
+              externalRun?.identity === identity ? externalRun.id : undefined
+            }
+            onFinish={() => refreshItems(true)}
+            onItemUpdate={(event) => {
+              refreshVersion.current += 1;
+              setItems((previous) => withItemUpdate(previous, event));
+            }}
+            onImport={() => setImportOpen(true)}
+          />
+        )}
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="刷新条目"
+          disabled={!selection || loading}
+          onClick={() => void refreshItems()}
+        >
+          <RefreshCwIcon />
+        </Button>
+      </header>
+      {error && (
+        <p role="alert" className="mx-6 mb-3 text-t-sm text-bad-ink">
+          {error}
+        </p>
+      )}
+      <div className="flex min-h-0 flex-1 gap-4 px-6 pb-6">
+        <aside
+          className="flex w-(--w-col-left) shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card"
+          aria-label="素材条目"
+        >
+          <div className="flex min-h-10 items-center gap-2 px-3 py-2 text-t-sm">
+            <span className="mr-auto text-t-md font-medium">条目</span>
+            {selectionMode && (
+              <>
+                <span className="shrink-0 tabular-nums">已选 {checked.size}</span>
+                <button
+                  type="button"
+                  disabled={saving || !checked.size}
+                  onClick={() => setChecked(new Set())}
+                >
+                  清空
+                </button>
+                <button
+                  type="button"
+                  disabled={saving || !checked.size}
+                  onClick={() => void addSelected()}
+                >
+                  加入重试
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              disabled={saving || !selection || loading}
+              onClick={() => {
+                setSelectionMode((value) => !value);
+                setChecked(new Set());
+              }}
+            >
+              {selectionMode ? "退出选择" : "选择"}
+            </button>
+          </div>
+          <div className="mr-3 mb-2 ml-4 flex h-(--h-sm) shrink-0 items-center gap-2 rounded-md border border-input bg-card px-2">
+            <SearchIcon className="size-3 shrink-0 text-text-3" />
+            <input
+              className="min-w-0 flex-1 border-0 bg-transparent text-t-sm text-text-2 outline-none placeholder:text-n-400"
+              aria-label="搜索素材"
+              placeholder="搜索素材"
+              value={query}
+              onChange={(event) => setQuery(event.currentTarget.value)}
+            />
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto" aria-busy={loading}>
+            {loading && <p className="p-3 text-t-sm text-muted-foreground">正在加载</p>}
+            {!loading && !selection && (
+              <p className="p-3 text-t-sm text-muted-foreground">还没有可用批次</p>
+            )}
+            {selection &&
+              ITEM_GROUPS.map(([key, label]) => (
+                <section key={key} aria-label={label}>
+                  <div
+                    className={`sticky top-0 z-10 flex items-center gap-2 border-b border-border/60 border-l-[3px] bg-card px-4 py-2 text-t-md font-medium ${key === "queued" ? "border-l-primary" : key === "done" ? "border-l-ok-ink" : key === "failed" ? "border-l-bad-ink" : key === "retry" ? "border-l-info-ink" : "border-l-n-400"}`}
+                  >
+                    <button
+                      type="button"
+                      className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                      aria-expanded={!!query || !collapsed.has(key)}
+                      onClick={() =>
+                        setCollapsed((previous) => {
+                          const next = new Set(previous);
+                          if (next.has(key)) next.delete(key);
+                          else next.add(key);
+                          return next;
+                        })
+                      }
+                    >
+                      <ChevronDownIcon
+                        className={`size-[13px] shrink-0 text-text-3 ${!query && collapsed.has(key) ? "-rotate-90" : ""}`}
+                      />
+                      {label}
+                      <span
+                        className={`text-t-xs tabular-nums ${key === "queued" ? "text-primary" : key === "done" ? "text-ok-ink" : key === "failed" ? "text-bad-ink" : key === "retry" ? "text-info-ink" : "text-text-4"}`}
+                      >
+                        {filtered[key]?.length ?? 0}
+                      </span>
+                    </button>
+                    {key === "retry" && !!filtered.retry?.length && (
+                      <button
+                        type="button"
+                        className="text-t-xs text-text-3"
+                        disabled={saving}
+                        onClick={() => void removeRetry()}
+                      >
+                        清空列表
+                      </button>
+                    )}
+                    {key === "missing" && !!filtered.missing?.length && (
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        disabled={!filtered.missing.some((row) => row.recoverable)}
+                        title="把当前清单中可从来源找回的缺失素材重新导入"
+                        onClick={() =>
+                          setRecovery({
+                            names: (filtered.missing ?? [])
+                              .filter((row) => row.recoverable)
+                              .map((row) => row.name),
+                            mode: "restore",
+                          })
+                        }
+                      >
+                        一键导入
+                      </Button>
+                    )}
+                    {key === "unimported" && !!filtered.unimported?.length && (
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        disabled={
+                          !filtered.unimported.some((row) => row.reason === "未登记")
+                        }
+                        title="导入当前清单中符合格式与大小限制的文件"
+                        onClick={() =>
+                          setRecovery({
+                            names: (filtered.unimported ?? [])
+                              .filter((row) => row.reason === "未登记")
+                              .map((row) => row.name),
+                            mode: "inplace",
+                          })
+                        }
+                      >
+                        一键导入
+                      </Button>
+                    )}
+                    {selectionMode && (key === "done" || key === "failed") && (
+                      <button
+                        type="button"
+                        className="float-right text-t-xs"
+                        disabled={saving}
+                        aria-label={`${label}全选`}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          const eligible = (filtered[key] ?? []).filter(
+                            (row) => row.can_retry && !row.in_retry,
+                          );
+                          const allChecked = eligible.every((row) =>
+                            checked.has(row.item),
+                          );
+                          setChecked((previous) => {
+                            const next = new Set(previous);
+                            for (const row of eligible) {
+                              if (allChecked) next.delete(row.item);
+                              else next.add(row.item);
+                            }
+                            return next;
+                          });
+                        }}
+                      >
+                        全选
+                      </button>
+                    )}
+                  </div>
+                  {(query || !collapsed.has(key)) && (
+                    <div className="p-2">
+                      {(filtered[key] ?? []).map((row) => (
+                        <MaterialRow
+                          key={itemKey(row)}
+                          row={row}
+                          selected={selectedItem === itemKey(row)}
+                          onSelect={choose}
+                          selectionMode={selectionMode}
+                          checked={checked.has(row.item)}
+                          onCheck={toggleCheck}
+                          retryGroup={key === "retry"}
+                          saving={saving}
+                          onRemoveRetry={removeRetry}
+                          onRecover={recover}
+                          onRemoveUnimported={requestRemoval}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </section>
+              ))}
+          </div>
+        </aside>
+        <div className="flex min-w-0 flex-1 flex-col overflow-auto">
+          {!selected && selection && !loading && (
+            <BatchOverview
+              key={identity}
+              wid={selection.workdirId}
+              batch={selection.batchId}
+              items={items}
+              exportRevision={exportRevision}
+              onRunStarted={(id) => setExternalRun({ identity, id })}
+              onSelect={choose}
+              onImported={() => void refreshItems()}
+              onImport={() => setImportOpen(true)}
+            />
+          )}
+          {!selected && !selection && (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
+              <FileImageIcon className="size-6" />
+              <p>选择素材</p>
+            </div>
+          )}
+          {selected && (
+            <>
+              <div className="mb-3 flex min-w-0 items-center gap-3">
+                <Button variant="ghost" size="sm" onClick={() => setSelectedItem(null)}>
+                  <ArrowLeftIcon />
+                  返回概览
+                </Button>
+                <h2 className="min-w-0 truncate text-t-md font-medium">
+                  {selected.name}
+                </h2>
+                <span
+                  className={`shrink-0 text-t-sm ${selected.status === "done" ? "text-ok-ink" : selected.status === "failed" ? "text-bad-ink" : "text-text-3"}`}
+                >
+                  {ITEM_GROUPS.find(([key]) => key === selected.status)?.[1] ??
+                    selected.status}
+                </span>
+              </div>
+              {asset &&
+                selected.status !== "missing" &&
+                selected.status !== "unimported" && (
+                  <div
+                    className={`relative w-full shrink-0 overflow-hidden rounded-xl border border-border bg-muted/45 ${foldedItem === `${identity}/${selected.item}` ? "h-[76px]" : "h-96"}`}
+                  >
+                    {selected.media === "video" ? (
+                      <video
+                        controls
+                        src={asset}
+                        aria-label={selected.name}
+                        className="h-full w-full object-contain"
+                      >
+                        <track kind="captions" />
+                      </video>
+                    ) : (
+                      <img
+                        src={asset}
+                        alt={selected.name}
+                        className="h-full w-full object-contain"
+                      />
+                    )}
+                    <Button
+                      className="absolute top-3 right-3 bg-card"
+                      variant="ghost"
+                      size="xs"
+                      aria-label={
+                        foldedItem === `${identity}/${selected.item}`
+                          ? "展开素材"
+                          : "折叠为小图"
+                      }
+                      aria-expanded={foldedItem !== `${identity}/${selected.item}`}
+                      onClick={() =>
+                        setFoldedItem((previous) =>
+                          previous === `${identity}/${selected.item}`
+                            ? null
+                            : `${identity}/${selected.item}`,
+                        )
+                      }
+                    >
+                      {foldedItem === `${identity}/${selected.item}` ? (
+                        <Maximize2Icon />
+                      ) : (
+                        <Minimize2Icon />
+                      )}
+                    </Button>
+                  </div>
+                )}
+              {(selected.message || selected.reason) && (
+                <p className="mt-3 text-warn-ink">
+                  {selected.message || selected.reason}
+                </p>
+              )}
+              {selection && selected.status !== "unimported" && (
+                <CaptionPreview
+                  key={`${selection.workdirId}/${selection.batchId}/${selected.item}`}
+                  wid={selection.workdirId}
+                  batch={selection.batchId}
+                  batches={
+                    workdirs.find((entry) => entry.id === selection.workdirId)?.batches
+                  }
+                  row={selected}
+                  onRetryChange={retryChanged}
+                />
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}

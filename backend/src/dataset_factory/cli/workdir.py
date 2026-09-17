@@ -115,12 +115,19 @@ def reimport(
     names: Annotated[
         list[str] | None, typer.Option("--name", help="缺失文件名，可重复")
     ] = None,
+    force_names: Annotated[
+        list[str] | None,
+        typer.Option("--force-name", help="异名同容时仍按新名恢复，可重复"),
+    ] = None,
 ) -> None:
     """从已记录来源恢复缺失素材；省略名称则恢复全部可找回的素材。"""
     root = Path(WorkdirRegistry.get(registered_id(path)).path)
     with cancellation() as stop:
         result = reimport_missing(
-            root, set(names) if names is not None else None, should_stop=stop
+            root,
+            set(names) if names is not None else None,
+            force_names=set(force_names or []),
+            should_stop=stop,
         )
     print_result(result)
 

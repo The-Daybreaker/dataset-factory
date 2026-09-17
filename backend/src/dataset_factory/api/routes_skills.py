@@ -21,10 +21,12 @@ from ..skills import (
     read_skill_file,
     set_enabled,
 )
+from ..skills.store import save_skill_file
 from .schemas import (
     ErrorDetail,
     SkillFileContent,
     SkillFileInfo,
+    SkillFileSaveRequest,
     SkillFilesResponse,
     SkillImportRequest,
     SkillImportResponse,
@@ -184,6 +186,31 @@ def list_package_files(name: str) -> SkillFilesResponse:
 def read_package_file(name: str, path: str) -> SkillFileContent:
     """读技能包内一个可预览文件的文本内容（UTF-8；仅 SKILL.md 与 references/ 开放）。"""
     return SkillFileContent(path=path, content=read_skill_file(name, path))
+
+
+@router.put(
+    "/{name}/files/{path:path}",
+    response_model=SkillFileContent,
+    responses={
+        400: {"model": ErrorDetail, "description": "文件或内容不合法"},
+        404: {"model": ErrorDetail, "description": "文件不存在"},
+        409: {"model": ErrorDetail, "description": "文件已被其他写者修改"},
+    },
+)
+def save_package_file(
+    name: str, path: str, request: SkillFileSaveRequest
+) -> SkillFileContent:
+    """写回现有技能文本文件，SKILL.md 同时校验其 frontmatter。"""
+    return SkillFileContent(
+        path=path,
+        content=save_skill_file(
+            name,
+            path,
+            request.content,
+            original_content=request.original_content,
+            description=request.description,
+        ),
+    )
 
 
 @router.post(

@@ -19,6 +19,9 @@ from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 from typing import cast
 
+import yaml
+from filelock import FileLock, Timeout
+
 from .._fs import atomic_write_text, data_root
 from .errors import (
     SkillError,
@@ -596,3 +599,83 @@ def read_skill_file(name: str, path: str) -> str:
         ) from exc
     except OSError as exc:
         raise SkillError(f"无法读取 {entry.path}：{exc.strerror or exc}") from exc
+
+
+def save_skill_file(
+    name: str,
+    path: str,
+    content: str,
+    *,
+    original_content: str,
+    description: str | None = None,
+) -> str:
+    """校验并原子写回现有文本文件，拒绝覆盖读取后已被修改的内容。
+
+    Args:
+        name: 技能包名称。
+        path: 包内可预览文件的相对路径。
+        content: 待保存的完整 UTF-8 文本。
+        original_content: 编辑器读取时的文本，用于检测并发修改。
+        description: 可选的描述修改，仅适用于 SKILL.md。
+
+    Returns:
+        保存后回读的文件内容。
+
+    Raises:
+        SkillExistsError: 读取之后文件已被其他写者修改。
+        SkillFormatError: 文本无法编码，或 SKILL.md 元数据不合法。
+        SkillFilePathError: 目标不在技能包内。
+        SkillError: 文件不存在、不可预览或写入失败。
+    """
+    directory = _require_skill_dir(name)
+    parts = _safe_package_parts(path)
+    if description is not None:
+        if parts != (_SKILL_MD,):
+            raise SkillFormatError("描述只能通过 SKILL.md 保存。")
+        parse_skill_frontmatter(content)
+        lines = (
+            content.lstrip(chr(0xFEFF))
+            .replace("\r\n", "\n")
+            .replace("\r", "\n")
+            .splitlines(keepends=True)
+        )
+        end = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
+        front = "".join(lines[1:end])
+        node = cast(
+            object,
+            yaml.compose(front, Loader=yaml.SafeLoader),  # pyright: ignore[reportUnknownMemberType]
+        )
+        if not isinstance(node, yaml.MappingNode):
+            raise SkillFormatError("SKILL.md 的 frontmatter 顶层应是映射。")
+        values = [value for key, value in node.value if key.value == "description"]
+        if len(values) != 1:
+            raise SkillFormatError("SKILL.md 必须包含唯一的 description 字段。")
+        value = values[0]
+        replacement = json.dumps(description, ensure_ascii=False)
+        suffix = front[value.end_mark.index :]
+        if not suffix.startswith(("\n", "\r", " ", "\t")):
+            replacement += "\n"
+        front = front[: value.start_mark.index] + replacement + suffix
+        content = "---\n" + front + "---\n" + "".join(lines[end + 1 :])
+    try:
+        content.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise SkillFormatError("内容含 UTF-8 无法编码的字符，无法保存。") from exc
+    if parts == (_SKILL_MD,):
+        updated_name, _ = parse_skill_frontmatter(content)
+        if updated_name != name:
+            raise SkillFormatError("SKILL.md 的 name 必须与当前技能包名称一致。")
+    try:
+        with FileLock(str(directory.parent / f".{name}.edit.lock"), timeout=10):
+            current = read_skill_file(name, path)
+            if current != original_content:
+                raise SkillExistsError("文件已被其他写者修改；请重新读取后合并修改。")
+            target = directory.joinpath(*parts).resolve()
+            if not target.is_relative_to(directory.resolve()):
+                raise SkillFilePathError("文件不在技能包内，无法保存。")
+            atomic_write_text(target, content)
+            return read_skill_file(name, path)
+    except Timeout as exc:
+        raise SkillExistsError("技能文件正在保存，请稍后重试。") from exc
+    except OSError as exc:
+        raise SkillError(f"无法保存 {path}：{exc.strerror or exc}") from exc

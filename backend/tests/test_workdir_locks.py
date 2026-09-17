@@ -21,6 +21,8 @@ from typing import Any
 
 import pytest
 
+from dataset_factory.runs.control import current_run, request_stop, stop_requested
+from dataset_factory.runs.errors import RunNotActiveError
 from dataset_factory.workdir import (
     RunLock,
     RunOccupiedError,
@@ -170,6 +172,78 @@ def test_state_lock_blocks_other_thread_until_release(workdir: Path) -> None:
     thread_b.join(5)
 
     assert order == ["a-in", "pre-release", "b-in"]
+
+
+def test_run_lock_waits_for_short_maintenance_guard(workdir: Path) -> None:
+    """短暂的目录读写保护结束后可以启动跑批，不误判为已有运行。"""
+    dsf = WorkdirStore(workdir).dsf_path
+    attempted = threading.Event()
+    acquired = threading.Event()
+    errors: list[Exception] = []
+
+    def contender_body() -> None:
+        lock = RunLock(dsf)
+        attempted.set()
+        try:
+            lock.acquire({"batch": "s1"})
+            acquired.set()
+        except RunOccupiedError as exc:
+            errors.append(exc)
+        finally:
+            lock.release()
+
+    with maintenance_guard(workdir):
+        contender = threading.Thread(target=contender_body)
+        contender.start()
+        assert attempted.wait(5)
+        assert not acquired.wait(0.1)
+    contender.join(5)
+
+    assert not contender.is_alive()
+    assert errors == []
+    assert acquired.is_set()
+
+
+@pytest.mark.parametrize("stop", [False, True])
+@pytest.mark.parametrize("running", [False, True])
+def test_run_control_waits_for_short_maintenance(
+    workdir: Path, *, stop: bool, running: bool
+) -> None:
+    """查询与停止等待短维护锁，随后按真实占用返回进度或无运行。"""
+    dsf = WorkdirStore(workdir).dsf_path
+    lock = RunLock(dsf)
+    started = threading.Event()
+    finished = threading.Event()
+    outcomes: list[str] = []
+    if running:
+        lock.acquire({"batch": "s1", "run_id": "control-test"})
+
+    def contender_body() -> None:
+        started.set()
+        try:
+            result = request_stop(workdir, 1) if stop else current_run(workdir, 1)
+            outcomes.append(result if isinstance(result, str) else result["run_id"])
+        except RunNotActiveError:
+            outcomes.append("not-active")
+        except RunOccupiedError:
+            outcomes.append("occupied")
+        finally:
+            finished.set()
+
+    try:
+        with maintenance_guard(workdir):
+            contender = threading.Thread(target=contender_body)
+            contender.start()
+            assert started.wait(5)
+            finished_early = finished.wait(0.1)
+        contender.join(5)
+
+        assert not contender.is_alive()
+        assert not finished_early
+        assert outcomes == (["control-test"] if running else ["not-active"])
+        assert stop_requested(workdir, "control-test") is (stop and running)
+    finally:
+        lock.release()
 
 
 def test_state_lock_timeout_raises_diagnostic_error(workdir: Path) -> None:

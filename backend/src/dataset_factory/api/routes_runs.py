@@ -5,7 +5,7 @@
 立即返回 202 + run_id。真正的运行锁在后台线程里抢（「锁归调度线程」纪律不变；
 跨进程并发由磁盘锁兜底——线程里抢锁失败的失败原因经 SSE / current 呈现）。
 
-- current：注册表里有该工作目录的运行 → 进度快照；没有 → 404（run-not-active）。
+- current：运行中或最近失败的进度快照；无运行且无失败快照 → 404。
 - stop：找到运行中 runner 置位协作取消信号即返回（停止是异步的——当前条目跑完
   本轮尝试后在条目边界停下）；没有运行 → 404。
 - stream：订阅该 runner 的业务事件转 SSE 帧（与一期 /label/stream 帧同构），
@@ -22,10 +22,11 @@ import queue
 import threading
 from collections.abc import Generator
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
 
 from ..runs import (
     BatchInactiveError,
@@ -42,6 +43,7 @@ from ..runs import (
 )
 from ..runs.control import current_run as read_current_run
 from ..runs.control import request_stop
+from ..runs.journal import RunCounters, RunRecord, load_latest_run, read_run_text
 from ..strategies import get_batch, parse_seq, read_snapshot
 from ..tasks import RETRY_AFTER_SECONDS
 from ..workdir import RunOccupiedError, WorkdirRegistry
@@ -57,6 +59,72 @@ from .schemas import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/workdirs/{wid}/batches/{sN}/runs", tags=["跑批"])
+
+
+class RunHistoryView(BaseModel):
+    """最近运行的磁盘摘要及可定位的日志绝对路径。"""
+
+    record: RunRecord | None
+    log_path: str | None
+    items_path: str | None
+
+
+class RunTextView(BaseModel):
+    """指定运行的只读文件内容与绝对路径。"""
+
+    path: str
+    text: str
+
+
+@router.get(
+    "/latest", response_model=RunHistoryView, responses={404: {"model": Problem}}
+)
+def latest_run(wid: str, sN: str, request: Request) -> RunHistoryView:
+    """按批次回读最近一次磁盘记录；尚无运行时返回空摘要。"""
+    workdir = _workdir_path(wid)
+    seq = parse_seq(sN)
+    get_batch(workdir, seq)
+    runs_dir = workdir / ".dsf" / "runs"
+    record = load_latest_run(runs_dir, seq)
+    if record is not None and record.status == "running":
+        try:
+            progress = current_run(wid, sN, request)
+        except RunNotActiveError:
+            # 活性检查期间可能刚好收尾，先回读终态再判断是否异常中断。
+            record = load_latest_run(runs_dir, seq)
+            if record is not None and record.status == "running":
+                record = record.model_copy(update={"status": "interrupted"})
+        else:
+            if progress.run_id == record.run_id:
+                record = record.model_copy(
+                    update={
+                        "status": progress.status,
+                        "counters": RunCounters.model_validate(progress.counters),
+                    }
+                )
+            else:
+                record = record.model_copy(update={"status": "interrupted"})
+    directory = runs_dir / record.run_id if record else None
+    return RunHistoryView(
+        record=record,
+        log_path=str(directory / "run.log") if directory else None,
+        items_path=str(directory / "items.jsonl") if directory else None,
+    )
+
+
+@router.get(
+    "/{run_id}/text", response_model=RunTextView, responses={404: {"model": Problem}}
+)
+def run_text(
+    wid: str, sN: str, run_id: str, file: Literal["run.log", "items.jsonl"] = "run.log"
+) -> RunTextView:
+    """指定运行查看日志，打开后不因新运行出现而切换文件。"""
+    workdir = _workdir_path(wid)
+    seq = parse_seq(sN)
+    get_batch(workdir, seq)
+    runs_dir = workdir / ".dsf" / "runs"
+    text = read_run_text(runs_dir, run_id, seq, file)
+    return RunTextView(path=str(runs_dir / run_id / file), text=text)
 
 
 def _workdir_path(wid: str) -> Path:
@@ -133,13 +201,22 @@ def start_run(
             f"批次 s{seq} 已停用（隐藏）——请先「显示」该批次再跑批。"
         )
     snapshot = read_snapshot(workdir, seq)
+    if body.items is not None:
+        rejections = retry_rejections(workdir, seq, body.items)
+        if rejections:
+            raise RetryItemNotEligibleError(
+                "选中条目中存在不可重打的素材。", rejections=rejections
+            )
     completer = completer_for_snapshot(snapshot.endpoint)
 
     registry, guard = _registry(request)
     key = str(workdir)
-    runner = BatchRunner(workdir, seq, completer, mode=body.mode, trigger="web")
+    runner = BatchRunner(
+        workdir, seq, completer, mode=body.mode, trigger="web", retry_items=body.items
+    )
     with guard:
-        if key in registry:
+        existing = registry.get(key)
+        if existing is not None and existing.snapshot()["status"] != "failed":
             raise RunOccupiedError(
                 "该工作目录已有跑批在运行——等它结束或停止后再试。",
                 occupier={"pid": os.getpid(), "batch": f"s{seq}"},
@@ -157,7 +234,10 @@ def start_run(
             logger.warning("跑批 %s 失败（已通知订阅者）", run_id, exc_info=True)
         finally:
             with guard:
-                if registry.get(key) is runner:
+                if (
+                    registry.get(key) is runner
+                    and runner.snapshot()["status"] != "failed"
+                ):
                     del registry[key]
 
     threading.Thread(target=thread_body, name=f"dsf-run-{run_id}", daemon=True).start()
@@ -188,6 +268,11 @@ def current_run(wid: str, sN: str, request: Request) -> RunStatusView:
     except RunNotActiveError:
         return RunStatusView(**read_current_run(workdir, seq))
     else:
+        if runner.snapshot()["status"] == "failed":
+            try:
+                return RunStatusView(**read_current_run(workdir, seq))
+            except RunNotActiveError:
+                pass
         return RunStatusView(**runner.snapshot())
 
 
@@ -211,7 +296,10 @@ def stop_run(wid: str, sN: str, request: Request) -> Response:
     except RunNotActiveError:
         request_stop(workdir, seq)
     else:
-        _require_active(runner).stop()
+        if runner.snapshot()["status"] == "failed":
+            request_stop(workdir, seq)
+        else:
+            _require_active(runner).stop()
     return Response(status_code=204)
 
 

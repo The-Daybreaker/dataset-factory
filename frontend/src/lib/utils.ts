@@ -5,7 +5,15 @@
  * 直接拼接会产生同属性冲突（w-10 w-full 并存），merge 让后者胜出。
  */
 import { type ClassValue, clsx } from "clsx";
-import { twMerge } from "tailwind-merge";
+import { extendTailwindMerge } from "tailwind-merge";
+
+const twMerge = extendTailwindMerge({
+  extend: {
+    classGroups: {
+      "font-size": [{ text: ["t-xs", "t-sm", "t-md", "t-lg", "t-xl", "t-2xl"] }],
+    },
+  },
+});
 
 export function cn(...inputs: ClassValue[]): string {
   return twMerge(clsx(inputs));

@@ -373,6 +373,37 @@ def test_retry_mode_runs_snapshot_and_removes_succeeded_items(batch: Path) -> No
     assert read_retry_list(batch, 2) == ["其他批条的"]
 
 
+def test_explicit_retry_preserves_unselected_products_and_retry_entries(
+    batch: Path,
+) -> None:
+    """明确重打只覆盖所选产物，成功项出列且其他批次与未选名单原样保留。"""
+    _runner(batch, ScriptedCompleter()).run()
+    untouched = (batch / "s1__cat_002.txt").read_bytes()
+    _put_retry_list(
+        batch,
+        [
+            {"batch": 1, "item": "cat_001"},
+            {"batch": 1, "item": "cat_002"},
+            {"batch": 2, "item": "cat_001"},
+        ],
+    )
+    selected = ["cat_001", "cat_001"]
+    completer = ScriptedCompleter(["新的描述"])
+    runner = BatchRunner(
+        batch, 1, completer, mode="retry", trigger="web", retry_items=selected
+    )
+    selected.append("cat_002")
+
+    runner.run()
+
+    assert completer.calls == 1
+    assert (batch / "s1__cat_001.txt").read_text(encoding="utf-8") == "新的描述"
+    assert (batch / "s1__cat_002.txt").read_bytes() == untouched
+    assert read_retry_list(batch, 1) == ["cat_002"]
+    assert read_retry_list(batch, 2) == ["cat_001"]
+    assert [row["item"] for row in _read_items(_last_run_dir(batch))] == ["cat_001"]
+
+
 def test_retry_mode_missing_asset_fails_without_model_call(batch: Path) -> None:
     """名单内素材缺失：照常发车、读取失败按 asset-unreadable 记账，不调模型。"""
     _put_retry_list(batch, [{"batch": 1, "item": "ghost"}])
@@ -612,6 +643,20 @@ def test_subscriber_exception_does_not_break_the_run(batch: Path) -> None:
     assert report.status == "completed"
 
 
+def test_subscription_after_completion_receives_terminal_event(batch: Path) -> None:
+    """订阅与收尾交错时立即获得终态，不会挂起等待已错过的事件。"""
+    runner = _runner(batch, ScriptedCompleter())
+    report = runner.run()
+    received: list[RunEvent] = []
+
+    unsubscribe = runner.subscribe(received.append)
+    unsubscribe()
+
+    assert len(received) == 1
+    assert received[0].kind == "run-finished"
+    assert received[0].to_payload()["run_id"] == report.run_id
+
+
 # --------------------------------------------------------------------------
 # 历史流水损坏：fail loud
 # --------------------------------------------------------------------------
@@ -627,8 +672,14 @@ def test_corrupt_history_journal_fails_loud_before_anything_runs(batch: Path) ->
         encoding="utf-8",
     )
 
+    runner = _runner(batch, ScriptedCompleter())
+    received: list[RunEvent] = []
+    runner.subscribe(received.append)
+
     with pytest.raises(RunJournalCorruptedError):
-        _runner(batch, ScriptedCompleter()).run()
+        runner.run()
 
     runs = list((WorkdirStore(batch).dsf_path / "runs").iterdir())
     assert [path.name for path in runs] == ["20260101T000000Z"]
+    assert received[-1].to_payload()["error"] == runner.snapshot()["error"]
+    assert received[-1].to_payload()["status"] == "failed"

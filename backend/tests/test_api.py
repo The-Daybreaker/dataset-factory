@@ -263,6 +263,38 @@ def test_prompts_invalid_name_is_400(client: TestClient) -> None:
     assert response.status_code == 400
 
 
+def test_skill_save_roundtrip_and_conflict(client: TestClient) -> None:
+    """HTTP 写回同步描述、正文与列表，并拒绝迟到覆盖。"""
+    client.post("/api/skills/import", json={"path": str(_SKILL_PACK)})
+    url = "/api/skills/example-caption-skill/files/SKILL.md"
+    original = client.get(url).json()["content"]
+    payload = {
+        "content": original + "\n新的正文要求\n",
+        "original_content": original,
+        "description": "新的描述",
+    }
+
+    saved = client.put(url, json=payload)
+    readback = client.get(url)
+    stale = client.put(url, json=payload)
+
+    assert saved.status_code == 200
+    assert saved.json() == readback.json()
+    assert "新的正文要求" in readback.json()["content"]
+    assert client.get("/api/skills").json()[0]["description"] == "新的描述"
+    assert stale.status_code == 409
+    assert client.get(url).json() == readback.json()
+
+
+def test_skill_save_requires_original_content(client: TestClient) -> None:
+    """缺少编辑基线的请求在边界被拒绝。"""
+    response = client.put(
+        "/api/skills/example-caption-skill/files/SKILL.md", json={"content": "text"}
+    )
+
+    assert response.status_code == 422
+
+
 def test_skills_lifecycle(client: TestClient) -> None:
     """skill 全生命周期：import → list → disable/enable → rm → 404。"""
     imported = client.post("/api/skills/import", json={"path": str(_SKILL_PACK)})

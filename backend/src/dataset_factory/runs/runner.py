@@ -195,6 +195,7 @@ class RunFinishedEvent:
     batch: int
     status: str
     counters: dict[str, int]
+    error: str | None = None
 
     @property
     def kind(self) -> str:
@@ -208,6 +209,7 @@ class RunFinishedEvent:
             "batch": self.batch,
             "status": self.status,
             "counters": dict(self.counters),
+            "error": self.error,
         }
 
 
@@ -235,6 +237,7 @@ class BatchRunner:
         *,
         mode: RunMode,
         trigger: RunTrigger,
+        retry_items: list[str] | None = None,
         video_fps: int = 2,
         video_max_frames: int = 16,
         sleeper: Callable[[float], None] | None = None,
@@ -247,11 +250,17 @@ class BatchRunner:
             completer: 实现 llm.Completer 协议的客户端（逐条打标的唯一模型通道）。
             mode: full / retry。
             trigger: web / cli（出身记录）。
+            retry_items: 本次重打的明确条目；仅 retry 模式可用，不替换持久名单。
             video_fps: 视频条目的抽帧 fps。
             video_max_frames: 视频条目的抽帧帧数上限。
             sleeper: 退避等待函数（注入替代 time.sleep，测试不打真盹）。
         """
         self._workdir = workdir
+        if retry_items is not None and (mode != "retry" or not retry_items):
+            raise ValueError("明确条目仅用于 retry 模式，且不能为空。")
+        self._retry_items = (
+            list(dict.fromkeys(retry_items)) if retry_items is not None else None
+        )
         self._seq = seq
         self._completer = completer
         self._mode: RunMode = mode
@@ -262,6 +271,8 @@ class BatchRunner:
         self._stop_event = threading.Event()
         self._owns_run_lock = False
         self._subscribers: list[Callable[[RunEvent], None]] = []
+        self._subscriber_guard = threading.Lock()
+        self._finished_event: RunFinishedEvent | None = None
         # 进度快照（current 端点的数据源）：run_id 构造时预分配（POST 受理响应要
         # 立即返回它；目录创建仍在持锁后进行——跨进程同秒撞名时输家抢不到锁、
         # 不会真建目录）。counters 全程持有一份运行中镜像，供无锁读取。
@@ -310,13 +321,22 @@ class BatchRunner:
     def subscribe(self, callback: Callable[[RunEvent], None]) -> Callable[[], None]:
         """订阅业务事件（多播——多个 SSE 连接各订各的），返回退订函数。
 
-        订阅要在 ``run()`` 开始前完成；回调异常只记日志、绝不中断跑批
+        终态与订阅原子交接，避免订阅前刚好结束导致消费者永远等不到收尾。
+        回调异常只记日志、绝不中断跑批
         （消费者死了不该连累生产者）。
         """
-        self._subscribers.append(callback)
+        with self._subscriber_guard:
+            finished = self._finished_event
+            if finished is None:
+                self._subscribers.append(callback)
+        if finished is not None:
+            try:
+                callback(finished)
+            except Exception:
+                logger.warning("跑批终态订阅者回调异常（已忽略）", exc_info=True)
 
         def _unsubscribe() -> None:
-            with suppress(ValueError):
+            with self._subscriber_guard, suppress(ValueError):
                 self._subscribers.remove(callback)
 
         return _unsubscribe
@@ -349,6 +369,7 @@ class BatchRunner:
                     batch=self._seq,
                     status=_STATUS_FAILED,
                     counters=self._counters,
+                    error=self._error,
                 )
             )
             raise
@@ -396,7 +417,13 @@ class BatchRunner:
         planned_stems: list[str] = []
         assets: dict[str, Path] = {}
         if self._mode == "retry":
-            planned_stems = list(read_retry_list(self._workdir, self._seq))
+            if self._retry_items is not None:
+                add_retry_items(self._workdir, self._seq, self._retry_items)
+            planned_stems = (
+                list(self._retry_items)
+                if self._retry_items is not None
+                else list(read_retry_list(self._workdir, self._seq))
+            )
         else:
             planned_stems, skip_stems, assets = _plan_full(
                 self._workdir, self._seq, store.runs_dir
@@ -683,7 +710,11 @@ class BatchRunner:
                 )
             except OSError:
                 logger.warning("运行进度快照写入失败", exc_info=True)
-        for callback in list(self._subscribers):
+        with self._subscriber_guard:
+            if isinstance(event, RunFinishedEvent):
+                self._finished_event = event
+            callbacks = list(self._subscribers)
+        for callback in callbacks:
             try:
                 callback(event)
             except Exception:

@@ -19,7 +19,7 @@ function modeIcon(mode: ThemeMode) {
 }
 
 /** 主题切换按钮：点击在三态间循环，选择记进 localStorage（跟随系统时实时响应系统切换）。 */
-export function ThemeToggle(): ReactElement {
+export function ThemeToggle({ sidebar = false }: { sidebar?: boolean }): ReactElement {
   const { mode, setMode } = useTheme();
   // noUncheckedIndexedAccess 下数组下标访问带 undefined，兜底回 system（三态循环不会真走到）。
   const next =
@@ -32,9 +32,13 @@ export function ThemeToggle(): ReactElement {
       <TooltipTrigger asChild>
         <Button
           type="button"
-          variant="outline"
+          variant={sidebar ? "ghost" : "outline"}
           size="icon"
-          className="border-border bg-card text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          className={
+            sidebar
+              ? "text-text-3 hover:bg-nav-hover hover:text-text-1"
+              : "border-border bg-card text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          }
           aria-label={`主题：${MODE_LABEL[mode]}，切换为${MODE_LABEL[next]}`}
           onClick={() => setMode(next)}
         >

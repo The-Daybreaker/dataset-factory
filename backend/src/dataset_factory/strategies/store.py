@@ -98,8 +98,8 @@ def _entry_path(strategy_id: str) -> Path:
 
 
 def _generate_id() -> str:
-    """随机短 ID（token_urlsafe 截短，与 wid 同款；写入前查重）。"""
-    return secrets.token_urlsafe(8)[:_STRATEGY_ID_LENGTH]
+    """生成字母开头的随机短 ID，避免 CLI 将它解析为选项。"""
+    return "s" + secrets.token_urlsafe(8)[: _STRATEGY_ID_LENGTH - 1]
 
 
 def _now_iso() -> str:

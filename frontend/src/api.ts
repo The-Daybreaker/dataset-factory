@@ -32,6 +32,42 @@ export type SkillFileInfo = components["schemas"]["SkillFileInfo"];
 export type SkillFileContent = components["schemas"]["SkillFileContent"];
 export type ServiceStatus = components["schemas"]["ServiceStatus"];
 export type ServiceLogs = components["schemas"]["ServiceLogs"];
+export interface TaskView {
+  id: string;
+  status: "running" | "succeeded" | "failed" | "cancelled";
+  progress: number;
+  result: unknown;
+  error: string | null;
+}
+
+function parseTask(value: unknown): TaskView {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    !("id" in value) ||
+    typeof value.id !== "string" ||
+    !("status" in value) ||
+    (value.status !== "running" &&
+      value.status !== "succeeded" &&
+      value.status !== "failed" &&
+      value.status !== "cancelled") ||
+    !("progress" in value) ||
+    typeof value.progress !== "number" ||
+    !Number.isFinite(value.progress) ||
+    !("result" in value) ||
+    !("error" in value) ||
+    (value.error !== null && typeof value.error !== "string")
+  ) {
+    throw new Error("任务响应格式异常，请刷新后重试");
+  }
+  return {
+    id: value.id,
+    status: value.status,
+    progress: value.progress,
+    result: value.result,
+    error: value.error,
+  };
+}
 /** 错误体的契约形状（{"detail": string}）——错误路径也在契约里，不再有盲区。 */
 export type ErrorDetail = components["schemas"]["ErrorDetail"];
 
@@ -107,6 +143,7 @@ async function request<T>(
   path: string,
   body?: unknown,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  responseType: "json" | "text" = "json",
 ): Promise<T> {
   // 超时用 AbortController 实现：到点放弃等待，而不是无限期挂着。
   const controller = new AbortController();
@@ -149,6 +186,9 @@ async function request<T>(
   }
   // 请求 id 无论成败都从响应头取：错误时展示给用户，成功时也留在日志可查。
   const requestId = response.headers.get("X-Request-ID");
+  if (response.ok && responseType === "text") {
+    return (await response.text()) as T;
+  }
   if (response.status === 204) {
     // 无内容响应：调用方声明的是 void，这里的断言只是让类型收口。
     return undefined as T;
@@ -169,6 +209,331 @@ async function request<T>(
 
 /** 后端接口的薄封装：一处集中管理路径与类型，界面代码只管调用。 */
 export const api = {
+  listDirectory: (
+    path: string,
+    showFiles = false,
+    showHidden = false,
+    suffixes: string[] = [],
+  ) => {
+    const query = new URLSearchParams({
+      show_files: String(showFiles),
+      show_hidden: String(showHidden),
+    });
+    if (path) query.set("path", path);
+    for (const suffix of suffixes) query.append("suffixes", suffix);
+    return request<components["schemas"]["DirectoryListing"]>(
+      "GET",
+      `/api/filesystem?${query}`,
+    );
+  },
+
+  renameDirectory: (path: string, newName: string) =>
+    request<components["schemas"]["WorkdirRelocateAccepted"]>(
+      "POST",
+      "/api/filesystem/rename",
+      { path, new_name: newName },
+    ),
+
+  createDirectory: (parent: string, name: string) =>
+    request<components["schemas"]["DirectoryPath"]>(
+      "POST",
+      "/api/filesystem/directories",
+      { parent, name },
+    ),
+
+  filesystemCapabilities: () =>
+    request<components["schemas"]["FilesystemCapabilities"]>(
+      "GET",
+      "/api/filesystem/capabilities",
+    ),
+
+  openDirectory: (path: string) =>
+    request<void>("POST", "/api/filesystem/open", { path }),
+
+  exportPlan: (wid: string, batch: string, sequential: boolean) =>
+    request<components["schemas"]["ExportPlanView"]>(
+      "GET",
+      `/api/workdirs/${encodeURIComponent(wid)}/export/plan?batch=${encodeURIComponent(batch)}&sequential=${sequential}`,
+    ),
+
+  startExport: (wid: string, batch: string, sequential: boolean) =>
+    request<components["schemas"]["ExportAccepted"]>(
+      "POST",
+      `/api/workdirs/${encodeURIComponent(wid)}/export`,
+      { batch, mode: "current", sequential },
+    ),
+
+  setExclusions: (wid: string, batch: string, items: string[], excluded: boolean) =>
+    request<components["schemas"]["ExclusionsView"]>(
+      excluded ? "POST" : "DELETE",
+      `/api/workdirs/${encodeURIComponent(wid)}/batches/${encodeURIComponent(batch)}/exclusions`,
+      { items },
+    ),
+
+  latestRun: (wid: string, batch: string) =>
+    request<components["schemas"]["RunHistoryView"]>(
+      "GET",
+      `/api/workdirs/${encodeURIComponent(wid)}/batches/${encodeURIComponent(batch)}/runs/latest`,
+    ),
+
+  readRunText: (
+    wid: string,
+    batch: string,
+    runId: string,
+    file: "run.log" | "items.jsonl",
+  ) =>
+    request<components["schemas"]["RunTextView"]>(
+      "GET",
+      `/api/workdirs/${encodeURIComponent(wid)}/batches/${encodeURIComponent(batch)}/runs/${encodeURIComponent(runId)}/text?file=${encodeURIComponent(file)}`,
+    ),
+
+  rebuildImportRecords: (wid: string) =>
+    request<components["schemas"]["ImportAccepted"]>(
+      "POST",
+      `/api/workdirs/${encodeURIComponent(wid)}/imports/rebuild`,
+    ),
+
+  scanIntegrity: (wid: string, batch: string) =>
+    request<components["schemas"]["IntegrityReport"]>(
+      "POST",
+      `/api/workdirs/${encodeURIComponent(wid)}/integrity/scan?batch=${encodeURIComponent(batch)}`,
+    ),
+
+  listStrategies: () =>
+    request<components["schemas"]["StrategyView"][]>("GET", "/api/strategies"),
+
+  getStrategy: (id: string) =>
+    request<components["schemas"]["StrategyView"]>(
+      "GET",
+      `/api/strategies/${encodeURIComponent(id)}`,
+    ),
+
+  createStrategy: (body: components["schemas"]["StrategySaveRequest"]) =>
+    request<components["schemas"]["StrategyView"]>("POST", "/api/strategies", body),
+
+  updateStrategy: (id: string, body: components["schemas"]["StrategySaveRequest"]) =>
+    request<components["schemas"]["StrategyView"]>(
+      "PUT",
+      `/api/strategies/${encodeURIComponent(id)}`,
+      body,
+    ),
+
+  copyStrategy: (id: string) =>
+    request<components["schemas"]["StrategyView"]>(
+      "POST",
+      `/api/strategies/${encodeURIComponent(id)}/copy`,
+    ),
+
+  rebindStrategy: (id: string, body: components["schemas"]["StrategyRebindRequest"]) =>
+    request<components["schemas"]["StrategyView"]>(
+      "POST",
+      `/api/strategies/${encodeURIComponent(id)}/rebind`,
+      body,
+    ),
+
+  deleteStrategy: (id: string) =>
+    request<void>("DELETE", `/api/strategies/${encodeURIComponent(id)}`),
+
+  createWorkdir: (body: components["schemas"]["WorkdirCreateRequest"]) =>
+    request<components["schemas"]["WorkdirCreateAccepted"]>(
+      "POST",
+      "/api/workdirs",
+      body,
+    ),
+
+  createBatch: (wid: string, body: components["schemas"]["BatchCreateRequest"]) =>
+    request<components["schemas"]["BatchView"]>(
+      "POST",
+      `/api/workdirs/${encodeURIComponent(wid)}/batches`,
+      body,
+    ),
+
+  importMaterials: (wid: string, body: components["schemas"]["WorkdirImportRequest"]) =>
+    request<components["schemas"]["ImportAccepted"]>(
+      "POST",
+      `/api/workdirs/${encodeURIComponent(wid)}/imports`,
+      body,
+    ),
+
+  reimportMaterials: (wid: string, names: string[], forceNames?: string[]) =>
+    request<components["schemas"]["ImportAccepted"]>(
+      "POST",
+      `/api/workdirs/${encodeURIComponent(wid)}/imports/reimport`,
+      { names, ...(forceNames ? { force_names: forceNames } : {}) },
+    ),
+
+  removeUnimported: (wid: string, names: string[]) =>
+    request<components["schemas"]["CleanupResult"]>(
+      "POST",
+      `/api/workdirs/${encodeURIComponent(wid)}/unimported/remove`,
+      { names },
+    ),
+
+  getTask: async (id: string) =>
+    parseTask(await request<unknown>("GET", `/api/tasks/${encodeURIComponent(id)}`)),
+
+  cancelTask: async (id: string) =>
+    parseTask(
+      await request<unknown>("POST", `/api/tasks/${encodeURIComponent(id)}/cancel`),
+    ),
+
+  readCaption: (wid: string, batch: string, item: string) =>
+    request<string>(
+      "GET",
+      `/api/workdirs/${encodeURIComponent(wid)}/batches/${encodeURIComponent(batch)}/items/${encodeURIComponent(item)}/txt`,
+      undefined,
+      DEFAULT_TIMEOUT_MS,
+      "text",
+    ),
+
+  addRetryItems: (wid: string, batch: string, items: string[]) =>
+    request<components["schemas"]["RetryListView"]>(
+      "POST",
+      `/api/workdirs/${encodeURIComponent(wid)}/batches/${encodeURIComponent(batch)}/retry-list`,
+      { items },
+    ),
+
+  removeRetryItem: (wid: string, batch: string, item: string) =>
+    request<components["schemas"]["RetryListView"]>(
+      "DELETE",
+      `/api/workdirs/${encodeURIComponent(wid)}/batches/${encodeURIComponent(batch)}/retry-list/${encodeURIComponent(item)}`,
+    ),
+
+  clearRetryItems: (wid: string, batch: string) =>
+    request<components["schemas"]["RetryListView"]>(
+      "DELETE",
+      `/api/workdirs/${encodeURIComponent(wid)}/batches/${encodeURIComponent(batch)}/retry-list`,
+    ),
+
+  startRun: (wid: string, batch: string, mode: "full" | "retry", items?: string[]) =>
+    request<components["schemas"]["RunAccepted"]>(
+      "POST",
+      `/api/workdirs/${encodeURIComponent(wid)}/batches/${encodeURIComponent(batch)}/runs`,
+      { mode, ...(items ? { items } : {}) },
+    ),
+
+  currentRun: (wid: string, batch: string) =>
+    request<components["schemas"]["RunStatusView"]>(
+      "GET",
+      `/api/workdirs/${encodeURIComponent(wid)}/batches/${encodeURIComponent(batch)}/runs/current`,
+    ),
+
+  stopRun: (wid: string, batch: string) =>
+    request<void>(
+      "POST",
+      `/api/workdirs/${encodeURIComponent(wid)}/batches/${encodeURIComponent(batch)}/runs/stop`,
+      {},
+    ),
+
+  listWorkdirs: () =>
+    request<components["schemas"]["WorkdirInfo"][]>("GET", "/api/workdirs"),
+
+  getWorkdir: (wid: string) =>
+    request<components["schemas"]["WorkdirInfo"]>(
+      "GET",
+      `/api/workdirs/${encodeURIComponent(wid)}`,
+    ),
+
+  getWorkdirStats: (wid: string) =>
+    request<components["schemas"]["WorkdirStatsView"]>(
+      "GET",
+      `/api/workdirs/${encodeURIComponent(wid)}/stats`,
+    ),
+
+  previewProductCleanup: (wid: string) =>
+    request<components["schemas"]["CleanupPreview"]>(
+      "GET",
+      `/api/workdirs/${encodeURIComponent(wid)}/cleanup-preview`,
+    ),
+
+  previewWorkdirDeletion: (wid: string) =>
+    request<components["schemas"]["DeletionPreview"]>(
+      "GET",
+      `/api/workdirs/${encodeURIComponent(wid)}/delete-preview`,
+    ),
+
+  relocateWorkdir: (wid: string, path: string) =>
+    request<components["schemas"]["WorkdirRelocateAccepted"]>(
+      "POST",
+      `/api/workdirs/${encodeURIComponent(wid)}/relocate`,
+      { path },
+    ),
+
+  relocationStatus: (wid: string) =>
+    request<components["schemas"]["WorkdirRelocationStatus"][]>(
+      "GET",
+      `/api/workdirs/${encodeURIComponent(wid)}/relocate/status`,
+    ),
+
+  retryRelocationCleanup: (wid: string, oldPath: string) =>
+    request<components["schemas"]["WorkdirCleanupRetryResult"]>(
+      "POST",
+      `/api/workdirs/${encodeURIComponent(wid)}/relocate/cleanup`,
+      { old_path: oldPath },
+    ),
+
+  deleteWorkdir: (wid: string, confirmedPath: string) =>
+    request<components["schemas"]["DeletionResult"]>(
+      "DELETE",
+      `/api/workdirs/${encodeURIComponent(wid)}`,
+      { confirmed_path: confirmedPath },
+    ),
+
+  previewRunCleanup: (wid: string) =>
+    request<components["schemas"]["RunCleanupEntry"][]>(
+      "GET",
+      `/api/workdirs/${encodeURIComponent(wid)}/cleanup-runs-preview`,
+    ),
+
+  cleanupWorkdir: (wid: string, kind: "products" | "runs", names: string[]) =>
+    request<components["schemas"]["CleanupResult"]>(
+      "POST",
+      `/api/workdirs/${encodeURIComponent(wid)}/${kind === "runs" ? "cleanup-runs" : "cleanup"}`,
+      { names },
+    ),
+
+  updateBatch: (
+    wid: string,
+    batch: string,
+    body: components["schemas"]["BatchUpdateRequest"],
+  ) =>
+    request<components["schemas"]["BatchView"]>(
+      "PATCH",
+      `/api/workdirs/${encodeURIComponent(wid)}/batches/${encodeURIComponent(batch)}`,
+      body,
+    ),
+
+  setBatchActive: (wid: string, batch: string, active: boolean) =>
+    request<components["schemas"]["BatchView"]>(
+      "POST",
+      `/api/workdirs/${encodeURIComponent(wid)}/batches/${encodeURIComponent(batch)}/${active ? "unhide" : "hide"}`,
+      {},
+    ),
+
+  deleteBatch: (wid: string, batch: string) =>
+    request<void>(
+      "DELETE",
+      `/api/workdirs/${encodeURIComponent(wid)}/batches/${encodeURIComponent(batch)}`,
+    ),
+
+  listBatches: (wid: string) =>
+    request<components["schemas"]["BatchView"][]>(
+      "GET",
+      `/api/workdirs/${encodeURIComponent(wid)}/batches`,
+    ),
+
+  getBatchSnapshot: (wid: string, batch: string) =>
+    request<components["schemas"]["BatchSnapshotView"]>(
+      "GET",
+      `/api/workdirs/${encodeURIComponent(wid)}/batches/${encodeURIComponent(batch)}/snapshot`,
+    ),
+
+  listItems: (wid: string, batch: string) =>
+    request<components["schemas"]["ItemListView"]>(
+      "GET",
+      `/api/workdirs/${encodeURIComponent(wid)}/batches/${encodeURIComponent(batch)}/items`,
+    ),
+
   /** 取最新会话快照（重启后恢复界面的入口）。 */
   latestSession: () => request<SessionSnapshotResponse>("GET", "/api/sessions/latest"),
 
@@ -272,6 +637,18 @@ export const api = {
         .split("/")
         .map(encodeURIComponent)
         .join("/")}`,
+    ),
+
+  /** 保存技能文本，原始内容用于检测并发修改。 */
+  saveSkillFile: (
+    name: string,
+    path: string,
+    payload: components["schemas"]["SkillFileSaveRequest"],
+  ) =>
+    request<SkillFileContent>(
+      "PUT",
+      `/api/skills/${encodeURIComponent(name)}/files/${path.split("/").map(encodeURIComponent).join("/")}`,
+      payload,
     ),
 
   /** 服务运行状态（serve 启动时注入；非 serve 场景后端返回 409）。 */

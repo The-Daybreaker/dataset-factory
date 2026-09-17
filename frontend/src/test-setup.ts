@@ -26,6 +26,17 @@ if (typeof window.matchMedia !== "function") {
   });
 }
 
+// Radix Select uses pointer capture and scrolling APIs absent from jsdom.
+for (const [name, value] of Object.entries({
+  hasPointerCapture: (): boolean => false,
+  setPointerCapture: (): void => {},
+  releasePointerCapture: (): void => {},
+  scrollIntoView: (): void => {},
+})) {
+  if (!(name in HTMLElement.prototype))
+    Object.defineProperty(HTMLElement.prototype, name, { configurable: true, value });
+}
+
 afterEach(() => {
   cleanup();
 });

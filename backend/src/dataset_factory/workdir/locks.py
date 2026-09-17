@@ -253,7 +253,7 @@ class RunLock:
                 损坏时为 None，提示退回笼统文案）。
         """
         try:
-            with maintenance_guard(self._info_path.parent.parent):
+            with maintenance_guard(self._info_path.parent.parent, timeout=10):
                 require_workdir_writable(self._info_path.parent)
                 self._lock.acquire(timeout=0)
         except Timeout as exc:

@@ -18,8 +18,10 @@ from pathlib import Path
 from typing import cast
 
 from fastapi import APIRouter, Request, Response
+from pydantic import ValidationError
 
 from ..runs import BatchRunner
+from ..runs.journal import load_latest_run
 from ..runs.runner import remove_batch
 from ..strategies import (
     BatchEntry,
@@ -43,9 +45,12 @@ from ..strategies import (
     update_batch,
     update_strategy,
 )
-from ..workdir import WorkdirRegistry
+from ..strategies.batches import read_snapshot_with_hash
+from ..strategies.errors import StrategyNotFoundError
+from ..workdir import WorkdirRegistry, WorkdirStore
 from .schemas import (
     BatchCreateRequest,
+    BatchSnapshotView,
     BatchUpdateRequest,
     BatchView,
     ExclusionsRequest,
@@ -337,6 +342,37 @@ def get_batch_detail(wid: str, sN: str) -> BatchView:
     """按序号查单个批次（新建 201 的 Location 指向这里，可解析）。"""
     entry = get_batch(_workdir_path(wid), parse_seq(sN))
     return _to_batch_view(wid, entry)
+
+
+@batches_router.get(
+    "/{sN}/snapshot",
+    response_model=BatchSnapshotView,
+    responses={
+        404: {
+            "model": Problem,
+            "content": {"application/problem+json": {}},
+            "description": "工作目录、批次或快照不存在，或快照损坏",
+        }
+    },
+)
+def get_batch_snapshot(wid: str, sN: str) -> BatchSnapshotView:
+    """只读返回已保存的全文；哈希不一致仅标记，不改变运行资格。"""
+    workdir = _workdir_path(wid)
+    seq = parse_seq(sN)
+    snapshot, digest = read_snapshot_with_hash(workdir, seq)
+    record = load_latest_run(WorkdirStore(workdir).runs_dir, seq)
+    recorded = record.strategy_hash if record else None
+    try:
+        return BatchSnapshotView.model_validate(
+            {
+                **snapshot.to_json(),
+                "sha256": digest,
+                "recorded_sha256": recorded,
+                "changed": recorded is not None and recorded != digest,
+            }
+        )
+    except ValidationError as exc:
+        raise StrategyNotFoundError("策略快照内容损坏，请检查快照文件后重试。") from exc
 
 
 @batches_router.patch(

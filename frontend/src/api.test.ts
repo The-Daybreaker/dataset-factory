@@ -28,6 +28,74 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe("策略库请求", () => {
+  it("创建和保存策略使用完整组合，引用修复只提交提供的字段", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async () => Response.json({ id: "a1" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const body = {
+      name: "详细描述",
+      description: "训练素材",
+      endpoint: "default",
+      prompt: "caption",
+      skills: ["visual"],
+    };
+
+    await api.createStrategy(body);
+    await api.updateStrategy("a1", body);
+    await api.rebindStrategy("a1", { prompt: "caption-new" });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/strategies",
+      expect.objectContaining({ method: "POST", body: JSON.stringify(body) }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/strategies/a1",
+      expect.objectContaining({ method: "PUT", body: JSON.stringify(body) }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/strategies/a1/rebind",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ prompt: "caption-new" }),
+      }),
+    );
+  });
+
+  it("读取复制和删除均编码策略编号，删除接受无内容响应", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ id: "a1" }))
+      .mockResolvedValueOnce(Response.json({ id: "b1" }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.getStrategy("a/1");
+    await api.copyStrategy("a/1");
+    await expect(api.deleteStrategy("a/1")).resolves.toBeUndefined();
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/strategies/a%2F1",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/strategies/a%2F1/copy",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/strategies/a%2F1",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+});
+
 describe("request 错误分类", () => {
   it("连不上后端 → network 错误，提示检查 dsf serve", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));

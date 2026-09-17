@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from collections.abc import Callable
@@ -484,11 +485,21 @@ def read_snapshot(workdir: Path, seq: int) -> StrategySnapshot:
         BatchNotFoundError: 批次不存在。
         StrategyNotFoundError: 快照文件缺失或损坏（元数据与文件不一致）。
     """
+    return read_snapshot_with_hash(workdir, seq)[0]
+
+
+def read_snapshot_with_hash(workdir: Path, seq: int) -> tuple[StrategySnapshot, str]:
+    """从同一次字节读取返回快照与文件哈希，避免显示内容和校验对象不一致。"""
     get_batch(workdir, seq)
     path = WorkdirStore(workdir).strategies_dir / f"s{seq}.json"
     try:
-        data: object = json.loads(path.read_text(encoding="utf-8"))
-        return StrategySnapshot.from_json(data)
+        if not path.resolve().is_relative_to(
+            WorkdirStore(workdir).strategies_dir.resolve()
+        ):
+            raise StrategyNotFoundError("策略快照路径不在策略目录内。")
+        raw = path.read_bytes()
+        data: object = json.loads(raw.decode("utf-8"))
+        return StrategySnapshot.from_json(data), hashlib.sha256(raw).hexdigest()
     except OSError as exc:
         raise StrategyNotFoundError(
             f"策略快照文件无法读取（{path.name}）——批次元数据与快照不一致，请检查后重试。",
