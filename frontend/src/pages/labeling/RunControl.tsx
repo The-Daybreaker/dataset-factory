@@ -1,3 +1,4 @@
+import { Square } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, errorMessage } from "../../api";
 import type { components } from "../../api-types.gen";
@@ -19,6 +20,7 @@ interface Props {
   batch: string;
   onFinish: () => void | Promise<void>;
   onItemUpdate?: (event: ItemUpdate) => void;
+  onCurrentItem?: (item: string | null) => void;
   onImport?: () => void;
   externalRunId?: string;
 }
@@ -30,6 +32,7 @@ export function RunControl({
   onFinish,
   onImport,
   onItemUpdate,
+  onCurrentItem,
   externalRunId,
 }: Props) {
   const [unimported, setUnimported] = useState<
@@ -49,6 +52,8 @@ export function RunControl({
   finishRef.current = onFinish;
   const itemRef = useRef(onItemUpdate);
   itemRef.current = onItemUpdate;
+  const currentItemRef = useRef(onCurrentItem);
+  currentItemRef.current = onCurrentItem;
 
   useEffect(() => {
     let source: EventSource | null = null;
@@ -68,6 +73,7 @@ export function RunControl({
       source = null;
       setStatus(null);
       setCurrent(null);
+      currentItemRef.current?.(null);
       setReconnecting(false);
       setKnown(true);
       if (observed) {
@@ -104,6 +110,7 @@ export function RunControl({
         observed = true;
         setStatus(view);
         setCurrent(view.current_item);
+        if (view.current_item) currentItemRef.current?.(view.current_item);
         if (streamFailed) {
           await finishRef.current();
           if (disposed) return;
@@ -114,10 +121,43 @@ export function RunControl({
         );
         source = stream;
         const isCurrent = () => !disposed && token === connection;
+        let syncing = false;
+        let syncAgain = false;
+        // 订阅前的事件不会重放；按服务端快照校准，避免客户端增量漏计或重复计数。
+        async function syncProgress() {
+          syncAgain = true;
+          if (syncing) return;
+          syncing = true;
+          try {
+            while (syncAgain && isCurrent()) {
+              syncAgain = false;
+              const latest = await api.currentRun(wid, batch);
+              if (!isCurrent()) return;
+              if (latest.run_id !== view.run_id) {
+                retry();
+                return;
+              }
+              if (latest.status !== "running" && latest.status !== "pending") {
+                if (latest.error) setError(latest.error);
+                finish();
+                return;
+              }
+              setStatus(latest);
+              if (latest.current_item) currentItemRef.current?.(latest.current_item);
+            }
+          } catch (reason) {
+            if (!isCurrent()) return;
+            setError(errorMessage(reason));
+            retry();
+          } finally {
+            syncing = false;
+          }
+        }
         let ready = false;
         const pending: ItemUpdate[] = [];
         stream.onopen = async () => {
           if (!isCurrent()) return;
+          void syncProgress();
           try {
             await finishRef.current();
             if (!isCurrent()) return;
@@ -134,6 +174,9 @@ export function RunControl({
             retry();
           }
         };
+        stream.addEventListener("run-started", () => {
+          if (isCurrent()) void syncProgress();
+        });
         stream.addEventListener("item-updated", (event) => {
           if (!isCurrent()) return;
           try {
@@ -143,8 +186,10 @@ export function RunControl({
             if (data.batch === Number(batch.slice(1))) {
               delay = 1000;
               setCurrent(data.item);
+              if (data.status === "started") currentItemRef.current?.(data.item);
               if (ready) itemRef.current?.(data);
               else pending.push(data);
+              void syncProgress();
             }
           } catch {
             setError("运行事件格式异常，正在重新同步");
@@ -289,15 +334,57 @@ export function RunControl({
       )}
       {status ? (
         <>
-          <span className="text-t-sm text-muted-foreground">
-            {current ? `正在处理：${current}` : "运行中"}
+          <span className="sr-only">{current ? `正在处理：${current}` : "运行中"}</span>
+          <svg
+            viewBox="0 0 20 20"
+            className="size-4.5 shrink-0 -rotate-90"
+            role="progressbar"
+            aria-label="运行进度"
+            aria-valuemin={0}
+            aria-valuemax={status.counters.planned || 1}
+            aria-valuenow={status.counters.attempted ?? 0}
+          >
+            <circle
+              cx="10"
+              cy="10"
+              r="6"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="3"
+              className="text-n-200"
+            />
+            <circle
+              cx="10"
+              cy="10"
+              r="6"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="3"
+              strokeLinecap="round"
+              pathLength="100"
+              strokeDasharray="100"
+              strokeDashoffset={
+                100 -
+                Math.min(
+                  100,
+                  ((status.counters.attempted ?? 0) / (status.counters.planned || 1)) *
+                    100,
+                )
+              }
+              className="text-primary"
+            />
+          </svg>
+          <span className="whitespace-nowrap text-t-sm tabular-nums text-muted-foreground">
+            {`${status.counters.attempted ?? 0} / ${status.counters.planned ?? 0} · 失败 ${status.counters.failed ?? 0}`}
           </span>
           <Button
-            variant="outline"
+            variant="destructive-soft"
             size="sm"
             disabled={busy}
+            data-testid="run-stop"
             onClick={() => void stop()}
           >
+            <Square aria-hidden="true" />
             停止
           </Button>
         </>
