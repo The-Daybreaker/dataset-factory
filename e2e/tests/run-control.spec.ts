@@ -35,7 +35,7 @@ test("停止保留产物，选择重试可覆盖旧产物，运行中隐藏需�
       name: endpointName,
       base_url: "http://127.0.0.1:8765/fake-llm/v1",
       model: "gated-e2e-model",
-      api_key: "sk-e2e-not-a-real-key",
+      api_key: "sk-e2e-not-a-real-key", // pragma: allowlist secret
     },
   });
   expect(endpoint.ok()).toBeTruthy();
