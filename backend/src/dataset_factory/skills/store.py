@@ -15,7 +15,8 @@ import json
 import os
 import re
 import shutil
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import cast
 
@@ -186,6 +187,18 @@ def _write_disabled(disabled: set[str]) -> None:
         raise SkillError(
             f"无法写入启用状态清单：内容含 UTF-8 无法编码的字符（{exc.reason}）"
         ) from exc
+
+
+@contextmanager
+def _mutation_lock(path: Path) -> Generator[None]:
+    """将跨进程写锁的等待失败统一转换为技能域异常。"""
+    try:
+        with FileLock(str(path), timeout=10):
+            yield
+    except Timeout as exc:
+        raise SkillExistsError("技能库正在修改，请稍后重试。") from exc
+    except OSError as exc:
+        raise SkillError(f"无法修改技能库：{exc.strerror or exc}") from exc
 
 
 def import_skill(source: Path) -> SkillImport:
@@ -426,12 +439,15 @@ def set_enabled(name: str, enabled: bool) -> None:
         raise SkillNotFoundError(
             f"未找到 skill {name!r}；用 list_skills 查看已导入的。"
         )
-    disabled = _read_disabled()
-    if enabled:
-        disabled.discard(name)
-    else:
-        disabled.add(name)
-    _write_disabled(disabled)
+    with _mutation_lock(_skills_dir() / f".{name}.edit.lock"):
+        _require_skill_dir(name)
+        with _mutation_lock(_skills_dir() / ".state.lock"):
+            disabled = _read_disabled()
+            if enabled:
+                disabled.discard(name)
+            else:
+                disabled.add(name)
+            _write_disabled(disabled)
 
 
 def delete_skill(name: str) -> None:
@@ -449,14 +465,14 @@ def delete_skill(name: str) -> None:
     target = _skill_dir(name)
     if not (target / _SKILL_MD).is_file():
         raise SkillNotFoundError(f"未找到 skill {name!r}；无需删除。")
-    try:
-        shutil.rmtree(target)
-    except OSError as exc:
-        raise SkillError(f"无法删除 skill {target}：{exc.strerror or exc}") from exc
-    disabled = _read_disabled()
-    if name in disabled:
-        disabled.discard(name)
-        _write_disabled(disabled)
+    with _mutation_lock(_skills_dir() / f".{name}.edit.lock"):
+        _require_skill_dir(name)
+        with _mutation_lock(_skills_dir() / ".state.lock"):
+            disabled = _read_disabled()
+            shutil.rmtree(target)
+            if name in disabled:
+                disabled.discard(name)
+                _write_disabled(disabled)
 
 
 def _require_skill_dir(name: str) -> Path:

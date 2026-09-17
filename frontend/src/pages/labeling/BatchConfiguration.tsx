@@ -61,7 +61,7 @@ export function BatchConfiguration({
     return (
       <section
         aria-label="策略配置"
-        className="flex min-w-0 flex-1 flex-wrap items-center gap-2"
+        className="flex min-w-0 flex-1 flex-wrap items-center gap-3"
       >
         {[
           {
@@ -79,9 +79,9 @@ export function BatchConfiguration({
           <span
             key={key}
             title={value}
-            className="max-w-full truncate rounded-full border border-border bg-card px-2 py-1 text-t-sm text-text-3"
+            className="inline-flex h-(--h-sm) max-w-full items-center rounded-lg bg-muted px-3 text-t-sm"
           >
-            {value}
+            <span className="truncate">{value}</span>
           </span>
         ))}
       </section>

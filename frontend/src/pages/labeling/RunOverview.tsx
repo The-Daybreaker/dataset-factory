@@ -193,16 +193,16 @@ export function RunOverview({ wid, batch, refreshKey, fallback }: Props) {
           </Button>
         </div>
       )}
-      <dl className="grid grid-cols-3 gap-3">
+      <dl className="grid max-w-115 grid-cols-3 gap-3">
         {[
           ["总数", counts.total],
           [record ? "成功" : "已完成", counts.done],
           ["未完成", counts.failed],
         ].map(([label, count]) => (
           <div key={label} className="rounded-lg border border-border bg-card p-3">
-            <dt className="text-t-xs text-text-4">{label}</dt>
+            <dt className="text-t-sm text-muted-foreground">{label}</dt>
             <dd
-              className={`mt-1 text-t-2xl font-medium tabular-nums ${label === "未完成" && count !== 0 ? "text-bad-ink" : "text-text-1"}`}
+              className={`mt-1 text-t-2xl leading-(--lh-tight) font-medium tabular-nums ${label === "未完成" && count !== 0 ? "text-bad-ink" : "text-text-1"}`}
             >
               {count}
             </dd>

@@ -7,10 +7,13 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Generator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
-from filelock import FileLock
+from filelock import FileLock, Timeout
 
 from dataset_factory.skills import (
     SkillError,
@@ -29,6 +32,7 @@ from dataset_factory.skills import (
     read_skill_file,
     set_enabled,
 )
+from dataset_factory.skills import store as skill_store
 from dataset_factory.skills.store import save_skill_file
 
 _FIXTURE_PACK = Path(__file__).parent / "fixtures" / "skill-pack"
@@ -55,6 +59,73 @@ def test_parse_golden_fixture() -> None:
 
     assert name == _FIXTURE_NAME
     assert description.startswith("示例 skill")
+
+
+def test_concurrent_disables_preserve_both_changes(
+    temp_data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """两个技能同时停用时，第二个写者在锁内读取第一份更新而不丢失状态。"""
+    for name in ("first", "second"):
+        import_skill(
+            _make_source(tmp_path, f"---\nname: {name}\ndescription: test\n---\n", name)
+        )
+    first_writing = threading.Event()
+    second_waiting = threading.Event()
+    write_disabled = skill_store._write_disabled  # pyright: ignore[reportPrivateUsage]
+    mutation_lock = skill_store._mutation_lock  # pyright: ignore[reportPrivateUsage]
+
+    def write(disabled: set[str]) -> None:
+        if disabled == {"first"}:
+            first_writing.set()
+            assert second_waiting.wait(timeout=5)
+        write_disabled(disabled)
+
+    @contextmanager
+    def lock(path: Path) -> Generator[None]:
+        if path.name == ".state.lock" and first_writing.is_set():
+            second_waiting.set()
+        with mutation_lock(path):
+            yield
+
+    monkeypatch.setattr(skill_store, "_write_disabled", write)
+    monkeypatch.setattr(skill_store, "_mutation_lock", lock)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(set_enabled, "first", False)
+        assert first_writing.wait(timeout=5)
+        second = executor.submit(set_enabled, "second", False)
+        first.result(timeout=5)
+        second.result(timeout=5)
+
+    assert {skill.name for skill in list_skills() if not skill.enabled} == {
+        "first",
+        "second",
+    }
+
+
+def test_delete_holds_file_edit_and_state_locks(
+    temp_data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """删除包及状态记录时，两把锁均被持有，其他保存或启用操作无法交错。"""
+    import_skill(_FIXTURE_PACK)
+    set_enabled(_FIXTURE_NAME, False)
+    remove = skill_store.shutil.rmtree
+    checked: list[Path] = []
+
+    def remove_locked(target: Path) -> None:
+        for name in (f".{_FIXTURE_NAME}.edit.lock", ".state.lock"):
+            with pytest.raises(Timeout), FileLock(str(target.parent / name), timeout=0):
+                pytest.fail("删除期间写锁没有被持有")
+        checked.append(target)
+        remove(target)
+
+    monkeypatch.setattr(skill_store.shutil, "rmtree", remove_locked)
+
+    delete_skill(_FIXTURE_NAME)
+
+    assert checked == [temp_data_root / "skills" / _FIXTURE_NAME]
+    state = (temp_data_root / "skills" / "_state.json").read_text(encoding="utf-8")
+    assert __import__("json").loads(state)["disabled"] == []
 
 
 @pytest.mark.parametrize("path", ["SKILL.md", "references/detail.md"])
