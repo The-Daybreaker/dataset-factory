@@ -513,16 +513,22 @@ def test_stream_delivers_events_until_finished(
     batch_env: tuple[Path, str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SSE：订阅后按帧收业务事件，run-finished 后流关闭（帧结构同一期 /label/stream）。
-
-    门时序：等流真正连上（collect 置位 connected）再放门——订阅生效先于事件产生，
-    否则门放行后运行可能先跑完、流请求落空。
-    """
+    """服务端实际订阅后放行素材处理，SSE 有序传递条目事件并在终态关流。"""
     _workdir, wid = batch_env
     gates = _gates(2)
     _inject_fake_completer(monkeypatch, GatedCompleter(gates))
     frames: list[str] = []
     connected = threading.Event()
+    original_subscribe = BatchRunner.subscribe
+
+    def subscribe(
+        self: BatchRunner, callback: Callable[[RunEvent], None]
+    ) -> Callable[[], None]:
+        unsubscribe = original_subscribe(self, callback)
+        connected.set()
+        return unsubscribe
+
+    monkeypatch.setattr(BatchRunner, "subscribe", subscribe)
 
     async def scenario() -> None:
         transport = httpx.ASGITransport(app=create_app(frontend_dir=Path("no-dist")))
@@ -548,14 +554,15 @@ def test_stream_delivers_events_until_finished(
                     assert response.headers["content-type"].startswith(
                         "text/event-stream"
                     )
-                    connected.set()  # 订阅已在服务端建立（流已开）
                     async for chunk in response.aiter_text():
                         frames.append(chunk)
 
             collector = asyncio.ensure_future(collect())
-            await asyncio.to_thread(connected.wait, _WAIT_TIMEOUT)
-            gates[0].set()
-            gates[1].set()
+            try:
+                assert await asyncio.to_thread(connected.wait, _WAIT_TIMEOUT)
+            finally:
+                gates[0].set()
+                gates[1].set()
             await asyncio.wait_for(collector, timeout=_WAIT_TIMEOUT)
 
     asyncio.run(scenario())
@@ -564,6 +571,7 @@ def test_stream_delivers_events_until_finished(
     assert "event: item-updated" in text
     assert "event: run-finished" in text
     assert '"status": "completed"' in text
+    assert text.rstrip().split("\n\n")[-1].startswith("event: run-finished\n")
     # 帧结构：每帧 event + data 两行、空行分隔。
     for block in [block for block in text.split("\n\n") if block]:
         lines = block.splitlines()
