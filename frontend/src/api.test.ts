@@ -119,7 +119,10 @@ describe("request 错误分类", () => {
   it("后端报错 → http 错误，透传 detail 并附上请求 id", async () => {
     const response = new Response(JSON.stringify({ detail: "模型调用失败" }), {
       status: 502,
-      headers: { "Content-Type": "application/json", "X-Request-ID": "abc123def" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Request-ID": "request-test-id",
+      },
     });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
 
@@ -133,9 +136,9 @@ describe("request 错误分类", () => {
     const apiError = error as ApiError;
     expect(apiError.kind).toBe("http");
     expect(apiError.status).toBe(502);
-    expect(apiError.requestId).toBe("abc123def");
+    expect(apiError.requestId).toBe("request-test-id");
     expect(apiError.message).toContain("模型调用失败");
-    expect(apiError.message).toContain("abc123def");
+    expect(apiError.message).toContain("request-test-id");
   });
 
   it("errorMessage 对 ApiError 直接给出消息文本（可直接展示）", async () => {
