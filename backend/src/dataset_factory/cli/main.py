@@ -29,7 +29,18 @@ from typing import Annotated
 import typer
 
 from .._obs import RequestIdFilter
-from . import batch, config, label, prompt, session, skill, workdir
+from . import (
+    batch,
+    config,
+    export,
+    label,
+    prompt,
+    run,
+    session,
+    skill,
+    strategy,
+    workdir,
+)
 
 # 日志级别与格式：级别优先级 = `dsf serve --log-level` > 环境变量 DSF_LOG_LEVEL > 默认 INFO。
 # 默认给 INFO 而不是 WARNING，是为了让「服务收到了什么请求、各段花多久」开箱可见——可观测性
@@ -71,8 +82,11 @@ app.add_typer(skill.app, name="skill")
 app.add_typer(session.app, name="session")
 app.add_typer(workdir.app, name="workdir")
 app.add_typer(batch.app, name="batch")
+app.add_typer(export.app, name="export")
+app.add_typer(strategy.app, name="strategy")
 app.command(name="label")(label.label)
 app.command(name="chat")(label.chat)
+app.command(name="run")(run.run)
 
 
 def add_server_file_handler(path: Path) -> logging.handlers.RotatingFileHandler:

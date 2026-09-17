@@ -368,6 +368,22 @@ def read_occupier(info_path: Path) -> dict[str, Any] | None:
     return cast("dict[str, Any] | None", data) if isinstance(data, dict) else None
 
 
+def read_live_occupier(dsf_path: Path) -> dict[str, Any] | None:
+    """只有系统锁仍被持有时才返回占用信息，崩溃残留文件不表示运行中。"""
+    with maintenance_guard(dsf_path.parent):
+        require_workdir_writable(dsf_path)
+        lock = _shared_file_lock(dsf_path / _RUN_LOCK_NAME)
+        if lock.is_locked:
+            return read_occupier(dsf_path / _RUN_INFO_NAME)
+        try:
+            lock.acquire(timeout=0)
+        except Timeout:
+            return read_occupier(dsf_path / _RUN_INFO_NAME)
+        else:
+            lock.release()
+            return None
+
+
 def _occupier_sentence(occupier: dict[str, Any]) -> str:
     """把占用者信息拼成一句话（拒绝提示用；字段缺失就少说那句）。"""
     pid = occupier.get("pid")

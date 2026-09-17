@@ -20,6 +20,7 @@ retry 模式：计划 = 重试列表快照（运行开始的瞬间拍下，运�
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import platform
@@ -58,7 +59,7 @@ from ..llm.errors import (
     LLMUnexpectedError,
     UnsupportedImageError,
 )
-from ..strategies.batches import get_batch, read_snapshot
+from ..strategies.batches import delete_batch, get_batch, read_snapshot
 from ..strategies.snapshot import tool_version
 from ..workdir.assets import (
     product_filename,
@@ -70,6 +71,7 @@ from ..workdir.errors import WorkdirMetadataCorruptedError
 from ..workdir.importer import hash_file
 from ..workdir.locks import RunLock
 from ..workdir.store import WorkdirStore
+from .control import stop_requested
 from .errors import BatchInactiveError
 from .journal import RunJournal, load_recent_success_hashes
 
@@ -258,6 +260,7 @@ class BatchRunner:
         self._video_max_frames = video_max_frames
         self._sleep = sleeper if sleeper is not None else time.sleep
         self._stop_event = threading.Event()
+        self._owns_run_lock = False
         self._subscribers: list[Callable[[RunEvent], None]] = []
         # 进度快照（current 端点的数据源）：run_id 构造时预分配（POST 受理响应要
         # 立即返回它；目录创建仍在持锁后进行——跨进程同秒撞名时输家抢不到锁、
@@ -293,6 +296,16 @@ class BatchRunner:
     def stop(self) -> None:
         """请求停止（协作取消）：当前条目在下一个安全点（条目边界 / 退避后）停下。"""
         self._stop_event.set()
+
+    def _should_stop(self) -> bool:
+        if self._stop_event.is_set():
+            return True
+        if (
+            stop_requested(self._workdir, self._run_id)
+            or not get_batch(self._workdir, self._seq).active
+        ):
+            self._stop_event.set()
+        return self._stop_event.is_set()
 
     def subscribe(self, callback: Callable[[RunEvent], None]) -> Callable[[], None]:
         """订阅业务事件（多播——多个 SSE 连接各订各的），返回退订函数。
@@ -362,11 +375,15 @@ class BatchRunner:
                 "hostname": platform.node(),
                 "batch": f"s{self._seq}",
                 "mode": self._mode,
+                "run_id": self._run_id,
             }
         )
         try:
+            self._owns_run_lock = True
+            snapshot = read_snapshot(self._workdir, self._seq)
             return self._run_locked(store, snapshot)
         finally:
+            self._owns_run_lock = False
             lock.release()
 
     def _run_locked(self, store: WorkdirStore, snapshot: Any) -> RunReport:
@@ -425,10 +442,7 @@ class BatchRunner:
         interrupted = False
         succeeded_items: list[str] = []
         for item in planned_stems:
-            if (
-                self._stop_event.is_set()
-                or not get_batch(self._workdir, self._seq).active
-            ):
+            if self._should_stop():
                 interrupted = True
                 break
             self._current_item = item
@@ -444,7 +458,7 @@ class BatchRunner:
 
         status = (
             _STATUS_INTERRUPTED
-            if interrupted or self._stop_event.is_set()
+            if interrupted or self._should_stop()
             else _STATUS_COMPLETED
         )
         self._status = status
@@ -519,7 +533,7 @@ class BatchRunner:
             if (
                 failure.retryable
                 and attempt < _MAX_ATTEMPTS
-                and not self._stop_event.is_set()
+                and not self._should_stop()
             ):
                 delay = failure.retry_after or _backoff_seconds(attempt)
                 journal.append_log_line(
@@ -528,11 +542,11 @@ class BatchRunner:
                     f"{delay:.1f}s 后重试"
                 )
                 self._sleep(delay)
-                if self._stop_event.is_set():
+                if self._should_stop():
                     # 退避中被打断：本条不写终态行（回到「排队中」，下次续跑再打）。
                     return False
                 continue
-            if self._stop_event.is_set():
+            if self._should_stop():
                 # 停止信号在：正在处理的条目无论失败可否重试都不写终态行——
                 # 「被打断」不是「失败」（模型调用中打断与退避中打断口径一致），
                 # 记成失败会让停止后的失败统计凭空多账。
@@ -661,6 +675,14 @@ class BatchRunner:
 
     def _emit(self, event: RunEvent) -> None:
         """把事件发给全部订阅者（回调异常只记日志，不中断跑批）。"""
+        if self._owns_run_lock:
+            try:
+                atomic_write_text(
+                    self._workdir / ".dsf" / "run-status.json",
+                    json.dumps(self.snapshot(), ensure_ascii=False),
+                )
+            except OSError:
+                logger.warning("运行进度快照写入失败", exc_info=True)
         for callback in list(self._subscribers):
             try:
                 callback(event)
@@ -906,6 +928,7 @@ def add_retry_items(workdir: Path, seq: int, items: list[str]) -> list[str]:
     """
 
     def mutator(state: dict[str, object]) -> list[str]:
+        get_batch(workdir, seq)
         records = _retry_records(state)
         current = [str(record["item"]) for record in records if record["batch"] == seq]
         for item in items:
@@ -949,3 +972,14 @@ def clear_retry_list(workdir: Path, seq: int) -> None:
         ]
 
     WorkdirStore(workdir).mutate_state(mutator)
+
+
+def remove_batch(workdir: Path, seq: int) -> int:
+    """删除批次及其附属重试记录，共用一次状态写入和运行锁。"""
+
+    def cleanup(state: dict[str, object]) -> None:
+        state[_RETRY_LIST_KEY] = [
+            record for record in _retry_records(state) if record["batch"] != seq
+        ]
+
+    return delete_batch(workdir, seq, cleanup_state=cleanup)

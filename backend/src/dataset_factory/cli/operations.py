@@ -6,7 +6,7 @@ import json
 import signal
 import sys
 import threading
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from types import FrameType
 
@@ -29,7 +29,9 @@ def print_result(value: object) -> None:
 
 
 @contextmanager
-def cancellation() -> Generator[threading.Event]:
+def cancellation(
+    on_stop: Callable[[], None] | None = None,
+) -> Generator[threading.Event]:
     """Ctrl-C 只置取消信号，核心操作在安全点收尾后再返回。"""
     stop = threading.Event()
 
@@ -37,6 +39,8 @@ def cancellation() -> Generator[threading.Event]:
         if not stop.is_set():
             typer.echo("正在停止，等待当前操作安全收尾。", err=True)
             stop.set()
+            if on_stop is not None:
+                on_stop()
 
     previous = signal.signal(signal.SIGINT, request_stop)
     try:

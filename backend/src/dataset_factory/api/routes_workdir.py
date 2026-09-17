@@ -58,6 +58,7 @@ from ..workdir.deletion import (
     preview_workdir_deletion,
 )
 from ..workdir.integrity import IntegrityItem, rebuild_import_records, scan_integrity
+from ..workdir.reimport import reimport_missing
 from ..workdir.relocation import (
     relocate_workdir,
     relocation_status,
@@ -355,6 +356,8 @@ def _spawn_import_task(
     force_names: frozenset[str] | set[str] = frozenset(),
     *,
     rebuild: bool = False,
+    restore: bool = False,
+    names: set[str] | None = None,
 ) -> str:
     """把一次导入包装成长任务受理，返回 task_id。
 
@@ -390,10 +393,13 @@ def _spawn_import_task(
 
             if rebuild:
                 return rebuild_import_records(workdir, should_stop=should_stop)
+            if restore:
+                return reimport_missing(workdir, names, should_stop=should_stop)
             return import_assets(
                 workdir,
                 source,
                 force_names=force_names,
+                names=names,
                 should_stop=should_stop,
                 progress=report_progress,
             )
@@ -530,13 +536,44 @@ async def create_import(
     """
     entry = WorkdirRegistry.get(wid)
     workdir_path = Path(entry.path)
-    source_path = Path(os.path.abspath(body.source))
-    ensure_importable_source(workdir_path, source_path)
+    source_path = (
+        Path(os.path.abspath(body.source)) if body.source is not None else None
+    )
+    if source_path is not None:
+        ensure_importable_source(workdir_path, source_path)
     task_id = _spawn_import_task(
         request,
         workdir_path,
         source_path,
         force_names=frozenset(body.force_names),
+        names=set(body.names) if body.names is not None else None,
+    )
+    return _accepted_response(ImportAccepted(task_id=task_id))
+
+
+class ReimportRequest(BaseModel):
+    """恢复指定文件，省略名单则恢复全部可找回的缺失素材。"""
+
+    names: list[str] | None = None
+
+
+@router.post(
+    "/{wid}/imports/reimport",
+    status_code=202,
+    response_model=ImportAccepted,
+    responses={404: {"model": Problem}, 409: {"model": Problem}},
+)
+async def reimport_workdir(
+    wid: str, body: ReimportRequest, request: Request
+) -> JSONResponse:
+    """根据导入记录恢复缺失素材，来源失效逐条返回，不带入额外文件。"""
+    root = Path(WorkdirRegistry.get(wid).path)
+    task_id = _spawn_import_task(
+        request,
+        root,
+        None,
+        restore=True,
+        names=set(body.names) if body.names is not None else None,
     )
     return _accepted_response(ImportAccepted(task_id=task_id))
 

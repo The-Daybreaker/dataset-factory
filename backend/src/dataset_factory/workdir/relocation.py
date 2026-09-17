@@ -26,7 +26,15 @@ from .store import WorkdirRegistry, WorkdirStore
 
 _RUNTIME_FILES = frozenset(
     Path(".dsf") / name
-    for name in ("run.lock", "state.lock", "imports.lock", "run-info.json", "MIGRATED")
+    for name in (
+        "run.lock",
+        "state.lock",
+        "imports.lock",
+        "run-info.json",
+        "run-status.json",
+        "run-stop.json",
+        "MIGRATED",
+    )
 )
 
 

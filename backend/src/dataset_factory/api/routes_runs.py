@@ -40,6 +40,8 @@ from ..runs import (
     remove_retry_items,
     retry_rejections,
 )
+from ..runs.control import current_run as read_current_run
+from ..runs.control import request_stop
 from ..strategies import get_batch, parse_seq, read_snapshot
 from ..tasks import RETRY_AFTER_SECONDS
 from ..workdir import RunOccupiedError, WorkdirRegistry
@@ -180,8 +182,13 @@ def start_run(
 def current_run(wid: str, sN: str, request: Request) -> RunStatusView:
     """当前运行进度快照（轮询用；SSE 断线重连后的全量刷新同款数据）。"""
     seq = parse_seq(sN)  # sN 不合法按批次不存在处理（与 batch 端点同口径）
-    runner = _active_runner(request, _workdir_path(wid), seq)
-    return RunStatusView(**runner.snapshot())
+    workdir = _workdir_path(wid)
+    try:
+        runner = _active_runner(request, workdir, seq)
+    except RunNotActiveError:
+        return RunStatusView(**read_current_run(workdir, seq))
+    else:
+        return RunStatusView(**runner.snapshot())
 
 
 @router.post(
@@ -198,8 +205,13 @@ def current_run(wid: str, sN: str, request: Request) -> RunStatusView:
 def stop_run(wid: str, sN: str, request: Request) -> Response:
     """请求停止当前跑批（协作取消）：置位信号即返回，当前条目在安全点停下。"""
     seq = parse_seq(sN)
-    runner = _require_active(_active_runner(request, _workdir_path(wid), seq))
-    runner.stop()
+    workdir = _workdir_path(wid)
+    try:
+        runner = _active_runner(request, workdir, seq)
+    except RunNotActiveError:
+        request_stop(workdir, seq)
+    else:
+        _require_active(runner).stop()
     return Response(status_code=204)
 
 

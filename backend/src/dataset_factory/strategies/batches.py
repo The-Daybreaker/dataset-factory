@@ -20,6 +20,8 @@
 from __future__ import annotations
 
 import json
+import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,7 +29,7 @@ from typing import cast
 
 from .._fs import atomic_write_text
 from ..workdir import WorkdirMetadataCorruptedError, WorkdirStore, product_pattern
-from ..workdir.locks import workdir_write
+from ..workdir.locks import RunLock, workdir_write
 from .errors import BatchNotFoundError, StrategyNotFoundError, StrategyRefsError
 from .snapshot import StrategySnapshot, build_snapshot
 from .store import (
@@ -365,11 +367,16 @@ def set_batch_active(workdir: Path, seq: int, active: bool) -> BatchEntry:
 
 
 @workdir_write
-def delete_batch(workdir: Path, seq: int) -> int:
+def delete_batch(
+    workdir: Path,
+    seq: int,
+    *,
+    cleanup_state: Callable[[dict[str, object]], None] | None = None,
+) -> int:
     """删除批次：产物 txt + 快照 + state.json 记录 + 排除名单一并移除。
 
-    state.json 的两处改动（批次条目 + 排除名单）合并进状态锁内的**一次**读—改—写；
-    产物与快照是非状态资源，按既有顺序留在锁外先删。
+    运行锁阻止删除正在写出的产物。调用方提供附属状态清理函数，使跨域名单
+    与批次条目在同一次状态写入中出清；回调只修改传入字典，不另写文件。
 
     Returns:
         删除的产物 txt 数（历史 runs/ 保留）。
@@ -379,15 +386,10 @@ def delete_batch(workdir: Path, seq: int) -> int:
     """
     get_batch(workdir, seq)  # 不存在先报错，失败时现场不动
     store = WorkdirStore(workdir)
-    count = 0
-    for product in store.dsf_path.parent.glob(product_pattern(seq)):
-        product.unlink()
-        count += 1
-    snapshot_path = store.strategies_dir / f"s{seq}.json"
-    snapshot_path.unlink(missing_ok=True)
 
     def mutator(state: dict[str, object]) -> int:
         entries = _entries_from_state(state)
+        _require_entry(entries, seq)
         seq_floor = max((item.seq for item in entries), default=0) + 1
         _entries_into_state(
             state,
@@ -397,9 +399,24 @@ def delete_batch(workdir: Path, seq: int) -> int:
         exclusions = _exclusions_from_state(state)
         exclusions.pop(str(seq), None)
         state["exclusions"] = exclusions
-        return count
+        if cleanup_state is not None:
+            cleanup_state(state)
+        products = list(store.dsf_path.parent.glob(product_pattern(seq)))
+        for product in products:
+            store.validate_cleanup_path(product)
+        snapshot_path = store.strategies_dir / f"s{seq}.json"
+        store.validate_cleanup_path(snapshot_path)
+        for product in products:
+            product.unlink()
+        snapshot_path.unlink(missing_ok=True)
+        return len(products)
 
-    return store.mutate_state(mutator)
+    lock = RunLock(store.dsf_path)
+    lock.acquire({"pid": os.getpid(), "batch": seq, "operation": "delete-batch"})
+    try:
+        return store.mutate_state(mutator)
+    finally:
+        lock.release()
 
 
 def _exclusions_from_state(state: dict[str, object]) -> dict[str, list[str]]:

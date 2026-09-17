@@ -718,9 +718,8 @@ export interface paths {
          * Delete Workdir Batch
          * @description 删除批次：产物 + 快照 + state 记录与排除名单一并移除、重试名单出清。
          *
-         *     重试名单的结构归 runs 域（strategies 不能反向依赖），删除动作在入口层编排
-         *     两个域——将来 CLI 的 batch delete 同样要带上这一步。删前告知条数由界面负责
-         *     （批次视图的 product_count 即数据源）。
+         *     重试名单的结构归 runs 域，与 CLI 共用删除编排。删前告知条数由界面负责
+         *     （批次视图的 product_count 即数据源）；运行锁占用时拒绝删除。
          */
         delete: operations["delete_workdir_batch_api_workdirs__wid__batches__sN__delete"];
         options?: never;
@@ -1189,6 +1188,26 @@ export interface paths {
          * @description 重建导入记录（长任务）：扫现状、来源记空；旧记录保留（append-only）。
          */
         post: operations["rebuild_imports_api_workdirs__wid__imports_rebuild_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/imports/reimport": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reimport Workdir
+         * @description 根据导入记录恢复缺失素材，来源失效逐条返回，不带入额外文件。
+         */
+        post: operations["reimport_workdir_api_workdirs__wid__imports_reimport_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2223,6 +2242,14 @@ export interface components {
             description: string;
         };
         /**
+         * ReimportRequest
+         * @description 恢复指定文件，省略名单则恢复全部可找回的缺失素材。
+         */
+        ReimportRequest: {
+            /** Names */
+            names?: string[] | null;
+        };
+        /**
          * RetryListRequest
          * @description 重试列表加入的请求体：条目数组（素材主干）。
          */
@@ -2700,10 +2727,15 @@ export interface components {
              */
             force_names?: string[];
             /**
-             * Source
-             * @description 原始素材目录（服务端本地，须与工作目录不同且互不嵌套）
+             * Names
+             * @description 只导入指定文件名；省略则全量扫描
              */
-            source: string;
+            names?: string[] | null;
+            /**
+             * Source
+             * @description 原始素材目录（须与工作目录不同且互不嵌套）；省略则就地补登记
+             */
+            source?: string | null;
         };
         /**
          * WorkdirInfo
@@ -6083,6 +6115,59 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reimport_workdir_api_workdirs__wid__imports_reimport_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReimportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportAccepted"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -56,6 +56,49 @@ def test_list_empty_registry_returns_empty_list(client: TestClient) -> None:
     assert response.json() == []
 
 
+def test_selected_import_restore_and_in_place_registration(
+    tmp_path: Path, temp_data_root: Path
+) -> None:
+    """HTTP 选择性导入、缺失恢复与就地补登记均经任务返回真实结果。"""
+    root = tmp_path / "work"
+    source = tmp_path / "source"
+    root.mkdir()
+    source.mkdir()
+    (source / "a.jpg").write_bytes(b"a")
+    (source / "b.jpg").write_bytes(b"b")
+    entry = WorkdirRegistry.register(root)
+
+    async def scenario() -> None:
+        app = create_app(frontend_dir=tmp_path)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as http:
+            selected = await http.post(
+                f"/api/workdirs/{entry.id}/imports",
+                json={"source": str(source), "names": ["a.jpg"]},
+            )
+            imported = await _wait_terminal(http, selected.json()["task_id"])
+            assert imported["status"] == "succeeded"
+            assert (root / "a.jpg").read_bytes() == b"a"
+            assert not (root / "b.jpg").exists()
+            (root / "a.jpg").rename(tmp_path / "saved.jpg")
+            restore = await http.post(
+                f"/api/workdirs/{entry.id}/imports/reimport", json={"names": ["a.jpg"]}
+            )
+            restored = await _wait_terminal(http, restore.json()["task_id"])
+            assert restored["status"] == "succeeded"
+            assert (root / "a.jpg").read_bytes() == b"a"
+            (root / "local.jpg").write_bytes(b"local")
+            adopt = await http.post(
+                f"/api/workdirs/{entry.id}/imports", json={"names": ["local.jpg"]}
+            )
+            adopted = await _wait_terminal(http, adopt.json()["task_id"])
+            assert adopted["status"] == "succeeded"
+            assert adopted["result"]["imported"] == ["local.jpg"]
+
+    asyncio.run(scenario())
+
+
 def test_list_returns_registered_entries(client: TestClient, tmp_path: Path) -> None:
     """登记后列表可见：字段齐全（id / path / title / last_used_at）。"""
     target = tmp_path / "photos"
@@ -378,6 +421,7 @@ def test_concurrent_import_on_same_workdir_returns_409(
         source: Path | None,
         *,
         force_names: frozenset[str] | set[str] = frozenset(),
+        names: set[str] | None = None,
         should_stop: threading.Event | None = None,
         progress: Any = None,
     ) -> dict[str, Any]:

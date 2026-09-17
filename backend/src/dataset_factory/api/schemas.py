@@ -359,8 +359,12 @@ class WorkdirCreateAccepted(BaseModel):
 class WorkdirImportRequest(BaseModel):
     """POST /api/workdirs/{wid}/imports 的请求体：补充导入。"""
 
-    source: str = Field(
-        description="原始素材目录（服务端本地，须与工作目录不同且互不嵌套）",
+    source: str | None = Field(
+        default=None,
+        description="原始素材目录（须与工作目录不同且互不嵌套）；省略则就地补登记",
+    )
+    names: list[str] | None = Field(
+        default=None, description="只导入指定文件名；省略则全量扫描"
     )
     force_names: list[str] = Field(
         default_factory=list,

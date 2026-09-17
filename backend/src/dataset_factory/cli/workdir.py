@@ -27,6 +27,7 @@ from ..workdir.cleanup import (
 from ..workdir.deletion import delete_workdir, preview_workdir_deletion
 from ..workdir.errors import WorkdirNotFoundError
 from ..workdir.integrity import rebuild_import_records, scan_integrity
+from ..workdir.reimport import reimport_missing
 from ..workdir.relocation import (
     relocate_workdir,
     relocation_status,
@@ -82,21 +83,44 @@ def show_workdir(path: Annotated[Path, typer.Argument(help="工作目录路径")
 @handle_domain_errors
 def import_workdir(
     path: Annotated[Path, typer.Argument(help="工作目录路径")],
-    source: Annotated[Path, typer.Argument(help="来源目录")],
+    source: Annotated[
+        Path | None, typer.Argument(help="来源目录；省略则就地补登记")
+    ] = None,
     force_names: Annotated[
         list[str] | None,
         typer.Option("--force-name", help="异名同容时仍按新名导入，可重复"),
     ] = None,
+    names: Annotated[
+        list[str] | None, typer.Option("--name", help="只导入所选文件名，可重复")
+    ] = None,
 ) -> None:
-    """增量复制导入素材，按内容判定重复与冲突。"""
+    """增量复制导入或就地补登记，按内容判定重复与冲突。"""
     entry = WorkdirRegistry.get(registered_id(path))
     with cancellation() as stop:
         result = import_assets(
             Path(entry.path),
-            source.expanduser().resolve(),
+            source.expanduser().resolve() if source is not None else None,
             force_names=set(force_names or []),
+            names=set(names) if names is not None else None,
             should_stop=stop,
             progress=report_progress,
+        )
+    print_result(result)
+
+
+@app.command("reimport")
+@handle_domain_errors
+def reimport(
+    path: Path,
+    names: Annotated[
+        list[str] | None, typer.Option("--name", help="缺失文件名，可重复")
+    ] = None,
+) -> None:
+    """从已记录来源恢复缺失素材；省略名称则恢复全部可找回的素材。"""
+    root = Path(WorkdirRegistry.get(registered_id(path)).path)
+    with cancellation() as stop:
+        result = reimport_missing(
+            root, set(names) if names is not None else None, should_stop=stop
         )
     print_result(result)
 

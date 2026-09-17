@@ -17,7 +17,9 @@ from ..runs import (
     remove_retry_items,
     retry_rejections,
 )
+from ..runs.control import current_run, request_stop
 from ..runs.items import ITEM_GROUPS, build_item_view
+from ..runs.runner import remove_batch
 from ..skills import list_skills
 from ..strategies import (
     add_exclusions,
@@ -196,6 +198,38 @@ def items(
     print_result(
         asdict(view) if group is None else [asdict(row) for row in view.groups[group]]
     )
+
+
+@app.command("status")
+@handle_domain_errors
+def status(path: Path, batch: str) -> None:
+    """读取指定批次的实时运行状态，覆盖 CLI 与 Web 发起的运行。"""
+    root, seq = batch_location(path, batch)
+    print_result(current_run(root, seq))
+
+
+@app.command("stop")
+@handle_domain_errors
+def stop(path: Path, batch: str) -> None:
+    """请求当前批次协作停止，等待当前条目安全收尾。"""
+    root, seq = batch_location(path, batch)
+    print_result({"run_id": request_stop(root, seq), "stop_requested": True})
+
+
+@app.command("rm")
+@handle_domain_errors
+def remove(
+    path: Path,
+    batch: str,
+    yes: Annotated[bool, typer.Option("--yes")] = False,
+) -> None:
+    """删除批次与配对产物，保留素材和运行历史。"""
+    root, seq = batch_location(path, batch)
+    count = product_count(root, seq)
+    confirm_action(
+        f"删除批次 {batch}、其 {count} 份产物与快照？素材和运行历史保留。", yes
+    )
+    print_result({"deleted": batch, "product_count": remove_batch(root, seq)})
 
 
 @retry_app.command("add")

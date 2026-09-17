@@ -1628,6 +1628,27 @@
         "title": "PromptSaveRequest",
         "type": "object"
       },
+      "ReimportRequest": {
+        "description": "恢复指定文件，省略名单则恢复全部可找回的缺失素材。",
+        "properties": {
+          "names": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Names"
+          }
+        },
+        "title": "ReimportRequest",
+        "type": "object"
+      },
       "RetryListRequest": {
         "description": "重试列表加入的请求体：条目数组（素材主干）。",
         "properties": {
@@ -2384,15 +2405,34 @@
             "title": "Force Names",
             "type": "array"
           },
+          "names": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "只导入指定文件名；省略则全量扫描",
+            "title": "Names"
+          },
           "source": {
-            "description": "原始素材目录（服务端本地，须与工作目录不同且互不嵌套）",
-            "title": "Source",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "原始素材目录（须与工作目录不同且互不嵌套）；省略则就地补登记",
+            "title": "Source"
           }
         },
-        "required": [
-          "source"
-        ],
         "title": "WorkdirImportRequest",
         "type": "object"
       },
@@ -4695,7 +4735,7 @@
     },
     "/api/workdirs/{wid}/batches/{sN}": {
       "delete": {
-        "description": "删除批次：产物 + 快照 + state 记录与排除名单一并移除、重试名单出清。\n\n重试名单的结构归 runs 域（strategies 不能反向依赖），删除动作在入口层编排\n两个域——将来 CLI 的 batch delete 同样要带上这一步。删前告知条数由界面负责\n（批次视图的 product_count 即数据源）。",
+        "description": "删除批次：产物 + 快照 + state 记录与排除名单一并移除、重试名单出清。\n\n重试名单的结构归 runs 域，与 CLI 共用删除编排。删前告知条数由界面负责\n（批次视图的 product_count 即数据源）；运行锁占用时拒绝删除。",
         "operationId": "delete_workdir_batch_api_workdirs__wid__batches__sN__delete",
         "parameters": [
           {
@@ -6943,6 +6983,79 @@
           }
         },
         "summary": "Rebuild Imports",
+        "tags": [
+          "工作目录"
+        ]
+      }
+    },
+    "/api/workdirs/{wid}/imports/reimport": {
+      "post": {
+        "description": "根据导入记录恢复缺失素材，来源失效逐条返回，不带入额外文件。",
+        "operationId": "reimport_workdir_api_workdirs__wid__imports_reimport_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wid",
+            "required": true,
+            "schema": {
+              "title": "Wid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReimportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reimport Workdir",
         "tags": [
           "工作目录"
         ]

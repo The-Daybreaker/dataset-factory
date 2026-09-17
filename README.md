@@ -2,7 +2,7 @@
 
 面向 LoRA 训练数据集的**打标流水线工具**：把预先切好、归好类的图片 / 视频素材，打成能直接送训练的描述（caption），最终整理成目标模型要的格式。
 
-当前版本（一期）交付 **AI 打标核心能力**：发一张图或一段视频 + 指令，模型输出 caption，回复流式呈现（含思考过程），多轮迭代改写；配套结构化提示词库、Skill 扩展（agentskills.io 标准）、OpenAI 兼容 API 接入与 Web / CLI 双入口。批量打标与流水线界面在后续版本提供。
+工具提供 **AI 打标核心能力**：发一张图或一段视频 + 指令，模型输出 caption，回复流式呈现（含思考过程），多轮迭代改写；配套结构化提示词库、Skill 扩展（agentskills.io 标准）、OpenAI 兼容 API 接入与 Web / CLI 双入口。批量打标、失败重试和 ZIP 导出可通过下面的 CLI 工作流使用。
 
 ## 安装
 
@@ -53,9 +53,70 @@ dsf label -p h3 -v 素材.mp4 -m "给这段视频打个标"   # 视频（与 -i 
 - **服务运行管理（Web 设置页）**：查看服务状态与运行日志尾部，页头电源按钮可关闭服务（另见 `stop.bat` / `stop.sh`）。
 - **可复盘**：每轮实际发出的完整请求（请求信封）先落盘再调模型，失败也有「当时喂了什么」可查。
 
+## 批量打标
+
+**工作目录**保存素材、各批次 caption 和 `.dsf/` 元数据。一个目录可以创建多个批次，每个批次持有独立策略快照，库策略后续修改不会影响它。目录里的散文件须先经导入登记才参与打标；手动拷入的文件可用 `workdir import <路径>` 就地补登记。
+
+**workdir：导入与维护。** 先准备空工作目录，再从来源复制导入；不带 `--source` 的 `add` 表示就地采用原始目录，会提示维护操作作用于原始素材的风险。`reimport` 根据已记录来源补回缺失文件，`--name` 可重复以限定文件；来源不可用会逐条报告。`verify` 校验素材完整性，`cleanup --list` 与 `cleanup-runs --list` 只看清单，真正清理须用 `--name` 明确选择。
+
+```bash
+mkdir dataset-work
+dsf workdir add ./dataset-work --source ./source-images
+dsf workdir import ./dataset-work ./more-images
+dsf workdir reimport ./dataset-work --name sample.jpg
+dsf workdir verify ./dataset-work
+```
+
+**strategy：跨目录复用组合。** 库策略引用已配置的端点、基础提示词与可选 Skill；`list` / `show` 同时显示引用是否有效。可用 `edit` 修改、`copy` 派生、`rebind` 修复失效引用。下面的 `siliconflow` 和 `h3` 对应快速上手中创建的配置。
+
+```bash
+dsf strategy add detailed --endpoint siliconflow --prompt h3
+dsf strategy list
+```
+
+**batch 与 run：创建、执行和重试。** `add` 从库策略创建批次，序号从 `s1` 开始且删除后不复用；`edit` 只改显示名与描述，换组合须创建新批次。`run` 前台执行，进度写 stderr、最终 JSON 写 stdout 并包含日志路径。再次运行会跳过素材未变且已有有效产物的条目；Ctrl-C 或另一个终端的 `batch stop` 请求安全停止，保留当前成功产物。重试分两步：先加入名单，再运行 retry 模式。
+
+```bash
+dsf batch add ./dataset-work --from-library detailed
+dsf run ./dataset-work s1
+dsf batch items ./dataset-work s1
+dsf batch retry add ./dataset-work s1 sample
+dsf run ./dataset-work s1 --mode retry
+dsf batch status ./dataset-work s1
+dsf batch stop ./dataset-work s1
+```
+
+**export：预览与交付。** `plan` 列出将入包和被排除的文件及原因；`run` 写 ZIP，不覆盖已有文件。默认将素材与 caption 顺序命名为 `001.jpg / 001.txt`，ZIP 内平铺、不含元数据目录；加 `--original-names` 保留素材原名并去掉 caption 的批次前缀。导出只针对指定批次，`batch exclude` 持久排除条目，`--undo` 撤销排除。
+
+```bash
+dsf export plan ./dataset-work s1
+dsf export run ./dataset-work s1 -o ./training.zip
+dsf batch exclude ./dataset-work s1 sample
+dsf batch exclude ./dataset-work s1 sample --undo
+```
+
+危险操作默认交互确认，脚本调用须明确提供 `--yes`；运行前发现未导入文件时也会要求确认。`workdir rm` 删除整个目录，含就地采用的原始素材；`batch rm` 只删除该批次快照和 caption，保留素材与运行历史。各命令完整参数见 `dsf <组> <命令> --help`。
+
+### 对接训练器
+
+ZIP 解压后，把平铺目录直接指定为训练器的图片目录。以下为 [kohya sd-scripts 数据集配置](https://github.com/kohya-ss/sd-scripts/blob/main/docs/config_README-en.md) 的最小示例；显式设置 `.txt` caption 扩展名，使用配置文件方式时不需要 `10_dog` 式子目录。视频数据须使用支持相应输入格式的视频训练器。
+
+```toml
+[general]
+caption_extension = '.txt'
+
+[[datasets]]
+resolution = 512
+batch_size = 1
+
+[[datasets.subsets]]
+image_dir = './training'
+num_repeats = 1
+```
+
 ## CLI 退出码
 
-`0` 成功（stdout 只承载结果正文）；`1` 运行失败（stderr 给可操作中文消息）；`2` 命令用法错误。
+`0` 成功（stdout 只承载结果正文）；`1` 运行失败（stderr 给可操作中文消息）；`2` 命令用法错误；`130` 用户取消长任务或跑批中断。
 
 ## 数据位置
 

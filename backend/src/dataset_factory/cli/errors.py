@@ -12,6 +12,7 @@ from functools import wraps
 
 import typer
 
+from ..export import ExportError
 from ..labeling import LabelingError
 from ..llm import ConfigError, LLMError
 from ..prompts import PromptError
@@ -25,6 +26,7 @@ from ..workdir.errors import WorkdirError
 # CLI 的失败语义：域异常 → 1；意外异常不拦（带 traceback 退出，fail loud）。用法错误由
 # Typer/click 默认给 2。完整退出码表见 main 模块 docstring。
 DOMAIN_ERRORS = (
+    ExportError,
     RunError,
     StrategyError,
     WorkdirError,

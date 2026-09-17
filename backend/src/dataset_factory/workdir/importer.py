@@ -241,6 +241,7 @@ def import_assets(
     source: Path | None = None,
     *,
     force_names: frozenset[str] | set[str] = frozenset(),
+    names: set[str] | None = None,
     should_stop: threading.Event | None = None,
     progress: Callable[[float], None] | None = None,
 ) -> dict[str, Any]:
@@ -256,6 +257,7 @@ def import_assets(
             workdir,
             source,
             force_names=force_names,
+            names=names,
             should_stop=should_stop,
             progress=progress,
         )
@@ -266,6 +268,7 @@ def _import_assets(
     source: Path | None = None,
     *,
     force_names: frozenset[str] | set[str] = frozenset(),
+    names: set[str] | None = None,
     should_stop: threading.Event | None = None,
     progress: Callable[[float], None] | None = None,
 ) -> dict[str, Any]:
@@ -277,6 +280,7 @@ def _import_assets(
             提供时经 :func:`ensure_importable_source` 校验。
         force_names: 异名同容时仍按新名强制导入的源文件名清单（同名异容不受
             影响——本版不提供替换操作）。
+        names: 只处理指定文件名；None 表示扫描全部，不接受路径。
         should_stop: 协作取消信号；每处理完一个文件检查一次，置位即抛
             TaskCancelledError（任务体安全点约定）。
         progress: 进度回调（0.0–1.0，按候选文件数推进；扫描完成报 0.05、
@@ -305,6 +309,21 @@ def _import_assets(
         source_path = source
 
     candidates, scan_rejected = _scan_assets(source_path)
+    if names is not None:
+        if any(
+            not name or name in {".", ".."} or any(c in name for c in "/\\\x00")
+            for name in names
+        ):
+            raise WorkdirPathError("选择必须是文件名，不能包含路径。")
+        candidates = [candidate for candidate in candidates if candidate.name in names]
+        scan_rejected = [row for row in scan_rejected if row["name"] in names]
+        found = {candidate.name for candidate in candidates} | {
+            row["name"] for row in scan_rejected
+        }
+        scan_rejected.extend(
+            {"name": name, "reason": "来源文件不存在或不可读取"}
+            for name in sorted(names - found)
+        )
     candidate_names = {candidate.name for candidate in candidates}
     all_files = _whitelisted_files(workdir)
     baseline_files = _workdir_asset_map(workdir)
