@@ -17,9 +17,9 @@ function SelectTrigger({
     <SelectPrimitive.Trigger
       data-slot="select-trigger"
       className={cn(
-        "flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-2 text-[13.5px] whitespace-nowrap",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/55 disabled:cursor-not-allowed disabled:opacity-50",
-        "data-[placeholder]:text-muted-foreground [&_svg]:size-4 [&_svg]:opacity-50",
+        "flex h-(--h-lg) min-w-0 w-full items-center justify-between gap-2 rounded-md border border-input bg-card px-3 text-t-md whitespace-nowrap [&>span]:truncate",
+        "hover:border-n-400 focus:border-n-400 focus-visible:outline-none disabled:cursor-not-allowed disabled:bg-muted disabled:text-n-400",
+        "data-[placeholder]:text-text-4 [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-text-3",
         className,
       )}
       {...props}
@@ -78,7 +78,7 @@ function SelectLabel({
   return (
     <SelectPrimitive.Label
       data-slot="select-label"
-      className={cn("px-2 py-1.5 text-[12px] text-muted-foreground", className)}
+      className={cn("px-2 py-1 text-t-sm text-text-3", className)}
       {...props}
     />
   );
@@ -93,8 +93,8 @@ function SelectItem({
     <SelectPrimitive.Item
       data-slot="select-item"
       className={cn(
-        "relative flex w-full cursor-default items-center gap-2 rounded-sm py-1.5 pr-8 pl-2 text-[13px] outline-none select-none",
-        "focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+        "relative flex w-full cursor-default items-center gap-2 rounded-md py-2 pr-8 pl-2 text-t-md outline-none select-none",
+        "focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:text-n-400 data-[state=checked]:bg-primary/10 data-[state=checked]:text-primary",
         className,
       )}
       {...props}

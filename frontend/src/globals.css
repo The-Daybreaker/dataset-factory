@@ -41,9 +41,9 @@
   --ok-bg: 152 49% 96%;
   --ok-bd: 152 44% 86%;
   --ok-ink: 152 70% 30%;
-  --warn-bg: 47 100% 96%;
-  --warn-bd: 44 94% 77%;
-  --warn-ink: 24 91% 37%;
+  --warn-bg: 36 100% 96%;
+  --warn-bd: 36 94% 77%;
+  --warn-ink: 36 91% 34%;
   --bad-bg: 7 86% 97%;
   --bad-bd: 7 88% 94%;
   --bad-ink: 4 74% 49%;
@@ -53,9 +53,14 @@
   --info-bd: 208 100% 85%;
   --info-ink: 217 79% 51%;
   --ok-dot: 152 74% 37%;
-  --warn-dot: 33 95% 50%;
-  --bad-dot: 358 84% 60%;
+  --warn-dot: 36 95% 50%;
+  --bad-dot: 4 84% 60%;
   --info-dot: 217 91% 60%;
+  --h-xs: 22px;
+  --h-sm: 26px;
+  --h-md: 30px;
+  --h-lg: 34px;
+  --w-col-left: 320px;
 }
 
 /* ==========================================================================
@@ -94,9 +99,12 @@
 
   --border: var(--n-200);
   --input: var(--n-250);
+  --text-1: var(--n-900);
+  --text-2: var(--n-800);
+  --text-3: var(--n-700);
+  --text-4: var(--n-600);
   --success: var(--ok-ink);
   --success-foreground: var(--n-0);
-  --ring: var(--primary);
 
   /* 侧栏：比画布深一档（#ECECEE），与内容区分层 */
   --sidebar: var(--n-75);
@@ -126,8 +134,8 @@
   --ok-bg: 152 30% 14%;
   --ok-bd: 152 25% 24%;
   --ok-ink: 152 55% 70%;
-  --warn-bg: 40 45% 15%;
-  --warn-bd: 40 40% 26%;
+  --warn-bg: 36 45% 15%;
+  --warn-bd: 36 40% 26%;
   --warn-ink: 36 92% 66%;
   --bad-bg: 5 40% 16%;
   --bad-bd: 5 35% 27%;
@@ -188,7 +196,10 @@
   --color-on-ink: hsl(var(--on-ink));
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
-  --color-ring: hsl(var(--ring));
+  --color-text-1: hsl(var(--text-1));
+  --color-text-2: hsl(var(--text-2));
+  --color-text-3: hsl(var(--text-3));
+  --color-text-4: hsl(var(--text-4));
   --color-sidebar: hsl(var(--sidebar));
   --color-sidebar-foreground: hsl(var(--sidebar-foreground));
   /* 中性阶 16 档 */
@@ -241,9 +252,9 @@
   --text-t-xl--line-height: 1.35;
   --text-t-2xl: 24px;
   --text-t-2xl--line-height: 1.35;
-  /* 圆角阶梯 = ui-system.css 圆角 5 档（r-xs 5 / r-sm 8 / r-md 12 / r-lg 14）；
+  /* 圆角阶梯 = ui-system.css 圆角 5 档（r-xs 4 / r-sm 8 / r-md 12 / r-lg 14）；
      rounded-full 用 Tailwind 内置（等价 r-full 999px）。 */
-  --radius-sm: 5px;
+  --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
   --radius-xl: 14px;
@@ -251,17 +262,19 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border;
+    letter-spacing: 0;
+  }
+  :focus-visible {
+    outline: none;
   }
   html {
     height: 100%;
   }
   body {
     @apply bg-background text-foreground font-sans;
-    /* 可读性基线：正文 14px、行高 1.7（一期基线；规范 t-md 13px / lh-base 1.55 的
-       基线切换随二期前端批一并处理）。 */
-    font-size: 14px;
-    line-height: 1.7;
+    font-size: var(--text-t-md);
+    line-height: var(--text-t-md--line-height);
     height: 100%;
   }
   #app {
