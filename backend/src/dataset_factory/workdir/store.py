@@ -31,7 +31,14 @@ from .errors import (
     WorkdirNotFoundError,
     WorkdirPathError,
 )
-from .locks import StateLock, import_guard, registry_guard
+from .locks import (
+    StateLock,
+    import_guard,
+    maintenance_guard,
+    registry_guard,
+    require_workdir_writable,
+    workdir_write,
+)
 
 __all__ = [
     "WorkdirEntry",
@@ -138,6 +145,7 @@ class WorkdirRegistry:
         )
 
     @staticmethod
+    @workdir_write
     @_registry_writer
     def register(path: Path, title: str = "") -> WorkdirEntry:
         """登记一个工作目录；幂等（同 realpath 只更新 last_used_at 与路径）。
@@ -153,6 +161,7 @@ class WorkdirRegistry:
             raise WorkdirPathError(
                 f"路径「{path}」不存在或不是目录——请检查后重试。",
             )
+        require_workdir_writable(path / ".dsf")
         canonical = str(path)
         real = _realpath(path)
         entries = _read_registry()
@@ -181,9 +190,22 @@ class WorkdirRegistry:
         return entry
 
     @staticmethod
-    @_registry_writer
     def update_path(wid: str, new_path: Path) -> WorkdirEntry:
         """搬迁后原地更新 path（wid 不变）。"""
+        source = Path(WorkdirRegistry.get(wid).path)
+        with (
+            maintenance_guard(source),
+            maintenance_guard(new_path),
+            registry_guard(data_root()),
+        ):
+            if _realpath(Path(WorkdirRegistry.get(wid).path)) != _realpath(source):
+                raise WorkdirPathError("工作目录位置已变化，请刷新后重试。")
+            require_workdir_writable(new_path / ".dsf")
+            return WorkdirRegistry._update_path(wid, new_path)
+
+    @staticmethod
+    def _update_path(wid: str, new_path: Path) -> WorkdirEntry:
+        """调用方持有维护锁和注册表锁后执行路径切换。"""
         if not new_path.is_dir():
             raise WorkdirPathError(
                 f"新路径「{new_path}」不存在或不是目录——搬迁未完成。",
@@ -205,18 +227,17 @@ class WorkdirRegistry:
         )
 
     @staticmethod
-    @_registry_writer
     def remove(wid: str) -> None:
         """从注册表移除（工作目录本身不动）。"""
-        entries = _read_registry()
-        filtered = [e for e in entries if e.id != wid]
-        if len(filtered) == len(entries):
-            raise WorkdirNotFoundError(
-                f"工作目录 {wid} 不在注册表中——无法删除。",
-            )
-        _write_registry(filtered)
+        source = Path(WorkdirRegistry.get(wid).path)
+        with maintenance_guard(source), registry_guard(data_root()):
+            if _realpath(Path(WorkdirRegistry.get(wid).path)) != _realpath(source):
+                raise WorkdirPathError("工作目录位置已变化，请刷新后重试。")
+            entries = _read_registry()
+            _write_registry([entry for entry in entries if entry.id != wid])
 
 
+@workdir_write
 def ensure_dsf_layout(workdir_path: Path) -> Path:
     """确保工作目录内 ``.dsf/`` 子目录结构就位，返回 ``.dsf`` 路径。
 
@@ -230,6 +251,7 @@ def ensure_dsf_layout(workdir_path: Path) -> Path:
     由各自写入方在首次写时创建，本函数只保证目录结构。
     """
     dsf = workdir_path / _DSF_DIR_NAME
+    require_workdir_writable(dsf)
     (dsf / "strategies").mkdir(parents=True, exist_ok=True)
     (dsf / "runs").mkdir(parents=True, exist_ok=True)
     return dsf
@@ -246,7 +268,10 @@ class WorkdirStore:
     def __init__(self, workdir_path: Path) -> None:
         """以工作目录路径构造门面。调用方负责确保该路径已登记（register 过）。"""
         self._workdir = workdir_path
-        self._dsf = ensure_dsf_layout(workdir_path)
+        with maintenance_guard(workdir_path, timeout=10):
+            self._dsf = ensure_dsf_layout(workdir_path)
+            info = workdir_path.stat()
+            self._directory_identity = (info.st_dev, info.st_ino)
 
     @property
     def dsf_path(self) -> Path:
@@ -315,7 +340,7 @@ class WorkdirStore:
         Returns:
             mutator 的返回值。
         """
-        lock = StateLock(self._dsf)
+        lock = StateLock(self._dsf, directory_identity=self._directory_identity)
         lock.acquire()
         try:
             state = self.read_state()
@@ -423,7 +448,10 @@ class WorkdirStore:
             OSError: 打开 / 写入 / 刷盘失败。
         """
         line = (json.dumps(record, ensure_ascii=False) + "\n").encode("utf-8")
-        with import_guard(self.dsf_path), self.imports_file.open("a+b") as handle:
+        with (
+            import_guard(self.dsf_path, directory_identity=self._directory_identity),
+            self.imports_file.open("a+b") as handle,
+        ):
             handle.seek(0)
             raw = handle.read()
             if raw and not raw.endswith(b"\n"):

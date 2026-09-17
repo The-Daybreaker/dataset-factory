@@ -425,7 +425,10 @@ class BatchRunner:
         interrupted = False
         succeeded_items: list[str] = []
         for item in planned_stems:
-            if self._stop_event.is_set():
+            if (
+                self._stop_event.is_set()
+                or not get_batch(self._workdir, self._seq).active
+            ):
                 interrupted = True
                 break
             self._current_item = item

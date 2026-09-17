@@ -34,23 +34,119 @@
 
 from __future__ import annotations
 
+import hashlib
+import inspect
 import json
 import logging
 import os
 import threading
-from collections.abc import Generator
+import time
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
+from functools import wraps
 from pathlib import Path
 from typing import Any, cast
 
 from filelock import FileLock, Timeout
 
-from .._fs import atomic_write_text
-from .errors import ImportInProgressError, RunOccupiedError, StateLockTimeoutError
+from .._fs import atomic_write_text, data_root
+from .errors import (
+    ImportInProgressError,
+    RunOccupiedError,
+    StateLockTimeoutError,
+    WorkdirPathError,
+)
 
 __all__ = ["RunLock", "StateLock", "import_guard", "read_occupier"]
 
 logger = logging.getLogger(__name__)
+
+
+def require_workdir_writable(dsf_path: Path) -> None:
+    """拒绝继续写入已经搬迁的旧目录，标记内容不参与路径解析。"""
+    if os.path.lexists(dsf_path / "MIGRATED"):
+        raise WorkdirPathError("工作目录已搬迁，请刷新工作目录列表后重试。")
+    record = maintenance_record(dsf_path.parent)
+    if not record.exists():
+        return
+    with maintenance_guard(dsf_path.parent), registry_guard(data_root()):
+        if not record.exists():
+            return
+        try:
+            raw: object = json.loads(record.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise WorkdirPathError("搬迁记录无法读取，请检查记录文件后重试。") from exc
+        if not isinstance(raw, dict):
+            raise WorkdirPathError("搬迁记录格式不正确，请检查记录文件后重试。")
+        payload = cast(dict[str, object], raw)
+        if payload.get("operation") == "delete" and payload.get("status") != "cleaned":
+            raise WorkdirPathError("工作目录正在删除或删除尚未完成，请重试删除。")
+        if payload.get("status") == "aborted":
+            return
+        if payload.get("status") == "cleaned" and dsf_path.parent.is_dir():
+            current_identity = dsf_path.parent.stat()
+            if (current_identity.st_dev, current_identity.st_ino) != (
+                payload.get("source_device"),
+                payload.get("source_inode"),
+            ):
+                return
+        if payload.get("status") in ("prepared", "copying"):
+            # 延迟导入避免锁原语与注册表门面在模块装载时循环依赖。
+            from .store import WorkdirRegistry
+
+            wid = payload.get("wid")
+            if isinstance(wid, str):
+                current = WorkdirRegistry.get(wid)
+                if os.path.normcase(os.path.realpath(current.path)) == os.path.normcase(
+                    os.path.realpath(dsf_path.parent)
+                ):
+                    payload["status"] = "aborted"
+                    atomic_write_text(record, json.dumps(payload, ensure_ascii=False))
+                    return
+        raise WorkdirPathError("工作目录已搬迁，请刷新工作目录列表后重试。")
+
+
+def maintenance_record(workdir: Path) -> Path:
+    """按实际路径定位维护记录，目录搬走后旧对象仍查得到。"""
+    identity = os.path.normcase(os.path.realpath(workdir)).encode("utf-8")
+    return (
+        data_root()
+        / "workdir-maintenance"
+        / (hashlib.sha256(identity).hexdigest() + ".json")
+    )
+
+
+@contextmanager
+def maintenance_guard(workdir: Path, *, timeout: float = 0) -> Generator[None]:
+    """串行化同一源目录的搬迁及旧位置清理，锁不随源目录删除。"""
+    path = maintenance_record(workdir).with_suffix(".lock")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock = _shared_file_lock(path)
+    try:
+        lock.acquire(timeout=timeout)
+    except Timeout as exc:
+        raise RunOccupiedError("工作目录正在维护，请等待完成后重试。") from exc
+    try:
+        yield
+    finally:
+        lock.release()
+
+
+def workdir_write[**P, T](
+    operation: Callable[P, T],
+) -> Callable[P, T]:
+    """保护跨多个文件的短写入操作，搬迁必须等整个操作完成后才能复制。"""
+    signature = inspect.signature(operation)
+    path_parameter = next(iter(signature.parameters))
+
+    @wraps(operation)
+    def guarded(*args: P.args, **kwargs: P.kwargs) -> T:
+        workdir = cast(Path, signature.bind(*args, **kwargs).arguments[path_parameter])
+        with maintenance_guard(workdir, timeout=10):
+            require_workdir_writable(workdir / ".dsf")
+            return operation(*args, **kwargs)
+
+    return guarded
 
 
 @contextmanager
@@ -69,7 +165,9 @@ def registry_guard(directory: Path) -> Generator[None]:
 
 
 @contextmanager
-def import_guard(dsf_path: Path) -> Generator[None]:
+def import_guard(
+    dsf_path: Path, *, directory_identity: tuple[int, int] | None = None
+) -> Generator[None]:
     """串行化目录内导入与重建，覆盖 CLI 和多个 HTTP 服务进程。
 
     导入会先扫描再写登记集合，必须保护整段操作而不只保护追加一行。
@@ -77,7 +175,13 @@ def import_guard(dsf_path: Path) -> Generator[None]:
     """
     lock = _shared_file_lock(dsf_path / "imports.lock")
     try:
-        lock.acquire(timeout=0)
+        if lock.is_locked:
+            lock.acquire(timeout=0)
+        else:
+            with maintenance_guard(dsf_path.parent):
+                require_workdir_writable(dsf_path)
+                require_directory_identity(dsf_path.parent, directory_identity)
+                lock.acquire(timeout=0)
     except Timeout as exc:
         raise ImportInProgressError(
             "该工作目录已有导入或重建任务，请等待完成后重试。"
@@ -86,6 +190,18 @@ def import_guard(dsf_path: Path) -> Generator[None]:
         yield
     finally:
         lock.release()
+
+
+def require_directory_identity(path: Path, identity: tuple[int, int] | None) -> None:
+    """过期对象不能写入同路径下后来创建的另一个目录。"""
+    if identity is None:
+        return
+    try:
+        info = path.stat()
+    except FileNotFoundError as exc:
+        raise WorkdirPathError("工作目录不存在，请刷新工作目录列表后重试。") from exc
+    if (info.st_dev, info.st_ino) != identity:
+        raise WorkdirPathError("工作目录已被替换，请刷新工作目录列表后重试。")
 
 
 _RUN_LOCK_NAME = "run.lock"
@@ -108,11 +224,11 @@ def _shared_file_lock(path: Path) -> FileLock:
     用 realpath 而不是字面路径做 key：符号链接与盘符大小写差异必须解析成
     同一把锁，否则同线程两个「看起来不同、物理相同」的实例照样自锁。
     """
-    key = os.path.realpath(path)
+    key = os.path.normcase(os.path.realpath(path))
     with _SHARED_LOCKS_GUARD:
         lock = _SHARED_LOCKS.get(key)
         if lock is None:
-            lock = FileLock(Path(key), timeout=-1)
+            lock = FileLock(Path(key), timeout=-1, preserve_lock_file=True)
             _SHARED_LOCKS[key] = lock
         return lock
 
@@ -137,7 +253,9 @@ class RunLock:
                 损坏时为 None，提示退回笼统文案）。
         """
         try:
-            self._lock.acquire(timeout=0)
+            with maintenance_guard(self._info_path.parent.parent):
+                require_workdir_writable(self._info_path.parent)
+                self._lock.acquire(timeout=0)
         except Timeout as exc:
             existing = read_occupier(self._info_path)
             detail = (
@@ -161,15 +279,12 @@ class RunLock:
     def release(self) -> None:
         """释放锁并清掉占用者信息（未持锁时调用是安全空操作）。
 
-        释放顺序刻意先锁后文件：锁释放是必须成功的主体；run-info 删除失败只留
-        残留（下次抢锁成功后覆盖），绝不能反过来让文件清理失败吞掉锁释放。
+        占用者信息在锁内清理，避免删掉下一位持有者的提示；无论清理是否成功，
+        finally 都释放系统锁。
         """
         if not self._acquired:
             return
         try:
-            self._lock.release()
-        finally:
-            self._acquired = False
             try:
                 self._info_path.unlink(missing_ok=True)
             except OSError:
@@ -178,6 +293,9 @@ class RunLock:
                     self._info_path,
                     exc_info=True,
                 )
+        finally:
+            self._acquired = False
+            self._lock.release()
 
 
 class StateLock:
@@ -188,11 +306,17 @@ class StateLock:
     """
 
     def __init__(
-        self, dsf_path: Path, timeout: float = _STATE_LOCK_TIMEOUT_SECONDS
+        self,
+        dsf_path: Path,
+        timeout: float = _STATE_LOCK_TIMEOUT_SECONDS,
+        *,
+        directory_identity: tuple[int, int] | None = None,
     ) -> None:
         """以 ``.dsf/`` 路径构造；timeout 为等锁宽超时（秒）。"""
         self._lock = _shared_file_lock(dsf_path / _STATE_LOCK_NAME)
+        self._dsf_path = dsf_path
         self._timeout = timeout
+        self._directory_identity = directory_identity
         self._acquired = False
 
     def acquire(self) -> None:
@@ -201,14 +325,28 @@ class StateLock:
         Raises:
             StateLockTimeoutError: 宽超时内没等到锁（诊断信号，不是常规拒绝路径）。
         """
-        try:
-            self._lock.acquire(timeout=self._timeout)
-        except Timeout as exc:
-            raise StateLockTimeoutError(
-                f"等待工作目录状态锁超时（{self._timeout:g} 秒）——"
-                "state.json 的改动临界区只有毫秒级，等满说明有进程异常卡住，"
-                "请检查是否有残留的异常进程后重试。",
-            ) from exc
+        if self._lock.is_locked:
+            require_directory_identity(self._dsf_path.parent, self._directory_identity)
+            self._lock.acquire(timeout=0)
+            self._acquired = True
+            return
+        deadline = time.monotonic() + self._timeout
+        while True:
+            try:
+                with maintenance_guard(self._dsf_path.parent):
+                    require_workdir_writable(self._dsf_path)
+                    require_directory_identity(
+                        self._dsf_path.parent, self._directory_identity
+                    )
+                    self._lock.acquire(timeout=0)
+                break
+            except (Timeout, RunOccupiedError) as exc:
+                if time.monotonic() >= deadline:
+                    raise StateLockTimeoutError(
+                        f"等待工作目录状态锁超时（{self._timeout:g} 秒）——"
+                        "请等待目录维护完成，或检查是否有残留进程后重试。",
+                    ) from exc
+                time.sleep(min(0.01, max(0, deadline - time.monotonic())))
         self._acquired = True
 
     def release(self) -> None:

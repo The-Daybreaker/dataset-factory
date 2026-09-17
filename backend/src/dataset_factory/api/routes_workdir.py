@@ -51,15 +51,31 @@ from ..workdir.cleanup import (
     preview_cleanup,
     preview_run_cleanup,
 )
+from ..workdir.deletion import (
+    DeletionPreview,
+    DeletionResult,
+    delete_workdir,
+    preview_workdir_deletion,
+)
 from ..workdir.integrity import IntegrityItem, rebuild_import_records, scan_integrity
+from ..workdir.relocation import (
+    relocate_workdir,
+    relocation_status,
+    retry_relocation_cleanup,
+)
 from .schemas import (
     ImportAccepted,
     ImportRecord,
     Problem,
+    WorkdirCleanupRetryRequest,
+    WorkdirCleanupRetryResult,
     WorkdirCreateAccepted,
     WorkdirCreateRequest,
     WorkdirImportRequest,
     WorkdirInfo,
+    WorkdirRelocateAccepted,
+    WorkdirRelocateRequest,
+    WorkdirRelocationStatus,
 )
 
 router = APIRouter(prefix="/api/workdirs", tags=["工作目录"])
@@ -77,6 +93,39 @@ class CleanupRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     names: list[str] = Field(min_length=1)
+
+
+class WorkdirDeleteRequest(BaseModel):
+    """第二次确认必须携带预览中的完整路径。"""
+
+    model_config = ConfigDict(extra="forbid")
+    confirmed_path: str = Field(min_length=1)
+
+
+@router.get(
+    "/{wid}/delete-preview",
+    response_model=DeletionPreview,
+    responses={
+        code: {"model": Problem, "content": {"application/problem+json": {}}}
+        for code in (400, 404, 409)
+    },
+)
+def get_deletion_preview(wid: str) -> DeletionPreview:
+    """删除前展示实际文件范围与原始素材警告。"""
+    return preview_workdir_deletion(wid)
+
+
+@router.delete(
+    "/{wid}",
+    response_model=DeletionResult,
+    responses={
+        code: {"model": Problem, "content": {"application/problem+json": {}}}
+        for code in (400, 404, 409)
+    },
+)
+def delete_registered_workdir(wid: str, body: WorkdirDeleteRequest) -> DeletionResult:
+    """确认路径后删除整个目录，失败返回残留位置并保留登记。"""
+    return delete_workdir(wid, Path(body.confirmed_path))
 
 
 @router.post(
@@ -148,6 +197,93 @@ def get_cleanup_preview(wid: str) -> CleanupPreview:
     return CleanupPreview(
         products=products, total_bytes=sum(product.size for product in products)
     )
+
+
+@router.post(
+    "/{wid}/relocate",
+    status_code=202,
+    response_model=WorkdirRelocateAccepted,
+    responses={
+        400: {"model": Problem, "content": {"application/problem+json": {}}},
+        404: {"model": Problem, "content": {"application/problem+json": {}}},
+        409: {"model": Problem, "content": {"application/problem+json": {}}},
+    },
+)
+async def start_relocation(
+    wid: str, body: WorkdirRelocateRequest, request: Request
+) -> JSONResponse:
+    """受理工作目录搬迁；复制校验完成后再切换注册表并清理旧位置。"""
+    entry = WorkdirRegistry.get(wid)
+    source = Path(entry.path)
+    destination = Path(os.path.abspath(body.path))
+    if not source.is_dir():
+        raise WorkdirPathError("工作目录不存在，请刷新工作目录列表后重试。")
+    if os.path.lexists(destination) and not any(
+        item["path"] == str(destination.resolve()) and item["status"] == "copy-retained"
+        for item in relocation_status(wid)
+    ):
+        raise WorkdirPathError("搬迁目标已存在，请选择尚不存在的目录。")
+    if (
+        destination.is_relative_to(source)
+        or source.is_relative_to(destination)
+        or destination == source
+    ):
+        raise WorkdirPathError("搬迁目标与原目录不能相同或互相嵌套。")
+    manager = cast(TaskManager, request.app.state.task_manager)
+
+    def runner(task_id: str, should_stop: threading.Event) -> TaskResult:
+        def report_progress(value: float) -> None:
+            manager.set_progress(task_id, value)
+
+        return relocate_workdir(
+            wid,
+            destination,
+            should_stop=should_stop,
+            progress=report_progress,
+        )
+
+    task_id = manager.create(runner)
+    return JSONResponse(
+        status_code=202,
+        content=WorkdirRelocateAccepted(task_id=task_id).model_dump(),
+        headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
+    )
+
+
+@router.post(
+    "/{wid}/relocate/cleanup",
+    response_model=WorkdirCleanupRetryResult,
+    responses={
+        code: {
+            "content": {
+                "application/problem+json": {"schema": Problem.model_json_schema()}
+            }
+        }
+        for code in (400, 404, 409)
+    },
+)
+def retry_relocation_cleanup_path(
+    wid: str, body: WorkdirCleanupRetryRequest
+) -> WorkdirCleanupRetryResult:
+    """按搬迁记录重试清理旧目录；发现新增或改写内容时保留现场。"""
+    result = retry_relocation_cleanup(wid, Path(os.path.abspath(body.old_path)))
+    return WorkdirCleanupRetryResult.model_validate(result)
+
+
+@router.get(
+    "/{wid}/relocate/status",
+    response_model=list[WorkdirRelocationStatus],
+    responses={
+        code: {"model": Problem, "content": {"application/problem+json": {}}}
+        for code in (400, 404)
+    },
+)
+def get_relocation_status(wid: str) -> list[WorkdirRelocationStatus]:
+    """发现服务重启后仍需处置的副本与旧位置。"""
+    return [
+        WorkdirRelocationStatus.model_validate(record)
+        for record in relocation_status(wid)
+    ]
 
 
 class BatchIntegrity(BaseModel):

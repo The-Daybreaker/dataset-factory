@@ -374,6 +374,45 @@ class ImportAccepted(BaseModel):
     task_id: str = Field(description="导入任务句柄（GET /api/tasks/{id} 轮询）")
 
 
+class WorkdirRelocateRequest(BaseModel):
+    """搬迁工作目录到尚不存在的目标路径。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(description="目标绝对路径（目标目录本身必须不存在）")
+
+
+class WorkdirRelocateAccepted(BaseModel):
+    """搬迁任务受理响应。"""
+
+    task_id: str = Field(description="搬迁任务句柄（GET /api/tasks/{id} 轮询）")
+
+
+class WorkdirCleanupRetryRequest(BaseModel):
+    """重试清理搬迁后仍占用的旧目录。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    old_path: str = Field(description="搬迁结果返回的旧目录绝对路径")
+
+
+class WorkdirCleanupRetryResult(BaseModel):
+    """旧目录重试清理结果；仍占用时 cleanup_pending 为 true。"""
+
+    old_path: str = Field(description="旧目录绝对路径")
+    cleanup_pending: bool = Field(description="旧目录是否仍未清理")
+
+
+class WorkdirRelocationStatus(BaseModel):
+    """搬迁中断后的持久状态。"""
+
+    old_path: str = Field(description="搬迁记录中的原目录绝对路径")
+    path: str = Field(description="搬迁记录中的目标目录绝对路径")
+    status: Literal["cleanup-pending", "copy-retained", "location-changed"] = Field(
+        description="待清理旧位置 / 保留副本 / 注册表位置已变化"
+    )
+
+
 class ImportFileRecord(BaseModel):
     """导入记录里的单个文件：文件名 + 导入时的内容哈希。"""
 

@@ -27,6 +27,7 @@ from typing import cast
 
 from .._fs import atomic_write_text
 from ..workdir import WorkdirMetadataCorruptedError, WorkdirStore, product_pattern
+from ..workdir.locks import workdir_write
 from .errors import BatchNotFoundError, StrategyNotFoundError, StrategyRefsError
 from .snapshot import StrategySnapshot, build_snapshot
 from .store import (
@@ -237,6 +238,7 @@ def _append_batch_entry(store: WorkdirStore, entry: BatchEntry) -> BatchEntry:
     return store.mutate_state(mutator)
 
 
+@workdir_write
 def create_batch(
     workdir: Path,
     *,
@@ -272,6 +274,7 @@ def create_batch(
     )
 
 
+@workdir_write
 def apply_library_strategy(
     workdir: Path,
     strategy_id: str,
@@ -361,6 +364,7 @@ def set_batch_active(workdir: Path, seq: int, active: bool) -> BatchEntry:
     return store.mutate_state(mutator)
 
 
+@workdir_write
 def delete_batch(workdir: Path, seq: int) -> int:
     """删除批次：产物 txt + 快照 + state.json 记录 + 排除名单一并移除。
 

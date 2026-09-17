@@ -26,8 +26,10 @@ from dataset_factory.workdir import (
     RunOccupiedError,
     StateLock,
     StateLockTimeoutError,
+    WorkdirPathError,
     WorkdirStore,
 )
+from dataset_factory.workdir.locks import import_guard, maintenance_guard
 
 _HOLD_STATE_LOCK_SCRIPT = """
 import sys
@@ -63,7 +65,7 @@ time.sleep(300)
 
 
 @pytest.fixture
-def workdir(tmp_path: Path) -> Path:
+def workdir(tmp_path: Path, temp_data_root: Path) -> Path:
     """一个真实存在的临时工作目录。"""
     target = tmp_path / "photos"
     target.mkdir()
@@ -78,6 +80,45 @@ def _wait_for_marker(marker: Path, deadline_seconds: float = 15.0) -> None:
             return
         time.sleep(0.05)
     raise AssertionError("子进程未在时限内持锁（marker 未出现）")
+
+
+def test_migrated_directory_rejects_existing_state_writer(workdir: Path) -> None:
+    """先前构造的存储对象也不能在搬迁标记出现后继续修改状态。"""
+    store = WorkdirStore(workdir)
+    store.mutate_state(lambda state: state.update({"keep": 1}))
+    (store.dsf_path / "MIGRATED").write_text("moved", encoding="utf-8")
+
+    with pytest.raises(WorkdirPathError, match="搬迁"):
+        store.mutate_state(lambda state: state.update({"keep": 2}))
+
+    assert store.read_state() == {"keep": 1}
+
+
+def test_migrated_directory_rejects_run_and_import(workdir: Path) -> None:
+    """搬迁标记存在时运行和导入均被拒绝，且抢到的锁正确释放。"""
+    store = WorkdirStore(workdir)
+    run = RunLock(store.dsf_path)
+    marker = store.dsf_path / "MIGRATED"
+    marker.write_text("moved", encoding="utf-8")
+
+    with pytest.raises(WorkdirPathError, match="搬迁"):
+        run.acquire({"batch": "s1"})
+    with pytest.raises(WorkdirPathError, match="搬迁"), import_guard(store.dsf_path):
+        pytest.fail("已搬迁目录不能进入导入临界区")
+    marker.unlink()
+    run.acquire({"batch": "s1"})
+    run.release()
+    with import_guard(store.dsf_path):
+        assert store.read_state() == {}
+
+
+def test_migrated_directory_rejects_new_store(workdir: Path) -> None:
+    """新的存储对象不能重新初始化已搬迁目录。"""
+    store = WorkdirStore(workdir)
+    (store.dsf_path / "MIGRATED").write_text("moved", encoding="utf-8")
+
+    with pytest.raises(WorkdirPathError, match="搬迁"):
+        WorkdirStore(workdir)
 
 
 def _spawn_holder(script: str, dsf: Path, marker: Path) -> subprocess.Popen[bytes]:
@@ -177,6 +218,58 @@ def test_state_lock_instances_share_one_underlying_lock(workdir: Path) -> None:
     third.release()  # 计数归零后可重新获取（上面的重入没有泄漏计数）
 
 
+def test_state_lock_release_preserves_lock_file_identity(workdir: Path) -> None:
+    """释放只解除系统锁，连续获取期间锁文件身份保持不变。"""
+    dsf = WorkdirStore(workdir).dsf_path
+    lock = StateLock(dsf)
+    lock.acquire()
+    identity = (dsf / "state.lock").stat().st_ino
+    lock.release()
+
+    lock.acquire()
+    try:
+        assert (dsf / "state.lock").stat().st_ino == identity
+    finally:
+        lock.release()
+
+    assert (dsf / "state.lock").is_file()
+
+
+def test_state_contender_does_not_hold_maintenance_while_waiting(workdir: Path) -> None:
+    """状态锁等待者不占维护锁，持有状态锁的线程仍可完成嵌套操作。"""
+    dsf = WorkdirStore(workdir).dsf_path
+    holder = StateLock(dsf)
+    started = threading.Event()
+    finished = threading.Event()
+    errors: list[Exception] = []
+
+    def contend() -> None:
+        started.set()
+        lock = StateLock(dsf, timeout=2)
+        try:
+            lock.acquire()
+            lock.release()
+            finished.set()
+        except StateLockTimeoutError as exc:
+            errors.append(exc)
+
+    holder.acquire()
+    worker = threading.Thread(target=contend)
+    worker.start()
+    try:
+        assert started.wait(2)
+        time.sleep(0.1)
+        with maintenance_guard(workdir, timeout=0.5):
+            assert not finished.is_set()
+    finally:
+        holder.release()
+        worker.join(3)
+
+    assert not worker.is_alive()
+    assert errors == []
+    assert finished.is_set()
+
+
 def test_state_lock_survives_holder_process_kill(workdir: Path) -> None:
     """持锁进程被强杀：无需手动清理即可继续写（文件锁随句柄自动释放）。"""
     dsf = WorkdirStore(workdir).dsf_path
@@ -231,3 +324,75 @@ def test_run_lock_survives_holder_process_kill(workdir: Path) -> None:
         assert info["pid"] == 9999  # 残留的 run-info 被新持有者覆盖
     finally:
         lock.release()
+
+
+def test_run_info_cleanup_happens_before_unlock(
+    workdir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """清理占用提示时仍持锁，下一位运行者不能提前写入提示。"""
+    dsf = WorkdirStore(workdir).dsf_path
+    holder = RunLock(dsf)
+    holder.acquire({"pid": 1})
+    unlink = Path.unlink
+    rejected: list[bool] = []
+
+    def try_acquire() -> None:
+        contender = RunLock(dsf)
+        try:
+            contender.acquire({"pid": 2})
+        except RunOccupiedError:
+            rejected.append(True)
+        finally:
+            contender.release()
+
+    def inspect_unlink(path: Path, missing_ok: bool = False) -> None:
+        if path == dsf / "run-info.json":
+            worker = threading.Thread(target=try_acquire)
+            worker.start()
+            worker.join(3)
+            assert not worker.is_alive()
+        unlink(path, missing_ok=missing_ok)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", inspect_unlink)
+        holder.release()
+
+    assert rejected == [True]
+    next_holder = RunLock(dsf)
+    next_holder.acquire({"pid": 3})
+    next_holder.release()
+
+
+def test_run_lock_releases_when_info_cleanup_fails(
+    workdir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """提示文件删除失败仍释放运行锁，后续运行可正常获得锁。"""
+    dsf = WorkdirStore(workdir).dsf_path
+    holder = RunLock(dsf)
+    holder.acquire({"pid": 1})
+    unlink = Path.unlink
+
+    def fail_unlink(path: Path, missing_ok: bool = False) -> None:
+        if path == dsf / "run-info.json":
+            raise PermissionError("occupied info")
+        unlink(path, missing_ok=missing_ok)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", fail_unlink)
+        holder.release()
+    acquired: list[bool] = []
+
+    def try_acquire() -> None:
+        contender = RunLock(dsf)
+        contender.acquire({"pid": 2})
+        try:
+            acquired.append(True)
+        finally:
+            contender.release()
+
+    worker = threading.Thread(target=try_acquire)
+    worker.start()
+    worker.join(3)
+
+    assert not worker.is_alive()
+    assert acquired == [True]

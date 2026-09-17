@@ -662,7 +662,11 @@ export interface paths {
         get: operations["get_one_api_workdirs__wid__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Registered Workdir
+         * @description 确认路径后删除整个目录，失败返回残留位置并保留登记。
+         */
+        delete: operations["delete_registered_workdir_api_workdirs__wid__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1064,6 +1068,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workdirs/{wid}/delete-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Deletion Preview
+         * @description 删除前展示实际文件范围与原始素材警告。
+         */
+        get: operations["get_deletion_preview_api_workdirs__wid__delete_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workdirs/{wid}/export": {
         parameters: {
             query?: never;
@@ -1214,6 +1238,66 @@ export interface paths {
          *     attachment 会让浏览器变成下载。
          */
         get: operations["get_item_asset_api_workdirs__wid__items__item__asset_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/relocate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Relocation
+         * @description 受理工作目录搬迁；复制校验完成后再切换注册表并清理旧位置。
+         */
+        post: operations["start_relocation_api_workdirs__wid__relocate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/relocate/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retry Relocation Cleanup Path
+         * @description 按搬迁记录重试清理旧目录；发现新增或改写内容时保留现场。
+         */
+        post: operations["retry_relocation_cleanup_path_api_workdirs__wid__relocate_cleanup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workdirs/{wid}/relocate/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Relocation Status
+         * @description 发现服务重启后仍需处置的副本与旧位置。
+         */
+        get: operations["get_relocation_status_api_workdirs__wid__relocate_status_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1403,6 +1487,32 @@ export interface components {
             base_url: string;
             /** Model */
             model: string;
+        };
+        /**
+         * DeletionPreview
+         * @description 二次确认展示的实际删除范围。
+         */
+        DeletionPreview: {
+            /** Confirmation */
+            confirmation: string;
+            /** File Count */
+            file_count: number;
+            /** Original Materials */
+            original_materials: boolean;
+            /** Path */
+            path: string;
+            /** Total Bytes */
+            total_bytes: number;
+        };
+        /**
+         * DeletionResult
+         * @description 删除成功后移除登记，失败仍保留登记与残留路径。
+         */
+        DeletionResult: {
+            /** Deleted */
+            deleted: boolean;
+            /** Remaining Path */
+            remaining_path: string | null;
         };
         /**
          * EndpointConfigSummary
@@ -2507,6 +2617,33 @@ export interface components {
             type: string;
         };
         /**
+         * WorkdirCleanupRetryRequest
+         * @description 重试清理搬迁后仍占用的旧目录。
+         */
+        WorkdirCleanupRetryRequest: {
+            /**
+             * Old Path
+             * @description 搬迁结果返回的旧目录绝对路径
+             */
+            old_path: string;
+        };
+        /**
+         * WorkdirCleanupRetryResult
+         * @description 旧目录重试清理结果；仍占用时 cleanup_pending 为 true。
+         */
+        WorkdirCleanupRetryResult: {
+            /**
+             * Cleanup Pending
+             * @description 旧目录是否仍未清理
+             */
+            cleanup_pending: boolean;
+            /**
+             * Old Path
+             * @description 旧目录绝对路径
+             */
+            old_path: string;
+        };
+        /**
          * WorkdirCreateAccepted
          * @description POST /api/workdirs 的 202 受理响应：任务句柄 + 已登记的工作目录条目。
          */
@@ -2543,6 +2680,14 @@ export interface components {
              * @default
              */
             title: string;
+        };
+        /**
+         * WorkdirDeleteRequest
+         * @description 第二次确认必须携带预览中的完整路径。
+         */
+        WorkdirDeleteRequest: {
+            /** Confirmed Path */
+            confirmed_path: string;
         };
         /**
          * WorkdirImportRequest
@@ -2585,6 +2730,50 @@ export interface components {
              * @description 显示名（默认 = 目录名，可改、允许重名）
              */
             title: string;
+        };
+        /**
+         * WorkdirRelocateAccepted
+         * @description 搬迁任务受理响应。
+         */
+        WorkdirRelocateAccepted: {
+            /**
+             * Task Id
+             * @description 搬迁任务句柄（GET /api/tasks/{id} 轮询）
+             */
+            task_id: string;
+        };
+        /**
+         * WorkdirRelocateRequest
+         * @description 搬迁工作目录到尚不存在的目标路径。
+         */
+        WorkdirRelocateRequest: {
+            /**
+             * Path
+             * @description 目标绝对路径（目标目录本身必须不存在）
+             */
+            path: string;
+        };
+        /**
+         * WorkdirRelocationStatus
+         * @description 搬迁中断后的持久状态。
+         */
+        WorkdirRelocationStatus: {
+            /**
+             * Old Path
+             * @description 搬迁记录中的原目录绝对路径
+             */
+            old_path: string;
+            /**
+             * Path
+             * @description 搬迁记录中的目标目录绝对路径
+             */
+            path: string;
+            /**
+             * Status
+             * @description 待清理旧位置 / 保留副本 / 注册表位置已变化
+             * @enum {string}
+             */
+            status: "cleanup-pending" | "copy-retained" | "location-changed";
         };
     };
     responses: never;
@@ -4184,6 +4373,71 @@ export interface operations {
             };
         };
     };
+    delete_registered_workdir_api_workdirs__wid__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkdirDeleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletionResult"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_workdir_batches_api_workdirs__wid__batches_get: {
         parameters: {
             query?: never;
@@ -5428,6 +5682,67 @@ export interface operations {
             };
         };
     };
+    get_deletion_preview_api_workdirs__wid__delete_preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletionPreview"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     start_export_api_workdirs__wid__export_post: {
         parameters: {
             query?: never;
@@ -5866,6 +6181,247 @@ export interface operations {
                 };
                 content: {
                     "application/octet-stream": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_relocation_api_workdirs__wid__relocate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkdirRelocateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkdirRelocateAccepted"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_relocation_cleanup_path_api_workdirs__wid__relocate_cleanup_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkdirCleanupRetryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkdirCleanupRetryResult"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /**
+                         * Detail
+                         * @description 中文可操作消息——下一步该做什么
+                         */
+                        detail: string;
+                        /**
+                         * Status
+                         * @description HTTP 状态码（与响应状态一致）
+                         */
+                        status: number;
+                        /**
+                         * Title
+                         * @description 人读的短语概括
+                         */
+                        title: string;
+                        /**
+                         * Type
+                         * @description 机器可读的错误类别 slug（如 task-not-found）
+                         */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /**
+                         * Detail
+                         * @description 中文可操作消息——下一步该做什么
+                         */
+                        detail: string;
+                        /**
+                         * Status
+                         * @description HTTP 状态码（与响应状态一致）
+                         */
+                        status: number;
+                        /**
+                         * Title
+                         * @description 人读的短语概括
+                         */
+                        title: string;
+                        /**
+                         * Type
+                         * @description 机器可读的错误类别 slug（如 task-not-found）
+                         */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /**
+                         * Detail
+                         * @description 中文可操作消息——下一步该做什么
+                         */
+                        detail: string;
+                        /**
+                         * Status
+                         * @description HTTP 状态码（与响应状态一致）
+                         */
+                        status: number;
+                        /**
+                         * Title
+                         * @description 人读的短语概括
+                         */
+                        title: string;
+                        /**
+                         * Type
+                         * @description 机器可读的错误类别 slug（如 task-not-found）
+                         */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_relocation_status_api_workdirs__wid__relocate_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkdirRelocationStatus"][];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
                     "application/problem+json": unknown;
                 };
             };

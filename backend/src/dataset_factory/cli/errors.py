@@ -15,12 +15,19 @@ import typer
 from ..labeling import LabelingError
 from ..llm import ConfigError, LLMError
 from ..prompts import PromptError
+from ..runs.errors import RunError
 from ..sessions import SessionError
 from ..skills import SkillError
+from ..strategies.errors import StrategyError
+from ..tasks import TaskCancelledError
+from ..workdir.errors import WorkdirError
 
 # CLI 的失败语义：域异常 → 1；意外异常不拦（带 traceback 退出，fail loud）。用法错误由
 # Typer/click 默认给 2。完整退出码表见 main 模块 docstring。
 DOMAIN_ERRORS = (
+    RunError,
+    StrategyError,
+    WorkdirError,
     LabelingError,
     PromptError,
     SkillError,
@@ -42,6 +49,9 @@ def handle_domain_errors[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         try:
             return fn(*args, **kwargs)
+        except TaskCancelledError as exc:
+            print(str(exc), file=sys.stderr)
+            raise typer.Exit(130) from exc
         except DOMAIN_ERRORS as exc:
             print(f"错误：{exc}", file=sys.stderr)
             raise typer.Exit(1) from exc

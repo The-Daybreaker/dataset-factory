@@ -525,6 +525,24 @@ def test_unknown_batch_raises_batch_not_found(batch: Path) -> None:
 # --------------------------------------------------------------------------
 
 
+def test_hidden_batch_interrupts_without_in_process_stop_signal(batch: Path) -> None:
+    """另一个入口只写隐藏状态时，执行器在条目边界停止并保留已完成产物。"""
+    completer = ScriptedCompleter()
+    runner = _runner(batch, completer)
+
+    def hide_after_first(event: RunEvent) -> None:
+        if event.kind == "item-updated":
+            set_batch_active(batch, 1, False)
+
+    runner.subscribe(hide_after_first)
+    report = runner.run()
+
+    assert report.status == "interrupted"
+    assert completer.calls == 1
+    assert (batch / "s1__cat_001.txt").is_file()
+    assert not (batch / "s1__cat_002.txt").exists()
+
+
 def test_stop_interrupts_between_items_and_keeps_finished_part(batch: Path) -> None:
     """第一条打完置位停止：状态 interrupted、第二条没跑、已完成部分保留。"""
     completer = ScriptedCompleter()

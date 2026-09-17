@@ -1,5 +1,7 @@
 """工作目录清理接口：预览与选择性清理的真实文件行为。"""
 
+import json
+import time
 from pathlib import Path
 
 import pytest
@@ -7,7 +9,167 @@ from fastapi.testclient import TestClient
 
 from dataset_factory.api import create_app
 from dataset_factory.workdir import WorkdirPathError, WorkdirRegistry, WorkdirStore
-from dataset_factory.workdir.locks import RunLock, import_guard
+from dataset_factory.workdir.locks import RunLock, import_guard, maintenance_record
+from dataset_factory.workdir.relocation import relocate_workdir
+
+pytestmark = pytest.mark.usefixtures("temp_data_root")
+
+
+def test_http_retry_completes_partial_copy_after_app_restart(tmp_path: Path) -> None:
+    """重启应用后经搬迁入口补全中断副本，校验全部字节后清理源目录。"""
+    source = tmp_path / "source"
+    source.mkdir()
+    store = WorkdirStore(source)
+    store.mutate_state(lambda state: state.update({"keep": "metadata"}))
+    original = b"partial-marker-file-with-complete-content"
+    (source / "marker.jpg").write_bytes(original)
+    (source / "second.png").write_bytes(b"second complete file")
+    (source / "empty").mkdir()
+    entry = WorkdirRegistry.register(source)
+    destination = tmp_path / "destination"
+    with TestClient(create_app(frontend_dir=tmp_path / "frontend")) as first_app:
+        assert first_app.get(f"/api/workdirs/{entry.id}").status_code == 200
+        destination.mkdir()
+        (destination / "marker.jpg").write_bytes(original[:7])
+        source_info = source.stat()
+        destination_info = destination.stat()
+        maintenance_record(source).write_text(
+            json.dumps(
+                {
+                    "wid": entry.id,
+                    "source": str(source),
+                    "destination": str(destination),
+                    "status": "copying",
+                    "source_device": source_info.st_dev,
+                    "source_inode": source_info.st_ino,
+                    "destination_device": destination_info.st_dev,
+                    "destination_inode": destination_info.st_ino,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    with TestClient(create_app(frontend_dir=tmp_path / "frontend")) as restarted_app:
+        accepted = restarted_app.post(
+            f"/api/workdirs/{entry.id}/relocate", json={"path": str(destination)}
+        )
+        assert accepted.status_code == 202, accepted.text
+        task_url = f"/api/tasks/{accepted.json()['task_id']}"
+        deadline = time.monotonic() + 10
+        task = restarted_app.get(task_url).json()
+        while task["status"] == "running" and time.monotonic() < deadline:
+            time.sleep(0.02)
+            task = restarted_app.get(task_url).json()
+        current = restarted_app.get(f"/api/workdirs/{entry.id}")
+
+    assert task["status"] == "succeeded", task
+    assert task["result"]["cleanup_pending"] is False
+    assert current.json()["id"] == entry.id
+    assert Path(current.json()["path"]) == destination
+    assert (destination / "marker.jpg").read_bytes() == original
+    assert (destination / "second.png").read_bytes() == b"second complete file"
+    assert (destination / "empty").is_dir()
+    assert WorkdirStore(destination).read_state() == {"keep": "metadata"}
+    assert not source.exists()
+
+
+def test_relocation_task_moves_files_and_preserves_workdir_id(
+    tmp_path: Path, temp_data_root: Path
+) -> None:
+    """HTTP 搬迁受理后经任务轮询完成，注册表标识不变且旧位置自动清理。"""
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "a.jpg").write_bytes(b"image")
+    entry = WorkdirRegistry.register(source)
+    destination = tmp_path / "destination"
+
+    with TestClient(create_app(frontend_dir=tmp_path / "frontend")) as client:
+        accepted = client.post(
+            f"/api/workdirs/{entry.id}/relocate", json={"path": str(destination)}
+        )
+        assert accepted.status_code == 202
+        assert accepted.headers["retry-after"] == "2"
+        task_url = f"/api/tasks/{accepted.json()['task_id']}"
+        deadline = time.monotonic() + 10
+        task = client.get(task_url).json()
+        while task["status"] == "running" and time.monotonic() < deadline:
+            time.sleep(0.02)
+            task = client.get(task_url).json()
+        current = client.get(f"/api/workdirs/{entry.id}")
+
+    assert task["status"] == "succeeded", task
+    assert task["result"]["cleanup_pending"] is False
+    assert current.json()["id"] == entry.id
+    assert Path(current.json()["path"]) == destination
+    assert (destination / "a.jpg").read_bytes() == b"image"
+    assert not source.exists()
+
+
+def test_relocation_cleanup_rejects_unrecorded_directory(
+    tmp_path: Path, temp_data_root: Path
+) -> None:
+    """不能借旧位置清理接口删除未由搬迁记录证明的目录。"""
+    source = tmp_path / "source"
+    source.mkdir()
+    entry = WorkdirRegistry.register(source)
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "keep.txt").write_bytes(b"keep")
+    client = TestClient(create_app(frontend_dir=tmp_path / "frontend"))
+
+    response = client.post(
+        f"/api/workdirs/{entry.id}/relocate/cleanup", json={"old_path": str(other)}
+    )
+
+    assert response.status_code == 400
+    assert response.headers["content-type"] == "application/problem+json"
+    assert (other / "keep.txt").read_bytes() == b"keep"
+
+
+def test_http_relocation_retries_recorded_copy_after_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """新应用能发现中断副本并重新搬迁，不将已记录目标误判为路径冲突。"""
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "a.jpg").write_bytes(b"image")
+    entry = WorkdirRegistry.register(source)
+    destination = tmp_path / "destination"
+
+    def interrupt(wid: str, new_path: Path) -> None:
+        raise KeyboardInterrupt("interrupted before switch")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(WorkdirRegistry, "update_path", interrupt)
+        with pytest.raises(KeyboardInterrupt):
+            relocate_workdir(entry.id, destination)
+
+    with TestClient(create_app(frontend_dir=tmp_path / "frontend")) as client:
+        status = client.get(f"/api/workdirs/{entry.id}/relocate/status")
+        accepted = client.post(
+            f"/api/workdirs/{entry.id}/relocate", json={"path": str(destination)}
+        )
+        assert accepted.status_code == 202, accepted.text
+        task_url = f"/api/tasks/{accepted.json()['task_id']}"
+        deadline = time.monotonic() + 10
+        task = client.get(task_url).json()
+        while task["status"] == "running" and time.monotonic() < deadline:
+            time.sleep(0.02)
+            task = client.get(task_url).json()
+        after = client.get(f"/api/workdirs/{entry.id}/relocate/status")
+
+    assert status.status_code == 200
+    assert status.json() == [
+        {
+            "old_path": str(source),
+            "path": str(destination),
+            "status": "copy-retained",
+        }
+    ]
+    assert task["status"] == "succeeded", task
+    assert after.json() == []
+    assert not source.exists()
+    assert (destination / "a.jpg").read_bytes() == b"image"
 
 
 def test_cleanup_preview_lists_only_orphan_products(

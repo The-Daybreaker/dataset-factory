@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import threading
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import cast
@@ -32,7 +33,7 @@ _MP4_BYTES = b"\x00\x00\x00\x18ftypmp4-fake-video-bytes"
 
 
 @pytest.fixture
-def workdir(tmp_path: Path) -> Path:
+def workdir(tmp_path: Path, temp_data_root: Path) -> Path:
     """一个真实存在的临时工作目录。"""
     target = tmp_path / "photos"
     target.mkdir()
@@ -249,11 +250,14 @@ def test_store_mutate_state_releases_lock_when_mutator_raises(workdir: Path) -> 
     assert store.read_state() == {"k": "v"}
 
 
-def test_store_mutate_state_no_lost_update_across_threads(workdir: Path) -> None:
+@pytest.mark.parametrize("iteration", range(10))
+def test_store_mutate_state_no_lost_update_across_threads(
+    workdir: Path, iteration: int
+) -> None:
     """两线程并发读—改—写：各自追加的条目全部落盘（goal B2 的不丢更新）。"""
     store = WorkdirStore(workdir)
     barrier = threading.Barrier(2)
-    errors: list[Exception] = []
+    errors: list[str] = []
 
     def append(prefix: str) -> None:
         try:
@@ -267,8 +271,8 @@ def test_store_mutate_state_no_lost_update_across_threads(workdir: Path) -> None
                     state["items"] = items
 
                 store.mutate_state(mutator)
-        except Exception as exc:  # noqa: BLE001 — 线程内兜底收集，主线程断言
-            errors.append(exc)
+        except Exception:  # noqa: BLE001 — 将线程完整异常栈送回主线程断言
+            errors.append(traceback.format_exc())
 
     threads = [
         threading.Thread(target=append, args=("甲",)),
@@ -279,7 +283,8 @@ def test_store_mutate_state_no_lost_update_across_threads(workdir: Path) -> None
     for thread in threads:
         thread.join(30)
 
-    assert errors == []
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == [], "\n".join(errors)
     items = cast("list[object]", store.read_state().get("items", []))
     assert sorted(str(item) for item in items) == sorted(
         f"{prefix}{index}" for prefix in ("甲", "乙") for index in range(20)
