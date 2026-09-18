@@ -66,6 +66,7 @@ from ..workdir.relocation import (
     retry_relocation_cleanup,
 )
 from ..workdir.stats import scan_workdir_stats
+from .deps import workdir_root
 from .schemas import (
     ImportAccepted,
     ImportRecord,
@@ -146,7 +147,7 @@ def delete_registered_workdir(wid: str, body: WorkdirDeleteRequest) -> DeletionR
 )
 def clean_selected_products(wid: str, body: CleanupRequest) -> CleanupResult:
     """确认后清理选中的孤立产物，删除失败时返回暂存位置。"""
-    return cleanup_products(Path(WorkdirRegistry.get(wid).path), body.names)
+    return cleanup_products(workdir_root(wid), body.names)
 
 
 @router.post(
@@ -159,7 +160,7 @@ def clean_selected_products(wid: str, body: CleanupRequest) -> CleanupResult:
 )
 def remove_selected_unimported(wid: str, body: CleanupRequest) -> CleanupResult:
     """确认后移出仍未登记的文件，并返回保留原始字节的恢复目录。"""
-    return remove_unimported(Path(WorkdirRegistry.get(wid).path), body.names)
+    return remove_unimported(workdir_root(wid), body.names)
 
 
 @router.get(
@@ -176,7 +177,7 @@ def remove_selected_unimported(wid: str, body: CleanupRequest) -> CleanupResult:
 )
 def get_run_cleanup_preview(wid: str) -> list[RunCleanupEntry]:
     """清理运行记录前列出每份名称、体积和时间。"""
-    return preview_run_cleanup(Path(WorkdirRegistry.get(wid).path))
+    return preview_run_cleanup(workdir_root(wid))
 
 
 @router.post(
@@ -193,7 +194,7 @@ def get_run_cleanup_preview(wid: str) -> list[RunCleanupEntry]:
 )
 def clean_selected_runs(wid: str, body: CleanupRequest) -> CleanupResult:
     """确认后清理所选运行记录，素材、产物与快照不受影响。"""
-    return cleanup_runs(Path(WorkdirRegistry.get(wid).path), body.names)
+    return cleanup_runs(workdir_root(wid), body.names)
 
 
 @router.get(
@@ -210,7 +211,7 @@ def clean_selected_runs(wid: str, body: CleanupRequest) -> CleanupResult:
 )
 def get_cleanup_preview(wid: str) -> CleanupPreview:
     """列出工作目录里已无素材配对的产物，不执行清理。"""
-    products = preview_cleanup(Path(WorkdirRegistry.get(wid).path))
+    products = preview_cleanup(workdir_root(wid))
     return CleanupPreview(
         products=products, total_bytes=sum(product.size for product in products)
     )
@@ -325,7 +326,7 @@ class IntegrityReport(BaseModel):
 )
 def verify_integrity(wid: str, batch: str | None = None) -> IntegrityReport:
     """校验全部活跃批次，或通过 batch=sN 校验指定活跃批次；不写业务状态。"""
-    workdir = Path(WorkdirRegistry.get(wid).path)
+    workdir = workdir_root(wid)
     if not workdir.is_dir():
         raise WorkdirPathError("工作目录不存在，请检查路径后重试。")
     store = WorkdirStore(workdir)
@@ -532,7 +533,7 @@ def list_imports(wid: str) -> list[ImportRecord]:
 )
 def get_workdir_stats(wid: str) -> WorkdirStatsView:
     """当前在盘素材数量与字节数，含尚未登记的素材。"""
-    stats = scan_workdir_stats(Path(WorkdirRegistry.get(wid).path))
+    stats = scan_workdir_stats(workdir_root(wid))
     return WorkdirStatsView(
         asset_count=stats.asset_count, asset_bytes=stats.asset_bytes
     )
@@ -604,7 +605,7 @@ async def reimport_workdir(
     wid: str, body: ReimportRequest, request: Request
 ) -> JSONResponse:
     """根据导入记录恢复缺失素材，来源失效逐条返回，不带入额外文件。"""
-    root = Path(WorkdirRegistry.get(wid).path)
+    root = workdir_root(wid)
     task_id = _spawn_import_task(
         request,
         root,

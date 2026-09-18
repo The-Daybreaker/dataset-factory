@@ -19,9 +19,10 @@ from ..runs.journal import load_latest_item_records, load_recent_success_hashes
 from ..strategies import get_batch, parse_seq
 from ..strategies.batches import read_exclusions
 from ..tasks import RETRY_AFTER_SECONDS, TaskManager, TaskResult
-from ..workdir import AssetNotFoundError, WorkdirRegistry, WorkdirStore
+from ..workdir import AssetNotFoundError, WorkdirStore
 from ..workdir.assets import confine_to_workdir
 from ..workdir.locks import RunLock, import_guard
+from .deps import workdir_root
 from .schemas import ExportAccepted, ExportPlanView, ExportStartRequest, Problem
 
 router = APIRouter(
@@ -65,7 +66,7 @@ def _plan(
 @router.get("/plan", response_model=ExportPlanView)
 def get_export_plan(wid: str, batch: str, sequential: bool = True) -> ExportPlanView:
     """按当前批次返回实时计划，开关改变时重新计算输出名与兼容性提示。"""
-    workdir = Path(WorkdirRegistry.get(wid).path)
+    workdir = workdir_root(wid)
     return ExportPlanView.model_validate(
         asdict(_plan(workdir, parse_seq(batch), sequential))
     )
@@ -76,7 +77,7 @@ async def start_export(
     wid: str, body: ExportStartRequest, request: Request
 ) -> JSONResponse:
     """受理当前批次导出；任务完成返回路径和同源下载地址。"""
-    workdir = Path(WorkdirRegistry.get(wid).path)
+    workdir = workdir_root(wid)
     seq = parse_seq(body.batch)
     if not get_batch(workdir, seq).active:
         raise BatchInactiveError("该批次已停用，请先显示该批次再导出。")
@@ -128,7 +129,7 @@ class _ZipResponse(FileResponse):
 @router.get("/files/{filename}", response_class=_ZipResponse)
 def download_export(wid: str, filename: str) -> _ZipResponse:
     """仅下载本工具命名的完成包，临时文件与其他元数据均不可寻址。"""
-    workdir = Path(WorkdirRegistry.get(wid).path)
+    workdir = workdir_root(wid)
     if re.fullmatch(r"s[1-9][0-9]*-[0-9a-f]{24}\.zip", filename) is None:
         raise ExportError("导出文件名不合法，请从导出任务结果重新下载。")
     path = confine_to_workdir(workdir, workdir / ".dsf" / "export" / filename)

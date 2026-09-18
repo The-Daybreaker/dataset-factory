@@ -35,9 +35,8 @@ from ..strategies import (
     set_batch_active,
     update_batch,
 )
-from ..workdir import WorkdirRegistry
 from .errors import handle_domain_errors
-from .operations import confirm_action, print_result
+from .operations import confirm_action, print_result, registered_root
 from .workdir import registered_id
 
 app = typer.Typer(help="批次管理", no_args_is_help=True)
@@ -67,7 +66,7 @@ def add(
     skills: Annotated[list[str] | None, typer.Option("--skill")] = None,
 ) -> None:
     """从库复制策略或从零配置新批次；脚本须显式给出名称、端点与提示词。"""
-    root = Path(WorkdirRegistry.get(registered_id(path)).path)
+    root = registered_root(registered_id(path))
     if library is not None:
         if endpoint is not None or prompt is not None or skills is not None:
             raise typer.BadParameter("从库应用时不能同时提供组合参数。")
@@ -118,7 +117,7 @@ def add(
 
 def batch_location(path: Path, batch: str) -> tuple[Path, int]:
     """解析已登记目录与批次，读写名单前统一确认批次存在。"""
-    root = Path(WorkdirRegistry.get(registered_id(path)).path)
+    root = registered_root(registered_id(path))
     seq = parse_seq(batch)
     get_batch(root, seq)
     return root, seq
@@ -128,7 +127,7 @@ def batch_location(path: Path, batch: str) -> tuple[Path, int]:
 @handle_domain_errors
 def list_all(path: Path) -> None:
     """列出目录全部批次，包括已隐藏批次。"""
-    root = Path(WorkdirRegistry.get(registered_id(path)).path)
+    root = registered_root(registered_id(path))
     print_result([asdict(entry) for entry in list_batches(root)])
 
 

@@ -1,4 +1,4 @@
-"""二期命令共用的确认、结果输出与协作取消。"""
+"""二期命令共用的登记解析、确认、结果输出与协作取消。"""
 
 from __future__ import annotations
 
@@ -8,9 +8,27 @@ import sys
 import threading
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
+from pathlib import Path
 from types import FrameType
 
 import typer
+
+from ..workdir import WorkdirRegistry
+
+
+def registered_root(identifier: str) -> Path:
+    """按登记 id 取工作目录根路径（各命令都要这一步，原来在 batch 与 workdir 里各写五遍）。
+
+    Args:
+        identifier: 工作目录登记 id（CLI 侧通常先由 ``registered_id`` 从用户给的路径换来）。
+
+    Returns:
+        该登记项指向的目录路径。
+
+    Raises:
+        WorkdirNotFoundError: id 未登记（上层按既有约定翻成错误消息与退出码 1）。
+    """
+    return Path(WorkdirRegistry.get(identifier).path)
 
 
 def confirm_action(message: str, yes: bool) -> None:

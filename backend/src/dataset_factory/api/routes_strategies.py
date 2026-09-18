@@ -48,7 +48,8 @@ from ..strategies import (
 )
 from ..strategies.batches import read_snapshot_with_hash
 from ..strategies.errors import StrategyNotFoundError
-from ..workdir import WorkdirRegistry, WorkdirStore
+from ..workdir import WorkdirStore
+from .deps import workdir_root
 from .schemas import (
     BatchCreateRequest,
     BatchSnapshotView,
@@ -88,7 +89,7 @@ def _to_strategy_view(entry: LibraryStrategy) -> StrategyView:
 
 def _to_batch_view(wid: str, entry: BatchEntry) -> BatchView:
     """批次记录 → 响应模型（产物计数与最近一次运行现查）。"""
-    workdir = Path(WorkdirRegistry.get(wid).path)
+    workdir = workdir_root(wid)
     record = load_latest_run(WorkdirStore(workdir).runs_dir, entry.seq)
     return BatchView(
         id=f"s{entry.seq}",
@@ -102,11 +103,6 @@ def _to_batch_view(wid: str, entry: BatchEntry) -> BatchView:
         run_done=record.counters.succeeded if record else None,
         run_total=record.counters.planned if record else None,
     )
-
-
-def _workdir_path(wid: str) -> Path:
-    """wid → 工作目录路径（未登记 404 由异常处理器翻译）。"""
-    return Path(WorkdirRegistry.get(wid).path)
 
 
 def _stop_registry_runner(request: Request, workdir: Path, seq: int) -> None:
@@ -299,7 +295,7 @@ def list_workdir_batches(wid: str) -> list[BatchView]:
 
     打标页顶栏策略下拉与工作目录设置页策略区块的数据源。
     """
-    workdir = _workdir_path(wid)
+    workdir = workdir_root(wid)
     return [_to_batch_view(wid, entry) for entry in list_batches(workdir)]
 
 
@@ -330,7 +326,7 @@ def create_workdir_batch(wid: str, body: BatchCreateRequest) -> Response:
 
     201 + Location 指向新批次（REST 惯例：创建成功告诉客户端新资源在哪）。
     """
-    workdir = _workdir_path(wid)
+    workdir = workdir_root(wid)
     if body.type == "library":
         # id 非空已由 BatchCreateRequest 的模型校验器保证（422 挡在前），cast 仅为收窄。
         entry = apply_library_strategy(
@@ -371,7 +367,7 @@ def create_workdir_batch(wid: str, body: BatchCreateRequest) -> Response:
 )
 def get_batch_detail(wid: str, sN: str) -> BatchView:
     """按序号查单个批次（新建 201 的 Location 指向这里，可解析）。"""
-    entry = get_batch(_workdir_path(wid), parse_seq(sN))
+    entry = get_batch(workdir_root(wid), parse_seq(sN))
     return _to_batch_view(wid, entry)
 
 
@@ -388,7 +384,7 @@ def get_batch_detail(wid: str, sN: str) -> BatchView:
 )
 def get_batch_snapshot(wid: str, sN: str) -> BatchSnapshotView:
     """只读返回已保存的全文；哈希不一致仅标记，不改变运行资格。"""
-    workdir = _workdir_path(wid)
+    workdir = workdir_root(wid)
     seq = parse_seq(sN)
     snapshot, digest = read_snapshot_with_hash(workdir, seq)
     record = load_latest_run(WorkdirStore(workdir).runs_dir, seq)
@@ -429,7 +425,7 @@ def patch_batch(wid: str, sN: str, body: BatchUpdateRequest) -> BatchView:
     库端编辑不传染、已应用批次不提供就地改组合；想换组合 = 新建批次。
     「保存策略」钮的落点是策略库（PUT /api/strategies/{id}），不是这里。
     """
-    workdir = _workdir_path(wid)
+    workdir = workdir_root(wid)
     entry = update_batch(
         workdir,
         parse_seq(sN),
@@ -457,7 +453,7 @@ def hide_batch(wid: str, sN: str, request: Request) -> BatchView:
     查运行注册表命中本批次即置位协作取消，当前条目在安全点停下。
     """
     seq = parse_seq(sN)
-    workdir = _workdir_path(wid)
+    workdir = workdir_root(wid)
     _stop_registry_runner(request, workdir, seq)
     entry = set_batch_active(workdir, seq, active=False)
     return _to_batch_view(wid, entry)
@@ -476,7 +472,7 @@ def hide_batch(wid: str, sN: str, request: Request) -> BatchView:
 )
 def unhide_batch(wid: str, sN: str) -> BatchView:
     """召回已停用的批次。"""
-    entry = set_batch_active(_workdir_path(wid), parse_seq(sN), active=True)
+    entry = set_batch_active(workdir_root(wid), parse_seq(sN), active=True)
     return _to_batch_view(wid, entry)
 
 
@@ -497,7 +493,7 @@ def delete_workdir_batch(wid: str, sN: str) -> Response:
     重试名单的结构归 runs 域，与 CLI 共用删除编排。删前告知条数由界面负责
     （批次视图的 product_count 即数据源）；运行锁占用时拒绝删除。
     """
-    workdir = _workdir_path(wid)
+    workdir = workdir_root(wid)
     seq = parse_seq(sN)
     remove_batch(workdir, seq)
     return Response(status_code=204)
@@ -520,7 +516,7 @@ def add_batch_exclusions(wid: str, sN: str, body: ExclusionsRequest) -> Exclusio
     名单随批次元数据持久、跨会话存活；改动经 mutate_state 在状态锁内完成。
     """
     seq = parse_seq(sN)
-    items = add_exclusions(_workdir_path(wid), seq, body.items)
+    items = add_exclusions(workdir_root(wid), seq, body.items)
     return ExclusionsView(id=f"s{seq}", seq=seq, items=items)
 
 
@@ -540,7 +536,7 @@ def remove_batch_exclusions(
 ) -> ExclusionsView:
     """把条目移出排除打包名单（撤销排除），返回当前名单。"""
     seq = parse_seq(sN)
-    items = remove_exclusions(_workdir_path(wid), seq, body.items)
+    items = remove_exclusions(workdir_root(wid), seq, body.items)
     return ExclusionsView(id=f"s{seq}", seq=seq, items=items)
 
 

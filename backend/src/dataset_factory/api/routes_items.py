@@ -16,22 +16,17 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from pathlib import Path
 
 from fastapi import APIRouter, Query
 from fastapi.responses import PlainTextResponse
 
 from ..runs import ItemRow, build_item_view
 from ..strategies import get_batch, parse_seq
-from ..workdir import ProductNotFoundError, WorkdirRegistry, product_path
+from ..workdir import ProductNotFoundError, product_path
+from .deps import workdir_root
 from .schemas import ItemListView, ItemRowView, Problem
 
 router = APIRouter(prefix="/api/workdirs/{wid}/batches/{sN}/items", tags=["条目"])
-
-
-def _workdir_path(wid: str) -> Path:
-    """wid → 工作目录路径（未登记 404 由异常处理器翻译）。"""
-    return Path(WorkdirRegistry.get(wid).path)
 
 
 def _to_row(row: ItemRow) -> ItemRowView:
@@ -70,7 +65,7 @@ def list_items(
     六分组 = 四个互斥状态位（排队中 / 已完成 / 未完成 / 缺失）+ 重试列表（叠加标记，
     条目同时留在自己的状态分组里）+ 未导入（工作目录里没登记过的文件）。
     """
-    view = build_item_view(_workdir_path(wid), parse_seq(sN), query=q)
+    view = build_item_view(workdir_root(wid), parse_seq(sN), query=q)
     return ItemListView(
         batch=view.batch,
         query=view.query,
@@ -108,7 +103,7 @@ def read_item_product(wid: str, sN: str, item: str) -> PlainTextResponse:
     对用户是同一件事——这一栏没有 caption 可看。空与读不出在条目视图里同样被算作
     未完成（产物异常、可重打），两侧一个口径。
     """
-    workdir = _workdir_path(wid)
+    workdir = workdir_root(wid)
     seq = parse_seq(sN)
     get_batch(workdir, seq)  # 批次不存在当场 404，不去拼一个没人要的文件路径
     path = product_path(workdir, seq, item)

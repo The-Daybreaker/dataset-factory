@@ -47,7 +47,8 @@ from ..runs.control import request_stop
 from ..runs.journal import RunCounters, RunRecord, load_latest_run, read_run_text
 from ..strategies import get_batch, parse_seq, read_snapshot
 from ..tasks import RETRY_AFTER_SECONDS
-from ..workdir import RunOccupiedError, WorkdirRegistry
+from ..workdir import RunOccupiedError
+from .deps import workdir_root
 from .schemas import (
     Problem,
     RetryListRequest,
@@ -82,7 +83,7 @@ class RunTextView(BaseModel):
 )
 def latest_run(wid: str, sN: str, request: Request) -> RunHistoryView:
     """按批次回读最近一次磁盘记录；尚无运行时返回空摘要。"""
-    workdir = _workdir_path(wid)
+    workdir = workdir_root(wid)
     seq = parse_seq(sN)
     get_batch(workdir, seq)
     runs_dir = workdir / ".dsf" / "runs"
@@ -120,17 +121,12 @@ def run_text(
     wid: str, sN: str, run_id: str, file: Literal["run.log", "items.jsonl"] = "run.log"
 ) -> RunTextView:
     """指定运行查看日志，打开后不因新运行出现而切换文件。"""
-    workdir = _workdir_path(wid)
+    workdir = workdir_root(wid)
     seq = parse_seq(sN)
     get_batch(workdir, seq)
     runs_dir = workdir / ".dsf" / "runs"
     text = read_run_text(runs_dir, run_id, seq, file)
     return RunTextView(path=str(runs_dir / run_id / file), text=text)
-
-
-def _workdir_path(wid: str) -> Path:
-    """wid → 工作目录路径（未登记 404 由异常处理器翻译）。"""
-    return Path(WorkdirRegistry.get(wid).path)
 
 
 def _registry(request: Request) -> tuple[dict[str, BatchRunner], threading.Lock]:
@@ -194,7 +190,7 @@ def start_run(
     （如 CLI 正在跑同一工作目录）在受理后才暴露，失败原因经 SSE / current 呈现
     （进度快照 status=failed + 一条 failed 的 run-finished 事件）。
     """
-    workdir = _workdir_path(wid)
+    workdir = workdir_root(wid)
     seq = parse_seq(sN)
     entry = get_batch(workdir, seq)
     if not entry.active:
@@ -263,7 +259,7 @@ def start_run(
 def current_run(wid: str, sN: str, request: Request) -> RunStatusView:
     """当前运行进度快照（轮询用；SSE 断线重连后的全量刷新同款数据）。"""
     seq = parse_seq(sN)  # sN 不合法按批次不存在处理（与 batch 端点同口径）
-    workdir = _workdir_path(wid)
+    workdir = workdir_root(wid)
     try:
         runner = _active_runner(request, workdir, seq)
     except RunNotActiveError:
@@ -291,7 +287,7 @@ def current_run(wid: str, sN: str, request: Request) -> RunStatusView:
 def stop_run(wid: str, sN: str, request: Request) -> Response:
     """请求停止当前跑批（协作取消）：置位信号即返回，当前条目在安全点停下。"""
     seq = parse_seq(sN)
-    workdir = _workdir_path(wid)
+    workdir = workdir_root(wid)
     try:
         runner = _active_runner(request, workdir, seq)
     except RunNotActiveError:
@@ -321,7 +317,7 @@ def stream_run(wid: str, sN: str, request: Request) -> StreamingResponse:
     事件经线程安全队列从跑批线程转发到流。
     """
     seq = parse_seq(sN)
-    runner = _require_active(_active_runner(request, _workdir_path(wid), seq))
+    runner = _require_active(_active_runner(request, workdir_root(wid), seq))
     events: queue.Queue[RunEvent | None] = queue.Queue()
 
     def _forward(event: RunEvent) -> None:
@@ -398,7 +394,7 @@ def add_batch_retry_list(wid: str, sN: str, body: RetryListRequest) -> RetryList
     先补素材、不可重试失败要先解决格式问题；资格用当刻的条目视图现判。改动经
     mutate_state 在状态锁内完成；运行期写入照常受理（本次运行按启动时的快照执行）。
     """
-    workdir = _workdir_path(wid)
+    workdir = workdir_root(wid)
     seq = parse_seq(sN)
     rejections = retry_rejections(workdir, seq, body.items)
     if rejections:
@@ -419,7 +415,7 @@ def add_batch_retry_list(wid: str, sN: str, body: RetryListRequest) -> RetryList
 )
 def remove_batch_retry_list_item(wid: str, sN: str, item: str) -> RetryListView:
     """把一个条目移出重试列表（幂等：不在名单里时原样返回），返回当前名单。"""
-    workdir = _workdir_path(wid)
+    workdir = workdir_root(wid)
     seq = parse_seq(sN)
     get_batch(workdir, seq)  # 批次不存在当场 404（契约声明与 POST 一致）
     items = remove_retry_items(workdir, seq, [item])
@@ -433,7 +429,7 @@ def remove_batch_retry_list_item(wid: str, sN: str, item: str) -> RetryListView:
 )
 def clear_batch_retry_list(wid: str, sN: str) -> RetryListView:
     """整体清空本批次的重试列表（其他批次的名单不动），返回空名单。"""
-    workdir = _workdir_path(wid)
+    workdir = workdir_root(wid)
     seq = parse_seq(sN)
     get_batch(workdir, seq)  # 批次不存在当场 404（契约声明与 POST 一致）
     clear_retry_list(workdir, seq)

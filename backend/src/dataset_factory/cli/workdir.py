@@ -34,7 +34,13 @@ from ..workdir.relocation import (
     retry_relocation_cleanup,
 )
 from .errors import handle_domain_errors
-from .operations import cancellation, confirm_action, print_result, report_progress
+from .operations import (
+    cancellation,
+    confirm_action,
+    print_result,
+    registered_root,
+    report_progress,
+)
 
 app = typer.Typer(help="工作目录管理", no_args_is_help=True)
 
@@ -121,7 +127,7 @@ def reimport(
     ] = None,
 ) -> None:
     """从已记录来源恢复缺失素材；省略名称则恢复全部可找回的素材。"""
-    root = Path(WorkdirRegistry.get(registered_id(path)).path)
+    root = registered_root(registered_id(path))
     with cancellation() as stop:
         result = reimport_missing(
             root,
@@ -169,7 +175,7 @@ def cleanup_old(
 @handle_domain_errors
 def verify(path: Annotated[Path, typer.Argument(help="工作目录路径")]) -> None:
     """按活跃批次校验当前素材与打标时哈希，同时列出孤立产物。"""
-    root = Path(WorkdirRegistry.get(registered_id(path)).path)
+    root = registered_root(registered_id(path))
     store = WorkdirStore(root)
     print_result(
         {
@@ -199,7 +205,7 @@ def rebuild(
 ) -> None:
     """以现状重建导入集合，来源记空，旧历史保留。"""
     confirm_action("重建导入记录，缺失对账归零且来源记为空，继续？", yes)
-    root = Path(WorkdirRegistry.get(registered_id(path)).path)
+    root = registered_root(registered_id(path))
     with cancellation() as stop:
         result = rebuild_import_records(root, should_stop=stop)
     print_result(result)
@@ -216,7 +222,7 @@ def clean_products(
     yes: Annotated[bool, typer.Option("--yes")] = False,
 ) -> None:
     """列出或清理明确选择的孤立产物，默认不选择任何文件。"""
-    root = Path(WorkdirRegistry.get(registered_id(path)).path)
+    root = registered_root(registered_id(path))
     if list_only or not names:
         print_result([asdict(item) for item in preview_cleanup(root)])
         return
@@ -235,7 +241,7 @@ def clean_runs(
     yes: Annotated[bool, typer.Option("--yes")] = False,
 ) -> None:
     """列出或清理所选运行记录，清理将丢失打标时的哈希与失败原因。"""
-    root = Path(WorkdirRegistry.get(registered_id(path)).path)
+    root = registered_root(registered_id(path))
     if list_only or not names:
         print_result([asdict(item) for item in preview_run_cleanup(root)])
         return
