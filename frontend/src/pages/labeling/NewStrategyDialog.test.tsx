@@ -65,6 +65,8 @@ it("从库应用提交库 ID，读取失败后可以重试", async () => {
     <NewStrategyDialog
       wid="work"
       title="素材"
+      nextSeq={4}
+      existingCount={3}
       onClose={vi.fn()}
       onCreated={onCreated}
     />,
@@ -91,7 +93,14 @@ it("配置加载失败后重试可恢复到可用表单", async () => {
   const user = userEvent.setup();
   vi.mocked(api.listPrompts).mockRejectedValueOnce(new Error("服务重启"));
   render(
-    <NewStrategyDialog wid="work" title="素材" onClose={vi.fn()} onCreated={vi.fn()} />,
+    <NewStrategyDialog
+      wid="work"
+      title="素材"
+      nextSeq={4}
+      existingCount={3}
+      onClose={vi.fn()}
+      onCreated={vi.fn()}
+    />,
   );
 
   await user.click(await screen.findByRole("button", { name: "重试读取配置" }));
@@ -107,6 +116,8 @@ it("只在指定目录创建策略，不启动跑批", async () => {
     <NewStrategyDialog
       wid="work"
       title="素材"
+      nextSeq={4}
+      existingCount={3}
       onClose={vi.fn()}
       onCreated={onCreated}
     />,
@@ -133,6 +144,8 @@ it("创建失败保留输入，重试成功只通知一次", async () => {
     <NewStrategyDialog
       wid="work"
       title="素材"
+      nextSeq={4}
+      existingCount={3}
       onClose={vi.fn()}
       onCreated={onCreated}
     />,

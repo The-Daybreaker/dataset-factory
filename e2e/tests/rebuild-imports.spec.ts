@@ -175,12 +175,17 @@ test("重建导入记录经真实任务恢复登记并自动刷新概览", async
   await expect(overview.getByText("日志路径", { exact: true }).locator("..")).toContainText(history.log_path);
   await page.getByRole("button", { name: "查看日志", exact: true }).click();
   const logDialog = page.getByRole("dialog", { name: "运行日志" });
-  await expect(logDialog.locator("pre")).toHaveText(await readFile(path.join(runDirectory, "run.log"), "utf8"));
-  await logDialog.getByRole("button", { name: "关闭", exact: true }).click();
-  await page.getByRole("button", { name: "逐条流水", exact: true }).click();
-  const itemsDialog = page.getByRole("dialog", { name: "逐条流水" });
-  await expect(itemsDialog.locator("pre")).toHaveText(await readFile(path.join(runDirectory, "items.jsonl"), "utf8"));
-  await itemsDialog.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(logDialog.locator("pre")).toHaveText(
+    (await readFile(path.join(runDirectory, "run.log"), "utf8"))
+      .replace(/\n$/, "")
+      .split("\n")
+      .reverse()
+      .join("\n"),
+  );
+  await logDialog.getByRole("tab", { name: "逐条流水", exact: true }).click();
+  await expect(logDialog.getByRole("table")).toBeVisible();
+  await expect(logDialog.getByRole("cell", { name: "sample", exact: true })).toBeVisible();
+  await logDialog.getByRole("button", { name: "关闭", exact: true }).first().click();
   expect(await readFile(path.join(directory, "s1__sample.txt"), "utf8")).toBe("E2E 假模型的打标结果");
   const assetPath = path.join(directory, "sample.png");
   await writeFile(assetPath, Buffer.concat([await readFile(assetPath), Buffer.from("changed")]));

@@ -38,24 +38,24 @@ export function ServicePanel(): ReactElement {
       <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
         {status !== null ? (
           <div className="flex flex-wrap items-center gap-3">
-            <span className="flex items-center gap-2 text-[13.5px] font-medium">
+            <span className="flex items-center gap-2 text-t-md font-medium">
               <span className="size-2 rounded-full bg-success" aria-hidden />
               服务运行中 · {status.version}
             </span>
-            <span className="text-[12.5px] text-muted-foreground">
+            <span className="text-t-sm text-muted-foreground">
               监听 {status.host}:{status.port}
             </span>
             <span className="flex-1" />
             <ShutdownButton expanded />
           </div>
         ) : (
-          <p className="text-[13px] text-muted-foreground">{error ?? "读取中…"}</p>
+          <p className="text-t-md text-muted-foreground">{error ?? "读取中…"}</p>
         )}
       </div>
       <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
         <div className="mb-2 flex items-center gap-2">
-          <h3 className="text-[13px] font-semibold">运行日志</h3>
-          <span className="text-[11px] text-muted-foreground">最近 200 行</span>
+          <h3 className="text-t-md font-semibold">运行日志</h3>
+          <span className="text-t-xs text-muted-foreground">最近 200 行</span>
           <span className="flex-1" />
           <Button
             type="button"
@@ -68,13 +68,11 @@ export function ServicePanel(): ReactElement {
           </Button>
         </div>
         {logs?.exists ? (
-          <pre className="max-h-80 overflow-auto rounded-md bg-muted/40 p-3 font-mono text-[11.5px] leading-[1.75]">
+          <pre className="max-h-80 overflow-auto rounded-md bg-muted/40 p-3 text-t-xs leading-[1.75]">
             {logs.content}
           </pre>
         ) : (
-          <p className="text-[12.5px] text-muted-foreground">
-            {error ?? "（暂无日志）"}
-          </p>
+          <p className="text-t-sm text-muted-foreground">{error ?? "（暂无日志）"}</p>
         )}
       </div>
     </div>

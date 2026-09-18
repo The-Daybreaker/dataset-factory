@@ -28,6 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../components/ui/select";
+import { Tip } from "../../components/ui/tooltip";
 import type { BatchSelection } from "./BatchSelector";
 import { ImportMaterialsDialog } from "./ImportMaterialsDialog";
 import { type ImportReport, parseImportReport } from "./import-report";
@@ -340,16 +341,17 @@ export function NewBatchForm({ onBack, onCreated }: Props) {
                   value={source}
                   onChange={(event) => setSource(event.currentTarget.value)}
                 />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon-lg"
-                  aria-label="选择来源目录"
-                  title="选择来源目录"
-                  onClick={() => setDirectoryField("source")}
-                >
-                  <FolderIcon />
-                </Button>
+                <Tip label="选择来源目录">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon-lg"
+                    aria-label="选择来源目录"
+                    onClick={() => setDirectoryField("source")}
+                  >
+                    <FolderIcon />
+                  </Button>
+                </Tip>
               </div>
             </div>
           )}
@@ -361,16 +363,17 @@ export function NewBatchForm({ onBack, onCreated }: Props) {
                 value={path}
                 onChange={(event) => setPath(event.currentTarget.value)}
               />
-              <Button
-                type="button"
-                variant="outline"
-                size="icon-lg"
-                aria-label="选择工作目录"
-                title="选择工作目录"
-                onClick={() => setDirectoryField("path")}
-              >
-                <FolderIcon />
-              </Button>
+              <Tip label="选择工作目录">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon-lg"
+                  aria-label="选择工作目录"
+                  onClick={() => setDirectoryField("path")}
+                >
+                  <FolderIcon />
+                </Button>
+              </Tip>
             </div>
           </div>
           {mode === "inplace" && (

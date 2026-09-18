@@ -21,6 +21,7 @@ import {
   DialogTitle,
 } from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
+import { Tip } from "../../components/ui/tooltip";
 import { BatchConfiguration } from "./BatchConfiguration";
 import { CleanupDialog } from "./CleanupDialog";
 import { DeleteWorkdirDialog } from "./DeleteWorkdirDialog";
@@ -331,16 +332,17 @@ export function WorkdirSettings({
               <Button variant="ghost" size="sm" onClick={() => setBrowse(true)}>
                 打开
               </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-(--h-sm) p-0"
-                aria-label="复制路径"
-                title="复制路径"
-                onClick={() => void copyPath()}
-              >
-                <CopyIcon />
-              </Button>
+              <Tip label="复制路径">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-(--h-sm) p-0"
+                  aria-label="复制路径"
+                  onClick={() => void copyPath()}
+                >
+                  <CopyIcon />
+                </Button>
+              </Tip>
               {copied && <span role="status">已复制</span>}
               <Button variant="ghost" size="sm" onClick={() => setRelocating("")}>
                 修改路径
@@ -535,32 +537,34 @@ export function WorkdirSettings({
                       }}
                     />
                   ) : (
-                    <button
-                      type="button"
-                      className="min-w-0 break-all rounded-sm text-left font-medium hover:bg-accent"
-                      aria-label={`改名策略 ${batch.name}`}
-                      title="改名"
-                      disabled={busy}
-                      onClick={() => requestAction(batch, "rename")}
-                    >
-                      {batch.name}
-                    </button>
+                    <Tip label="改名">
+                      <button
+                        type="button"
+                        className="min-w-0 break-all rounded-sm text-left font-medium hover:bg-accent"
+                        aria-label={`改名策略 ${batch.name}`}
+                        disabled={busy}
+                        onClick={() => requestAction(batch, "rename")}
+                      >
+                        {batch.name}
+                      </button>
+                    </Tip>
                   )}
                   <span className="text-t-sm text-text-4">{batch.id}</span>
                   <span className="ml-auto text-t-sm text-text-3">
                     产物 {batch.product_count}
                     {stats && ` / ${stats.asset_count}`}
                   </span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="w-(--h-sm) p-0"
-                    aria-label={`查看快照 ${batch.id}`}
-                    title="查看快照"
-                    onClick={() => setSnapshot(batch.id)}
-                  >
-                    <EyeIcon />
-                  </Button>
+                  <Tip label="查看快照">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-(--h-sm) p-0"
+                      aria-label={`查看快照 ${batch.id}`}
+                      onClick={() => setSnapshot(batch.id)}
+                    >
+                      <EyeIcon />
+                    </Button>
+                  </Tip>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -635,6 +639,10 @@ export function WorkdirSettings({
         <NewStrategyDialog
           wid={wid}
           title={directory.title}
+          nextSeq={
+            batches.length ? Math.max(...batches.map((entry) => entry.seq)) + 1 : 1
+          }
+          existingCount={batches.length}
           onClose={() => setCreating(false)}
           onCreated={() => {
             setCreating(false);

@@ -540,6 +540,31 @@ class BatchView(BaseModel):
     )
     created_at: str = Field(description="创建时刻（UTC ISO 8601）")
     product_count: int = Field(description="该批次现有产物 txt 数")
+    run_status: str | None = Field(
+        default=None,
+        description="最近一次运行的状态（completed / interrupted / failed / running）；无运行记录为 null",
+    )
+    run_done: int | None = Field(
+        default=None,
+        description="最近一次运行的成功条数（下拉进度分子）；无运行记录为 null",
+    )
+    run_total: int | None = Field(
+        default=None,
+        description="最近一次运行的计划条数（下拉进度分母）；无运行记录为 null",
+    )
+
+
+class StrategyReferenceView(BaseModel):
+    """GET /api/strategies/{id}/references 的单条引用：应用了该库策略的一个批次。
+
+    copy-on-apply 的出身记录——批次持有创建时刻的副本，库的后续改动不影响它们；
+    本清单只作「已被 N 个批次应用」的提示，不参与任何运行判定。
+    """
+
+    workdir_id: str = Field(description="工作目录标识")
+    workdir_title: str = Field(description="工作目录显示名")
+    seq: int = Field(description="批次序号")
+    batch_name: str = Field(description="批次显示名")
 
 
 class SnapshotTextView(BaseModel):

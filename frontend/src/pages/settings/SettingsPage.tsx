@@ -24,8 +24,8 @@ export function SettingsPage({
         {section !== "skills" && (
           <header className="flex items-center justify-between px-7 pt-[18px] pb-3.5">
             <div>
-              <h1 className="text-[20px] leading-[1.3] font-semibold">设置</h1>
-              <p className="mt-0.5 text-[13px] text-muted-foreground">
+              <h1 className="text-t-2xl leading-[1.3] font-semibold">设置</h1>
+              <p className="mt-0.5 text-t-md text-muted-foreground">
                 模型端点与 Skill 库的集中管理。
               </p>
             </div>
@@ -48,10 +48,10 @@ export function SettingsPage({
           >
             {section === "endpoints" && (
               <>
-                <h2 className="mt-0.5 mb-3 shrink-0 text-[17px] font-semibold">
+                <h2 className="mt-0.5 mb-3 shrink-0 text-t-xl font-semibold">
                   端点配置
                 </h2>
-                <p className="-mt-2 mb-3.5 shrink-0 text-[12.5px] text-muted-foreground">
+                <p className="-mt-2 mb-3.5 shrink-0 text-t-sm text-muted-foreground">
                   OpenAI
                   兼容端点——可保存多套配置，随时切换当前使用；切换立即对新请求生效。
                 </p>
@@ -70,7 +70,7 @@ export function SettingsPage({
             )}
             {section === "service" && (
               <>
-                <h2 className="mt-0.5 mb-3 text-[17px] font-semibold">服务运行</h2>
+                <h2 className="mt-0.5 mb-3 text-t-xl font-semibold">服务运行</h2>
                 <ServicePanel />
               </>
             )}

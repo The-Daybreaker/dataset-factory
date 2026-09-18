@@ -688,6 +688,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/strategies/{strategy_id}/references": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Strategy References
+         * @description 列出应用了该库策略的批次（copy-on-apply 出身记录，跨全部工作目录）。
+         */
+        get: operations["list_strategy_references_api_strategies__strategy_id__references_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/{task_id}": {
         parameters: {
             query?: never;
@@ -1667,6 +1687,21 @@ export interface components {
              * @description 该批次现有产物 txt 数
              */
             product_count: number;
+            /**
+             * Run Done
+             * @description 最近一次运行的成功条数（下拉进度分子）；无运行记录为 null
+             */
+            run_done?: number | null;
+            /**
+             * Run Status
+             * @description 最近一次运行的状态（completed / interrupted / failed / running）；无运行记录为 null
+             */
+            run_status?: string | null;
+            /**
+             * Run Total
+             * @description 最近一次运行的计划条数（下拉进度分母）；无运行记录为 null
+             */
+            run_total?: number | null;
             /**
              * Seq
              * @description 序号（只增不复用）
@@ -2962,6 +2997,35 @@ export interface components {
              * @description 新的 Skill 清单（整体替换）；缺省 = 不变
              */
             skills?: string[] | null;
+        };
+        /**
+         * StrategyReferenceView
+         * @description GET /api/strategies/{id}/references 的单条引用：应用了该库策略的一个批次。
+         *
+         *     copy-on-apply 的出身记录——批次持有创建时刻的副本，库的后续改动不影响它们；
+         *     本清单只作「已被 N 个批次应用」的提示，不参与任何运行判定。
+         */
+        StrategyReferenceView: {
+            /**
+             * Batch Name
+             * @description 批次显示名
+             */
+            batch_name: string;
+            /**
+             * Seq
+             * @description 批次序号
+             */
+            seq: number;
+            /**
+             * Workdir Id
+             * @description 工作目录标识
+             */
+            workdir_id: string;
+            /**
+             * Workdir Title
+             * @description 工作目录显示名
+             */
+            workdir_title: string;
         };
         /**
          * StrategySaveRequest
@@ -4923,6 +4987,47 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Problem"];
                     "application/problem+json": unknown;
+                };
+            };
+            /** @description 库策略不存在（problem+json: strategy-not-found） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_strategy_references_api_strategies__strategy_id__references_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                strategy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyReferenceView"][];
                 };
             };
             /** @description 库策略不存在（problem+json: strategy-not-found） */

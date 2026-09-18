@@ -1,10 +1,10 @@
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactElement, ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
 
 function TooltipProvider({
-  delayDuration = 200,
+  delayDuration = 320,
   ...props
 }: ComponentProps<typeof TooltipPrimitive.Provider>) {
   return <TooltipPrimitive.Provider delayDuration={delayDuration} {...props} />;
@@ -37,4 +37,17 @@ function TooltipContent({
   );
 }
 
-export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger };
+/** 悬停气泡提示（§5.11 全站提示形态）：替代原生 title，避免系统直角灰框。
+ * 自带 Provider：页面会被单独渲染（组件测试 / 弹窗复用），不能依赖外壳的 Provider。 */
+function Tip({ label, children }: { label: ReactNode; children: ReactElement }) {
+  return (
+    <TooltipProvider delayDuration={320}>
+      <Tooltip>
+        <TooltipTrigger asChild>{children}</TooltipTrigger>
+        <TooltipContent>{label}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+export { Tip, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger };

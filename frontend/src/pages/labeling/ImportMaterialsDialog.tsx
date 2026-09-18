@@ -12,7 +12,12 @@ import {
   DialogTitle,
 } from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
+import {
+  Tip,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "../../components/ui/tooltip";
 import {
   type ImportReport,
   parseImportReport,
@@ -291,17 +296,18 @@ export function ImportMaterialsDialog({
                 disabled={active}
                 onChange={(event) => setSource(event.currentTarget.value)}
               />
-              <Button
-                type="button"
-                variant="outline"
-                size="icon-lg"
-                disabled={active}
-                aria-label="选择来源目录"
-                title="选择来源目录"
-                onClick={() => setPickerOpen(true)}
-              >
-                <FolderIcon />
-              </Button>
+              <Tip label="选择来源目录">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon-lg"
+                  disabled={active}
+                  aria-label="选择来源目录"
+                  onClick={() => setPickerOpen(true)}
+                >
+                  <FolderIcon />
+                </Button>
+              </Tip>
             </div>
           </div>
         )}

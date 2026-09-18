@@ -235,6 +235,42 @@
             "title": "Product Count",
             "type": "integer"
           },
+          "run_done": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "最近一次运行的成功条数（下拉进度分子）；无运行记录为 null",
+            "title": "Run Done"
+          },
+          "run_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "最近一次运行的状态（completed / interrupted / failed / running）；无运行记录为 null",
+            "title": "Run Status"
+          },
+          "run_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "最近一次运行的计划条数（下拉进度分母）；无运行记录为 null",
+            "title": "Run Total"
+          },
           "seq": {
             "description": "序号（只增不复用）",
             "title": "Seq",
@@ -2647,6 +2683,39 @@
           }
         },
         "title": "StrategyRebindRequest",
+        "type": "object"
+      },
+      "StrategyReferenceView": {
+        "description": "GET /api/strategies/{id}/references 的单条引用：应用了该库策略的一个批次。\n\ncopy-on-apply 的出身记录——批次持有创建时刻的副本，库的后续改动不影响它们；\n本清单只作「已被 N 个批次应用」的提示，不参与任何运行判定。",
+        "properties": {
+          "batch_name": {
+            "description": "批次显示名",
+            "title": "Batch Name",
+            "type": "string"
+          },
+          "seq": {
+            "description": "批次序号",
+            "title": "Seq",
+            "type": "integer"
+          },
+          "workdir_id": {
+            "description": "工作目录标识",
+            "title": "Workdir Id",
+            "type": "string"
+          },
+          "workdir_title": {
+            "description": "工作目录显示名",
+            "title": "Workdir Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workdir_id",
+          "workdir_title",
+          "seq",
+          "batch_name"
+        ],
+        "title": "StrategyReferenceView",
         "type": "object"
       },
       "StrategySaveRequest": {
@@ -5204,6 +5273,64 @@
           }
         },
         "summary": "Rebind Library Entry",
+        "tags": [
+          "策略库"
+        ]
+      }
+    },
+    "/api/strategies/{strategy_id}/references": {
+      "get": {
+        "description": "列出应用了该库策略的批次（copy-on-apply 出身记录，跨全部工作目录）。",
+        "operationId": "list_strategy_references_api_strategies__strategy_id__references_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "strategy_id",
+            "required": true,
+            "schema": {
+              "title": "Strategy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StrategyReferenceView"
+                  },
+                  "title": "Response List Strategy References Api Strategies  Strategy Id  References Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "库策略不存在（problem+json: strategy-not-found）"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Strategy References",
         "tags": [
           "策略库"
         ]

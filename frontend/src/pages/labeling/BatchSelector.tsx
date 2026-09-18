@@ -1,4 +1,10 @@
-import { ChevronDownIcon, FolderIcon, PlusIcon, SettingsIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  FolderIcon,
+  PlusIcon,
+  SettingsIcon,
+} from "lucide-react";
 import { useState } from "react";
 import type { components } from "../../api-types.gen";
 import {
@@ -7,6 +13,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../../components/ui/dropdown-menu";
+import { Tip } from "../../components/ui/tooltip";
 
 export interface WorkdirBatches {
   id: string;
@@ -106,33 +113,35 @@ export function BatchSelector({
                 <FolderIcon className="size-4 shrink-0" />
                 <span className="min-w-0 flex-1 truncate">{entry.title}</span>
                 {onNewStrategy && (
-                  <button
-                    type="button"
-                    disabled={!!entry.error}
-                    className="flex size-(--h-sm) shrink-0 items-center justify-center rounded-md hover:bg-accent"
-                    aria-label={`新增策略 ${entry.title}`}
-                    title="新增策略"
-                    onClick={() => {
-                      setOpen(false);
-                      onNewStrategy(entry.id);
-                    }}
-                  >
-                    <PlusIcon className="size-4" />
-                  </button>
+                  <Tip label="新增策略">
+                    <button
+                      type="button"
+                      disabled={!!entry.error}
+                      className="flex size-(--h-sm) shrink-0 items-center justify-center rounded-md hover:bg-accent"
+                      aria-label={`新增策略 ${entry.title}`}
+                      onClick={() => {
+                        setOpen(false);
+                        onNewStrategy(entry.id);
+                      }}
+                    >
+                      <PlusIcon className="size-4" />
+                    </button>
+                  </Tip>
                 )}
                 {onSettings && (
-                  <button
-                    type="button"
-                    className="ml-auto flex size-(--h-sm) shrink-0 items-center justify-center rounded-md hover:bg-accent"
-                    aria-label={`工作目录设置 ${entry.title}`}
-                    title="工作目录设置"
-                    onClick={() => {
-                      setOpen(false);
-                      onSettings(entry.id);
-                    }}
-                  >
-                    <SettingsIcon className="size-4" />
-                  </button>
+                  <Tip label="工作目录设置">
+                    <button
+                      type="button"
+                      className="ml-auto flex size-(--h-sm) shrink-0 items-center justify-center rounded-md hover:bg-accent"
+                      aria-label={`工作目录设置 ${entry.title}`}
+                      onClick={() => {
+                        setOpen(false);
+                        onSettings(entry.id);
+                      }}
+                    >
+                      <SettingsIcon className="size-4" />
+                    </button>
+                  </Tip>
                 )}
               </div>
               {entry.error && (
@@ -145,26 +154,45 @@ export function BatchSelector({
                   没有启用的批次
                 </p>
               )}
-              {active.map((candidate) => (
-                <DropdownMenuItem
-                  key={candidate.id}
-                  className="ml-3 border-l-2 border-border pl-4 text-t-md"
-                  aria-current={
-                    entry.id === value?.workdirId && candidate.id === value.batchId
-                      ? "true"
-                      : undefined
-                  }
-                  onSelect={() => {
-                    onChange({ workdirId: entry.id, batchId: candidate.id });
-                    setOpen(false);
-                  }}
-                >
-                  <span className="min-w-0 flex-1 truncate">{candidate.name}</span>
-                  <span className="text-t-sm text-muted-foreground">
-                    {candidate.id}
-                  </span>
-                </DropdownMenuItem>
-              ))}
+              {active.map((candidate) => {
+                const isCurrent =
+                  entry.id === value?.workdirId && candidate.id === value.batchId;
+                const badge =
+                  candidate.run_status != null
+                    ? RUN_STATE_BADGES[candidate.run_status]
+                    : undefined;
+                return (
+                  <DropdownMenuItem
+                    key={candidate.id}
+                    className="ml-3 border-l-2 border-border pl-4 text-t-md"
+                    aria-current={isCurrent ? "true" : undefined}
+                    onSelect={() => {
+                      onChange({ workdirId: entry.id, batchId: candidate.id });
+                      setOpen(false);
+                    }}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{candidate.name}</span>
+                    {badge && (
+                      <span
+                        className={`inline-flex h-4.5 shrink-0 items-center rounded-full px-2 text-t-xs font-medium ${badge.tone}`}
+                      >
+                        {badge.text}
+                      </span>
+                    )}
+                    {candidate.run_done !== null && candidate.run_total !== null && (
+                      <span className="shrink-0 text-t-xs text-text-4 tabular-nums">
+                        {candidate.run_done} / {candidate.run_total}
+                      </span>
+                    )}
+                    <span className="shrink-0 text-t-sm text-muted-foreground">
+                      {candidate.id}
+                    </span>
+                    {isCurrent && (
+                      <CheckIcon aria-hidden="true" className="size-4 shrink-0 text-ok-ink" />
+                    )}
+                  </DropdownMenuItem>
+                );
+              })}
             </fieldset>
           );
         })}

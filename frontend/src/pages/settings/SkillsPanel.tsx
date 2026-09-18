@@ -28,7 +28,12 @@ import {
 } from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
 import { Switch } from "../../components/ui/switch";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
+import {
+  Tip,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "../../components/ui/tooltip";
 import { cn } from "../../lib/utils";
 import { readSkillDrop } from "./skill-drop";
 import type { Feedback } from "./types";
@@ -414,12 +419,11 @@ export function SkillsPanel(): ReactElement {
                       <span className="min-w-0 truncate text-t-md font-medium">
                         {skill.name}
                       </span>
-                      <span
-                        className="shrink-0 text-t-sm text-muted-foreground"
-                        title="注入正文字符数（SKILL.md + references，即打标请求的注入量）"
-                      >
-                        {formatChars(skill.body_chars)}
-                      </span>
+                      <Tip label="注入正文字符数（SKILL.md + references，即打标请求的注入量）">
+                        <span className="shrink-0 text-t-sm text-muted-foreground">
+                          {formatChars(skill.body_chars)}
+                        </span>
+                      </Tip>
                     </span>
                     {skill.description === "" ? (
                       <span className="line-clamp-2 text-t-sm text-muted-foreground">
@@ -679,7 +683,7 @@ export function SkillsPanel(): ReactElement {
             </div>
           </div>
         ) : (
-          <div className="flex h-full items-center justify-center text-[13px] text-muted-foreground">
+          <div className="flex h-full items-center justify-center text-t-md text-muted-foreground">
             左侧选择一个技能查看详情与包内容。
           </div>
         )}

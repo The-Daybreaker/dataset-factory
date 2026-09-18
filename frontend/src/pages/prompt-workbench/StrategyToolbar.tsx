@@ -34,6 +34,7 @@ export function StrategyToolbar({
   skills,
   endpoints,
   locked,
+  onOpenSettings,
   onSelect,
 }: {
   references: References;
@@ -41,6 +42,7 @@ export function StrategyToolbar({
   skills: SkillInfo[];
   endpoints: EndpointConfigSummary[];
   locked: boolean;
+  onOpenSettings: () => void;
   onSelect: (strategy: Strategy) => Promise<void>;
 }): ReactElement {
   const [entries, setEntries] = useState<Strategy[]>([]);
@@ -53,6 +55,8 @@ export function StrategyToolbar({
   const [loading, setLoading] = useState(true);
   const [remove, setRemove] = useState<Strategy | null>(null);
   const [repair, setRepair] = useState<Strategy | null>(null);
+  /** 当前库策略被多少批次应用过（copy-on-apply 出身记录，仅提示用）。 */
+  const [appliedCount, setAppliedCount] = useState(0);
   const [bindings, setBindings] = useState<References>({
     endpoint: "",
     prompt: "",
@@ -67,6 +71,25 @@ export function StrategyToolbar({
       mounted.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!selected) {
+      setAppliedCount(0);
+      return;
+    }
+    let cancelled = false;
+    void api
+      .listStrategyReferences(selected.id)
+      .then((list) => {
+        if (!cancelled) setAppliedCount(list.length);
+      })
+      .catch(() => {
+        if (!cancelled) setAppliedCount(0);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected]);
 
   useEffect(() => {
     if (!open) return;
@@ -148,6 +171,24 @@ export function StrategyToolbar({
     busy ||
     dirty ||
     (selected === null && (name !== "" || description !== ""));
+  /** 当前端点已设置的生成 / 传输参数摘要（原型口径：打标前扫一眼这次会带什么）。 */
+  const paramsSummary = (() => {
+    const params = endpoints.find(
+      (entry) => entry.name === references.endpoint,
+    )?.request_params;
+    if (!params) return "默认";
+    const parts = [
+      params.temperature != null ? `temperature ${params.temperature}` : null,
+      params.top_p != null ? `top_p ${params.top_p}` : null,
+      params.max_tokens != null ? `max_tokens ${params.max_tokens}` : null,
+      params.timeout_seconds != null ? `timeout ${params.timeout_seconds}s` : null,
+      params.max_retries != null ? `max_retries ${params.max_retries}` : null,
+      params.extra_body && Object.keys(params.extra_body).length > 0
+        ? `extra_body ${JSON.stringify(params.extra_body)}`
+        : null,
+    ].filter((part): part is string => part !== null);
+    return parts.length > 0 ? parts.join(" · ") : "默认";
+  })();
   const save = (): void => {
     void operate(async () => {
       const body = { name: name.trim(), description, ...references };
@@ -302,6 +343,38 @@ export function StrategyToolbar({
           保存
         </Button>
       </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-t-sm">
+        <span className="text-text-3">
+          端点 <span className="text-text-2">{references.endpoint || "未指定"}</span>
+        </span>
+        <span aria-hidden="true" className="text-text-4">
+          ·
+        </span>
+        <span className="text-text-3">
+          提示词 <span className="text-text-2">{references.prompt || "未指定"}</span>
+        </span>
+        <span aria-hidden="true" className="text-text-4">
+          ·
+        </span>
+        <span className="min-w-0 text-text-3">
+          Skill{" "}
+          <span className="text-text-2">{references.skills.join(" · ") || "无"}</span>
+        </span>
+        <span aria-hidden="true" className="text-text-4">
+          ·
+        </span>
+        <span className="min-w-0 text-text-3">
+          高级参数 <span className="text-text-2">{paramsSummary}</span>
+        </span>
+        <Button variant="accent" size="xs" onClick={onOpenSettings}>
+          前往设置
+        </Button>
+      </div>
+      {selected && appliedCount > 0 && (
+        <p className="mt-1 text-t-xs text-text-3">
+          已被 {appliedCount} 个批次应用（批次持有创建时的副本，改库不影响它们）
+        </p>
+      )}
       {error && !remove && !repair && (
         <Alert variant="destructive" className="mt-2">
           <AlertDescription>{error}</AlertDescription>

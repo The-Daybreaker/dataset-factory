@@ -379,11 +379,9 @@ describe("SettingsPage · 能力·技能", () => {
 
     expect(screen.getByText("1.2k 字")).toBeInTheDocument();
     expect(screen.getByText("320 字")).toBeInTheDocument();
-    expect(
-      screen.getAllByTitle(
-        "注入正文字符数（SKILL.md + references，即打标请求的注入量）",
-      ).length,
-    ).toBe(2);
+    // 注入量提示走自研气泡（Tip），不再用原生 title；徽标本体仍在名称旁。
+    expect(screen.queryByTitle(/注入正文字符数/)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/字$/).length).toBe(2);
   });
 
   it("搜索框按名称过滤列表", async () => {

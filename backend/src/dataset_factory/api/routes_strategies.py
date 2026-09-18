@@ -32,6 +32,7 @@ from ..strategies import (
     create_batch,
     create_strategy,
     delete_strategy,
+    find_strategy_references,
     get_batch,
     get_strategy,
     list_batches,
@@ -57,6 +58,7 @@ from .schemas import (
     ExclusionsView,
     Problem,
     StrategyRebindRequest,
+    StrategyReferenceView,
     StrategySaveRequest,
     StrategyView,
 )
@@ -85,8 +87,9 @@ def _to_strategy_view(entry: LibraryStrategy) -> StrategyView:
 
 
 def _to_batch_view(wid: str, entry: BatchEntry) -> BatchView:
-    """批次记录 → 响应模型（产物计数现查）。"""
+    """批次记录 → 响应模型（产物计数与最近一次运行现查）。"""
     workdir = Path(WorkdirRegistry.get(wid).path)
+    record = load_latest_run(WorkdirStore(workdir).runs_dir, entry.seq)
     return BatchView(
         id=f"s{entry.seq}",
         seq=entry.seq,
@@ -95,6 +98,9 @@ def _to_batch_view(wid: str, entry: BatchEntry) -> BatchView:
         active=entry.active,
         created_at=entry.created_at,
         product_count=product_count(workdir, entry.seq),
+        run_status=record.status if record else None,
+        run_done=record.counters.succeeded if record else None,
+        run_total=record.counters.planned if record else None,
     )
 
 
@@ -165,6 +171,31 @@ def create_library_entry(body: StrategySaveRequest) -> StrategyView:
 def get_library_entry(strategy_id: str) -> StrategyView:
     """按 ID 查库策略。"""
     return _to_strategy_view(get_strategy(strategy_id))
+
+
+@library_router.get(
+    "/{strategy_id}/references",
+    response_model=list[StrategyReferenceView],
+    responses={
+        404: {
+            "model": Problem,
+            "content": {"application/problem+json": {}},
+            "description": "库策略不存在（problem+json: strategy-not-found）",
+        },
+    },
+)
+def list_strategy_references(strategy_id: str) -> list[StrategyReferenceView]:
+    """列出应用了该库策略的批次（copy-on-apply 出身记录，跨全部工作目录）。"""
+    get_strategy(strategy_id)
+    return [
+        StrategyReferenceView(
+            workdir_id=item.workdir_id,
+            workdir_title=item.workdir_title,
+            seq=item.seq,
+            batch_name=item.batch_name,
+        )
+        for item in find_strategy_references(strategy_id)
+    ]
 
 
 @library_router.put(

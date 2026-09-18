@@ -36,11 +36,16 @@ type Catalog = {
 export function NewStrategyDialog({
   wid,
   title,
+  nextSeq,
+  existingCount,
   onClose,
   onCreated,
 }: {
   wid: string;
   title: string;
+  /** 本工作目录下一个可用批次序号（= 既有批次最大 seq + 1），发车前预告产物前缀。 */
+  nextSeq: number;
+  existingCount: number;
   onClose: () => void;
   onCreated: (batch: components["schemas"]["BatchView"]) => void;
 }) {
@@ -195,9 +200,12 @@ export function NewStrategyDialog({
           ],
         )}
         <div className="space-y-2">
-          <label htmlFor={`${id}-name`} className="text-t-sm text-text-4">
-            策略名
-          </label>
+          <div className="flex items-center justify-between">
+            <label htmlFor={`${id}-name`} className="text-t-sm text-text-4">
+              策略名
+            </label>
+            <span className="text-t-xs text-text-3">{`将分配序号 s${nextSeq}`}</span>
+          </div>
           <Input
             id={`${id}-name`}
             value={name}
@@ -278,6 +286,9 @@ export function NewStrategyDialog({
           </p>
         )}
         <DialogFooter>
+          <span className="mr-auto self-center text-t-sm text-text-1">
+            {`新策略为 s${nextSeq}，与既有 ${existingCount} 套并存`}
+          </span>
           {!catalog && error && (
             <Button
               variant="ghost"

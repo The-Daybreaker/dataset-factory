@@ -29,7 +29,12 @@ from pathlib import Path
 from typing import cast
 
 from .._fs import atomic_write_text
-from ..workdir import WorkdirMetadataCorruptedError, WorkdirStore, product_pattern
+from ..workdir import (
+    WorkdirMetadataCorruptedError,
+    WorkdirRegistry,
+    WorkdirStore,
+    product_pattern,
+)
 from ..workdir.locks import RunLock, workdir_write
 from .errors import BatchNotFoundError, StrategyNotFoundError, StrategyRefsError
 from .snapshot import StrategySnapshot, build_snapshot
@@ -516,3 +521,49 @@ def read_snapshot_with_hash(workdir: Path, seq: int) -> tuple[StrategySnapshot, 
         raise StrategyNotFoundError(
             f"策略快照文件损坏（{path.name}）：{exc}",
         ) from exc
+
+
+@dataclass(frozen=True)
+class StrategyReference:
+    """一条库策略出身记录：哪个工作目录的哪个批次应用了它。
+
+    库—快照隔离（copy-on-apply）下的出身对照——批次持有应用时刻的副本，库的
+    后续改动 / 删除不影响它们；本记录只作「已被 N 个批次应用」的提示，
+    不参与任何运行判定。
+    """
+
+    workdir_id: str
+    workdir_title: str
+    seq: int
+    batch_name: str
+
+
+def find_strategy_references(strategy_id: str) -> list[StrategyReference]:
+    """跨全部工作目录查找应用了该库策略的批次（按快照 ``source.strategy_id`` 匹配）。
+
+    单个工作目录 / 快照读不出来（已损坏或被手动删改）就跳过，不挡住其余统计
+    ——这是给人看的提示，与「记录只作对账、不进运行回路」的纪律一致。
+    """
+    matches: list[StrategyReference] = []
+    for entry in WorkdirRegistry.list_all():
+        workdir = Path(entry.path)
+        try:
+            batches = list_batches(workdir)
+        except WorkdirMetadataCorruptedError:
+            continue
+        for batch in batches:
+            try:
+                snapshot, _ = read_snapshot_with_hash(workdir, batch.seq)
+            except (StrategyNotFoundError, ValueError):
+                continue
+            source = snapshot.source
+            if isinstance(source, dict) and source.get("strategy_id") == strategy_id:
+                matches.append(
+                    StrategyReference(
+                        workdir_id=entry.id,
+                        workdir_title=entry.title,
+                        seq=batch.seq,
+                        batch_name=batch.name,
+                    )
+                )
+    return matches

@@ -308,6 +308,12 @@ export const api = {
       `/api/strategies/${encodeURIComponent(id)}`,
     ),
 
+  listStrategyReferences: (id: string) =>
+    request<components["schemas"]["StrategyReferenceView"][]>(
+      "GET",
+      `/api/strategies/${encodeURIComponent(id)}/references`,
+    ),
+
   createStrategy: (body: components["schemas"]["StrategySaveRequest"]) =>
     request<components["schemas"]["StrategyView"]>("POST", "/api/strategies", body),
 

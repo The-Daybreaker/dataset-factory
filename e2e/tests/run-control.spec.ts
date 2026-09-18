@@ -125,7 +125,8 @@ test("停止保留产物，选择重试可覆盖旧产物，运行中隐藏需�
     await request.post("/fake-llm/__test__/gated-reset");
     // 从「重试列表」组头发车（名单非空时组头与顶栏各有一个「开始重试」，这里走组头那条，
     // 顶栏那条由 RunControl 组件测试覆盖）——名单已在界面上，本步顺带验证组头入口真的通。
-    await retry.getByRole("button", { name: "开始重试", exact: true }).click();
+    // 组头钮按 §六 动态计数写作「开始重试（N）」，故不锁 exact 全名。
+    await retry.getByRole("button", { name: /开始重试/ }).click();
     await expect.poll(async () => (await (await request.post("/fake-llm/__test__/gated-entered")).json()).entered).toBe(true);
     await expect(progress).toBeVisible();
     await page.getByRole("button", { name: "选择工作目录与批次" }).click();

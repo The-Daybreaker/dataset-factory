@@ -27,7 +27,7 @@ export function ActiveEndpointChip(): ReactElement {
   }, []);
 
   return (
-    <span className="inline-flex h-[30px] items-center gap-[7px] rounded-full border border-border bg-card px-3 text-[12px] text-muted-foreground">
+    <span className="inline-flex h-[30px] items-center gap-2 rounded-full border border-border bg-card px-3 text-t-sm text-muted-foreground">
       <span
         className={
           "size-[7px] rounded-full " +

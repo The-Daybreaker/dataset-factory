@@ -16,6 +16,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage } from "../../api";
 import type { components } from "../../api-types.gen";
 import { Button } from "../../components/ui/button";
+import { Tip } from "../../components/ui/tooltip";
 import { BatchConfiguration } from "./BatchConfiguration";
 import { BatchOverview } from "./BatchOverview";
 import {
@@ -135,52 +136,60 @@ const MaterialRow = memo(function MaterialRow({
         </span>
       </button>
       {row.status === "missing" && (
-        <Button
-          variant="ghost"
-          size="mini"
-          className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-          title={
+        <Tip
+          label={
             row.recoverable ? `来源：${row.source}` : "原始来源不可用，请从别处导入"
           }
-          onClick={() => onRecover(row)}
         >
-          {row.recoverable ? "重新导入" : "从别处导入"}
-        </Button>
+          <Button
+            variant="ghost"
+            size="mini"
+            className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+            onClick={() => onRecover(row)}
+          >
+            {row.recoverable ? "重新导入" : "从别处导入"}
+          </Button>
+        </Tip>
       )}
       {row.status === "unimported" && (
-        <Button
-          variant="ghost"
-          size="mini"
-          disabled={row.reason !== "未登记"}
-          title={row.reason === "未登记" ? "导入此文件" : (row.reason ?? "不能导入")}
-          onClick={() => onRecover(row)}
+        <Tip
+          label={row.reason === "未登记" ? "导入此文件" : (row.reason ?? "不能导入")}
         >
-          导入
-        </Button>
+          <Button
+            variant="ghost"
+            size="mini"
+            disabled={row.reason !== "未登记"}
+            onClick={() => onRecover(row)}
+          >
+            导入
+          </Button>
+        </Tip>
       )}
       {retryGroup && (
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          disabled={saving}
-          title="移出重试列表"
-          aria-label={`移出重试 ${row.name}`}
-          onClick={() => onRemoveRetry(row.item)}
-        >
-          <XIcon />
-        </Button>
+        <Tip label="移出重试列表">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            disabled={saving}
+            aria-label={`移出重试 ${row.name}`}
+            onClick={() => onRemoveRetry(row.item)}
+          >
+            <XIcon />
+          </Button>
+        </Tip>
       )}
       {row.status === "unimported" && (
-        <Button
-          variant="destructive"
-          size="icon-xs"
-          className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-          aria-label={`删除未导入 ${row.name}`}
-          title="删除"
-          onClick={() => onRemoveUnimported(row)}
-        >
-          <Trash2Icon />
-        </Button>
+        <Tip label="删除">
+          <Button
+            variant="destructive"
+            size="icon-xs"
+            className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+            aria-label={`删除未导入 ${row.name}`}
+            onClick={() => onRemoveUnimported(row)}
+          >
+            <Trash2Icon />
+          </Button>
+        </Tip>
       )}
     </div>
   );
@@ -199,6 +208,12 @@ export function LabelingPage() {
   const [selectedItem, setSelectedItem] = useState<string | null>(null);
   const followRun = useRef(true);
   const [foldedItem, setFoldedItem] = useState<string | null>(null);
+  /** 预览舞台 HUD 的媒体元信息：从加载后的媒体元素读取，无需额外接口。 */
+  const [mediaMeta, setMediaMeta] = useState<{
+    w: number;
+    h: number;
+    duration?: number;
+  } | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [retryRequest, setRetryRequest] = useState(0);
   const [batchRunState, setBatchRunState] = useState<string | null>(null);
@@ -232,6 +247,10 @@ export function LabelingPage() {
     };
   }, []);
   const selected = selectedItem ? (items.get(selectedItem) ?? null) : null;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 换条目（identity 或选中项）即丢上一条的媒体元信息，等新媒体加载时重新读取。
+  useEffect(() => {
+    setMediaMeta(null);
+  }, [identity, selectedItem]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: directoriesRevision refreshes the registry after directory settings mutations.
   useEffect(() => {
@@ -473,6 +492,16 @@ export function LabelingPage() {
             workdirs.find((entry) => entry.id === newStrategyWid)?.title ??
             newStrategyWid
           }
+          nextSeq={(() => {
+            const batches =
+              workdirs.find((entry) => entry.id === newStrategyWid)?.batches ?? [];
+            return batches.length
+              ? Math.max(...batches.map((entry) => entry.seq)) + 1
+              : 1;
+          })()}
+          existingCount={
+            workdirs.find((entry) => entry.id === newStrategyWid)?.batches.length ?? 0
+          }
           onClose={() => setNewStrategyWid(null)}
           onCreated={(batch) => {
             setWorkdirs((previous) =>
@@ -675,57 +704,60 @@ export function LabelingPage() {
                         >
                           清空列表
                         </Button>
-                        <Button
-                          variant="accent"
-                          size="xs"
-                          className="shrink-0"
-                          disabled={saving}
-                          title="冻结本轮名单发车：名单里的条目转入排队中并打「重打」标记"
-                          onClick={() => setRetryRequest((value) => value + 1)}
-                        >
-                          开始重试
-                        </Button>
+                        <Tip label="冻结本轮名单发车：名单里的条目转入排队中并打「重打」标记">
+                          <Button
+                            variant="accent"
+                            size="xs"
+                            className="shrink-0"
+                            disabled={saving}
+                            onClick={() => setRetryRequest((value) => value + 1)}
+                          >
+                            {`开始重试（${filtered.retry?.length ?? 0}）`}
+                          </Button>
+                        </Tip>
                       </>
                     )}
                     {key === "missing" && !!filtered.missing?.length && (
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        className="shrink-0"
-                        disabled={!filtered.missing.some((row) => row.recoverable)}
-                        title="把当前清单中可从来源找回的缺失素材重新导入"
-                        onClick={() =>
-                          setRecovery({
-                            names: (filtered.missing ?? [])
-                              .filter((row) => row.recoverable)
-                              .map((row) => row.name),
-                            mode: "restore",
-                          })
-                        }
-                      >
-                        一键导入
-                      </Button>
+                      <Tip label="把当前清单中可从来源找回的缺失素材重新导入">
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          className="shrink-0"
+                          disabled={!filtered.missing.some((row) => row.recoverable)}
+                          onClick={() =>
+                            setRecovery({
+                              names: (filtered.missing ?? [])
+                                .filter((row) => row.recoverable)
+                                .map((row) => row.name),
+                              mode: "restore",
+                            })
+                          }
+                        >
+                          一键导入
+                        </Button>
+                      </Tip>
                     )}
                     {key === "unimported" && !!filtered.unimported?.length && (
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        className="shrink-0"
-                        disabled={
-                          !filtered.unimported.some((row) => row.reason === "未登记")
-                        }
-                        title="导入当前清单中符合格式与大小限制的文件"
-                        onClick={() =>
-                          setRecovery({
-                            names: (filtered.unimported ?? [])
-                              .filter((row) => row.reason === "未登记")
-                              .map((row) => row.name),
-                            mode: "inplace",
-                          })
-                        }
-                      >
-                        一键导入
-                      </Button>
+                      <Tip label="导入当前清单中符合格式与大小限制的文件">
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          className="shrink-0"
+                          disabled={
+                            !filtered.unimported.some((row) => row.reason === "未登记")
+                          }
+                          onClick={() =>
+                            setRecovery({
+                              names: (filtered.unimported ?? [])
+                                .filter((row) => row.reason === "未登记")
+                                .map((row) => row.name),
+                              mode: "inplace",
+                            })
+                          }
+                        >
+                          一键导入
+                        </Button>
+                      </Tip>
                     )}
                     {selectionMode && (key === "done" || key === "failed") && (
                       <button
@@ -835,6 +867,14 @@ export function LabelingPage() {
                         src={asset}
                         aria-label={selected.name}
                         className="h-full w-full object-contain"
+                        onLoadedMetadata={(event) => {
+                          const el = event.currentTarget;
+                          setMediaMeta({
+                            w: el.videoWidth,
+                            h: el.videoHeight,
+                            duration: el.duration,
+                          });
+                        }}
                       >
                         <track kind="captions" />
                       </video>
@@ -843,32 +883,50 @@ export function LabelingPage() {
                         src={asset}
                         alt={selected.name}
                         className="h-full w-full object-contain"
+                        onLoad={(event) => {
+                          const el = event.currentTarget;
+                          setMediaMeta({ w: el.naturalWidth, h: el.naturalHeight });
+                        }}
                       />
                     )}
-                    <Button
-                      className="absolute top-3 right-3 bg-card"
-                      variant="ghost"
-                      size="xs"
-                      aria-label={
-                        foldedItem === `${identity}/${selected.item}`
-                          ? "展开素材"
-                          : "折叠为小图"
-                      }
-                      aria-expanded={foldedItem !== `${identity}/${selected.item}`}
-                      onClick={() =>
-                        setFoldedItem((previous) =>
-                          previous === `${identity}/${selected.item}`
-                            ? null
-                            : `${identity}/${selected.item}`,
-                        )
-                      }
+                    <div
+                      className={`absolute right-3 flex items-center gap-1.5 rounded-md bg-card/95 py-1 pr-1 pl-2.5 text-t-xs text-text-3 shadow-(--sh-1) ${
+                        selected.media === "video" ? "bottom-14" : "bottom-3"
+                      }`}
                     >
-                      {foldedItem === `${identity}/${selected.item}` ? (
-                        <Maximize2Icon />
-                      ) : (
-                        <Minimize2Icon />
+                      {mediaMeta && (
+                        <span className="tabular-nums">
+                          {mediaMeta.w}×{mediaMeta.h}
+                          {mediaMeta.duration !== undefined
+                            ? ` · ${mediaMeta.duration.toFixed(1)} 秒`
+                            : ""}
+                          {` · ${(selected.name.split(".").pop() ?? "").toUpperCase()}`}
+                        </span>
                       )}
-                    </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label={
+                          foldedItem === `${identity}/${selected.item}`
+                            ? "展开素材"
+                            : "折叠为小图"
+                        }
+                        aria-expanded={foldedItem !== `${identity}/${selected.item}`}
+                        onClick={() =>
+                          setFoldedItem((previous) =>
+                            previous === `${identity}/${selected.item}`
+                              ? null
+                              : `${identity}/${selected.item}`,
+                          )
+                        }
+                      >
+                        {foldedItem === `${identity}/${selected.item}` ? (
+                          <Maximize2Icon />
+                        ) : (
+                          <Minimize2Icon />
+                        )}
+                      </Button>
+                    </div>
                   </div>
                 )}
               {(selected.message || selected.reason) && (

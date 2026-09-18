@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from dataset_factory.api import create_app
 from dataset_factory.llm import create_config
 from dataset_factory.prompts import Prompt, delete_prompt, save_prompt
+from dataset_factory.runs.journal import RunJournal
 from dataset_factory.skills import import_skill
 from dataset_factory.workdir import WorkdirRegistry, WorkdirStore
 
@@ -490,3 +491,90 @@ def test_exclusions_unknown_batch_returns_problem_json(
 
     assert response.status_code == 404
     assert response.json()["type"] == "batch-not-found"
+
+
+def test_strategy_references_lists_applying_batches(
+    client: TestClient, assets: None, wid: str, tmp_path: Path
+) -> None:
+    """引用清单跨工作目录按快照出身匹配；从零配置的批次与未应用策略不入清单。"""
+    strategy = client.post("/api/strategies", json=_strategy_payload()).json()
+    assert client.get(f"/api/strategies/{strategy['id']}/references").json() == []
+
+    client.post(
+        f"/api/workdirs/{wid}/batches", json={"type": "library", "id": strategy["id"]}
+    )
+    second = tmp_path / "more-photos"
+    second.mkdir()
+    wid2 = client.post("/api/workdirs", json={"path": str(second)}).json()["workdir"][
+        "id"
+    ]
+    client.post(
+        f"/api/workdirs/{wid2}/batches", json={"type": "library", "id": strategy["id"]}
+    )
+    client.post(
+        f"/api/workdirs/{wid2}/batches",
+        json={
+            "type": "scratch",
+            "name": "手搓",
+            "endpoint": "main",
+            "prompt": "详细描述",
+            "skills": [_SKILL_NAME],
+        },
+    )
+
+    references = client.get(f"/api/strategies/{strategy['id']}/references").json()
+    assert len(references) == 2
+    assert {entry["workdir_id"] for entry in references} == {wid, wid2}
+    assert {entry["seq"] for entry in references} == {1}
+    assert {entry["batch_name"] for entry in references} == {"详细描述A"}
+
+
+def test_strategy_references_unknown_strategy_returns_404(client: TestClient) -> None:
+    """未知库策略按 problem+json 404 处理。"""
+    response = client.get("/api/strategies/s-zzz/references")
+    assert response.status_code == 404
+    assert response.json()["title"]
+
+
+def test_batch_view_reports_latest_run_for_dropdown(
+    client: TestClient, assets: None, wid: str
+) -> None:
+    """批次摘要带最近一次运行的状态与进度（下拉行内状态数据源）；无运行为 null。"""
+    strategy = client.post("/api/strategies", json=_strategy_payload()).json()
+    client.post(
+        f"/api/workdirs/{wid}/batches", json={"type": "library", "id": strategy["id"]}
+    )
+
+    empty = client.get(f"/api/workdirs/{wid}/batches").json()
+    assert empty[0]["run_status"] is None
+    assert empty[0]["run_done"] is None
+    assert empty[0]["run_total"] is None
+
+    workdir = Path(WorkdirRegistry.get(wid).path)
+    journal = RunJournal(WorkdirStore(workdir).runs_dir / "20260919-run")
+    journal.write_run_json(
+        {
+            "run_id": "20260919-run",
+            "batch": 1,
+            "mode": "full",
+            "trigger": "web",
+            "strategy_hash": "h",
+            "snapshot": "strategies/s1.json",
+            "dsf_version": "0.1.0",
+            "status": "completed",
+            "counters": {
+                "planned": 3,
+                "attempted": 3,
+                "succeeded": 2,
+                "failed": 1,
+                "skipped": 0,
+            },
+            "started_at": "2026-09-19T00:00:00Z",
+            "finished_at": "2026-09-19T00:00:05Z",
+        }
+    )
+
+    listed = client.get(f"/api/workdirs/{wid}/batches").json()
+    assert listed[0]["run_status"] == "completed"
+    assert listed[0]["run_done"] == 2
+    assert listed[0]["run_total"] == 3

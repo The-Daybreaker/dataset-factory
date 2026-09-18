@@ -97,3 +97,29 @@ it("预览失败可重新读取且不执行清理", async () => {
   ).not.toBeChecked();
   expect(api.cleanupWorkdir).not.toHaveBeenCalled();
 });
+
+it("最近一次运行挂时效判定标记，其余运行与产物清单不挂", async () => {
+  vi.mocked(api.previewRunCleanup).mockResolvedValue([
+    { name: "run-a", size: 100, modified_at: 1700000000 },
+    { name: "run-b", size: 200, modified_at: 1700000010 },
+  ]);
+  render(<CleanupDialog wid="w1" kind="runs" onClose={vi.fn()} onCleaned={vi.fn()} />);
+
+  expect(await screen.findByText("run-a")).toBeInTheDocument();
+  expect(screen.getByText("最近一次 · 当前产物时效判定用")).toBeInTheDocument();
+  // 标记只出现一次，且挂在更晚的 run-b 那一行（同行的名字在标记之前）
+  const row = screen.getByText("最近一次 · 当前产物时效判定用").closest("label");
+  expect(row).not.toBeNull();
+  expect(row?.textContent).toContain("run-b");
+  expect(row?.textContent).not.toContain("run-a");
+});
+
+it("产物清理清单不出现时效判定标记", async () => {
+  render(
+    <CleanupDialog wid="w1" kind="products" onClose={vi.fn()} onCleaned={vi.fn()} />,
+  );
+  expect(
+    await screen.findByRole("checkbox", { name: "s1__lost.txt" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("最近一次 · 当前产物时效判定用")).not.toBeInTheDocument();
+});

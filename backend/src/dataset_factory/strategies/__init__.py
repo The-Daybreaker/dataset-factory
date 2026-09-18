@@ -8,10 +8,12 @@ StrategySnapshot 与快照装配（snapshot）、批次生命周期与排除名�
 
 from .batches import (
     BatchEntry,
+    StrategyReference,
     add_exclusions,
     apply_library_strategy,
     create_batch,
     delete_batch,
+    find_strategy_references,
     get_batch,
     list_batches,
     parse_seq,
@@ -50,6 +52,7 @@ __all__ = [
     "StrategyError",
     "StrategyNameError",
     "StrategyNotFoundError",
+    "StrategyReference",
     "StrategyRefsError",
     "StrategySnapshot",
     "add_exclusions",
@@ -60,6 +63,7 @@ __all__ = [
     "create_strategy",
     "delete_batch",
     "delete_strategy",
+    "find_strategy_references",
     "get_batch",
     "get_strategy",
     "list_batches",

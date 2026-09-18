@@ -99,3 +99,83 @@ it("运行结束后短暂维护占用会自动重查，成功后清除错误", a
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(api.latestRun).toHaveBeenCalledTimes(2);
 });
+
+it("日志视图显示尾部 200 行且最新在最上", async () => {
+  const user = userEvent.setup();
+  const lines = Array.from({ length: 260 }, (_, index) => `第 ${index + 1} 行`);
+  vi.mocked(api.readRunText).mockResolvedValue({ path: "p", text: lines.join("\n") });
+  render(<RunOverview wid="work" batch="s1" refreshKey={0} fallback={fallback} />);
+  await screen.findByRole("region", { name: "本次运行" });
+  await user.click(screen.getByRole("button", { name: "查看日志" }));
+  const pre = await screen.findByText(
+    (_, element) =>
+      element?.tagName === "PRE" && (element.textContent ?? "").includes("第 260 行"),
+  );
+  expect(pre.textContent?.startsWith("第 260 行")).toBe(true);
+  expect(pre?.textContent).toContain("第 61 行");
+  expect(pre?.textContent).not.toContain("第 60 行");
+  expect(pre?.textContent?.split("\n")).toHaveLength(200);
+});
+
+it("逐条流水切换为按条目聚合的表格并重新取数", async () => {
+  const user = userEvent.setup();
+  const records = [
+    {
+      item: "a.png",
+      status: "succeeded",
+      attempt: 1,
+      elapsed_ms: 1800,
+      asset_hash: "3f9a1cdef",
+    },
+    {
+      item: "b.png",
+      status: "failed",
+      attempt: 3,
+      elapsed_ms: 300,
+      message: "不支持的图片格式",
+    },
+    {
+      item: "a.png",
+      status: "succeeded",
+      attempt: 2,
+      elapsed_ms: 2000,
+      asset_hash: "aaaaaa11",
+    },
+  ]
+    .map((record) => JSON.stringify(record))
+    .join("\n");
+  vi.mocked(api.readRunText).mockImplementation(async (_wid, _batch, _runId, file) =>
+    file === "run.log" ? { path: "p", text: "ok" } : { path: "q", text: records },
+  );
+  render(<RunOverview wid="work" batch="s1" refreshKey={0} fallback={fallback} />);
+  await screen.findByRole("region", { name: "本次运行" });
+  await user.click(screen.getByRole("button", { name: "查看日志" }));
+  await user.click(await screen.findByRole("tab", { name: "逐条流水" }));
+  expect(api.readRunText).toHaveBeenLastCalledWith("work", "s1", "run1", "items.jsonl");
+  const rows = within(screen.getByRole("table")).getAllByRole("row");
+  expect(rows).toHaveLength(3);
+  const rowA = rows[1];
+  const rowB = rows[2];
+  if (!rowA || !rowB) throw new Error("聚合表行缺失");
+  expect(rowA).toHaveTextContent("a.png");
+  expect(within(rowA).getByText("成功")).toBeInTheDocument();
+  expect(rowA).toHaveTextContent("aaaaaa…");
+  expect(rowB).toHaveTextContent("b.png");
+  expect(within(rowB).getByText("失败")).toBeInTheDocument();
+  expect(within(rowB).getByText("不支持的图片格式")).toBeInTheDocument();
+});
+
+it("复制把当前显示的内容写入剪贴板并短暂确认", async () => {
+  const user = userEvent.setup();
+  const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue();
+  Object.defineProperty(navigator, "clipboard", {
+    value: { writeText },
+    configurable: true,
+  });
+  render(<RunOverview wid="work" batch="s1" refreshKey={0} fallback={fallback} />);
+  await screen.findByRole("region", { name: "本次运行" });
+  await user.click(screen.getByRole("button", { name: "查看日志" }));
+  await user.click(await screen.findByRole("button", { name: "复制" }));
+  expect(writeText).toHaveBeenCalledWith("运行已中断");
+  expect(await screen.findByText("已复制")).toBeInTheDocument();
+});

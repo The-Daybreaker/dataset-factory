@@ -495,6 +495,7 @@ export function PromptWorkbench({
           skills={skills}
           endpoints={endpoints}
           locked={promptDirty || controlsBusy}
+          onOpenSettings={onNavigateToSettings}
           onSelect={async (strategy) => {
             interactionRef.current += 1;
             const request = ++promptRequestRef.current;

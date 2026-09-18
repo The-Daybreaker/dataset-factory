@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../components/ui/dialog";
+import { Tip } from "../../components/ui/tooltip";
 
 type Snapshot = components["schemas"]["BatchSnapshotView"];
 
@@ -149,16 +150,17 @@ export function SnapshotDialog({
           </p>
         )}
         <DialogFooter>
-          <Button
-            variant="ghost"
-            size="icon"
-            title="复制快照"
-            aria-label="复制快照"
-            disabled={!snapshot}
-            onClick={() => void copy()}
-          >
-            <CopyIcon />
-          </Button>
+          <Tip label="复制快照">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="复制快照"
+              disabled={!snapshot}
+              onClick={() => void copy()}
+            >
+              <CopyIcon />
+            </Button>
+          </Tip>
           <Button variant="outline" size="sm" onClick={onClose}>
             关闭
           </Button>

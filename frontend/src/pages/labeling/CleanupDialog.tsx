@@ -99,6 +99,11 @@ export function CleanupDialog({
     (total, entry) => total + (selected.has(entry.name) ? entry.size : 0),
     0,
   );
+  // 最近一次运行挂时效标记（原型口径）：它是当前产物时效判定与出身的凭据，误删会失去判定依据。
+  const latestRunAt =
+    kind === "runs" && entries.length > 0
+      ? Math.max(...entries.map((entry) => entry.modified_at ?? 0))
+      : Number.NaN;
 
   return (
     <Dialog
@@ -175,6 +180,11 @@ export function CleanupDialog({
                         }}
                       />
                       <span className="min-w-0 flex-1 break-all">{entry.name}</span>
+                      {kind === "runs" && entry.modified_at === latestRunAt && (
+                        <span className="inline-flex h-[18px] shrink-0 items-center rounded-sm bg-muted px-2 text-t-xs text-text-3">
+                          最近一次 · 当前产物时效判定用
+                        </span>
+                      )}
                       <span className="shrink-0 text-text-4 tabular-nums">
                         {(entry.size / 1024).toFixed(1)} KiB
                         {entry.batch !== undefined ? ` · s${entry.batch}` : ""}

@@ -11,6 +11,7 @@ import type { components } from "../api-types.gen";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
+import { Tip } from "./ui/tooltip";
 
 type Listing = components["schemas"]["DirectoryListing"];
 type Entry = components["schemas"]["DirectoryEntry"];
@@ -258,21 +259,22 @@ export function DirectoryPicker({
           显示隐藏项
         </label>
         {allowCreate && !browseOnly && (
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="新建目录"
-            title="新建目录"
-            disabled={loading || renamingBusy || !listing}
-            onClick={() => {
-              setRenaming(null);
-              setCreating(true);
-              setRenameValue("");
-              setRenameError("");
-            }}
-          >
-            <FolderPlusIcon />
-          </Button>
+          <Tip label="新建目录">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="新建目录"
+              disabled={loading || renamingBusy || !listing}
+              onClick={() => {
+                setRenaming(null);
+                setCreating(true);
+                setRenameValue("");
+                setRenameError("");
+              }}
+            >
+              <FolderPlusIcon />
+            </Button>
+          </Tip>
         )}
         {loading && (
           <p role="status" className="py-3 text-t-sm text-text-4">
@@ -318,21 +320,22 @@ export function DirectoryPicker({
                       <span className="break-all">{entry.name}</span>
                     </button>
                     {allowRename && entry.kind === "directory" && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        disabled={renamingBusy}
-                        aria-label={`重命名 ${entry.name}`}
-                        title={`重命名 ${entry.name}`}
-                        onClick={() => {
-                          setCreating(false);
-                          setRenaming(entry);
-                          setRenameValue(entry.name);
-                          setRenameError("");
-                        }}
-                      >
-                        <PencilIcon />
-                      </Button>
+                      <Tip label={`重命名 ${entry.name}`}>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          disabled={renamingBusy}
+                          aria-label={`重命名 ${entry.name}`}
+                          onClick={() => {
+                            setCreating(false);
+                            setRenaming(entry);
+                            setRenameValue(entry.name);
+                            setRenameError("");
+                          }}
+                        >
+                          <PencilIcon />
+                        </Button>
+                      </Tip>
                     )}
                   </>
                 )}
@@ -493,28 +496,29 @@ export function DirectoryPicker({
               : `将采用 ${chosen ?? ""}`}
           </span>
           {browseOnly && canOpen && (
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="在系统文件资源管理器中打开"
-              title="在系统文件资源管理器中打开"
-              disabled={opening || loading || !listing}
-              onClick={() => {
-                if (!listing || opening) return;
-                setOpening(true);
-                setRenameError("");
-                void api
-                  .openDirectory(listing.path)
-                  .catch((reason: unknown) => {
-                    if (mounted.current) setRenameError(errorMessage(reason));
-                  })
-                  .finally(() => {
-                    if (mounted.current) setOpening(false);
-                  });
-              }}
-            >
-              <FolderIcon />
-            </Button>
+            <Tip label="在系统文件资源管理器中打开">
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="在系统文件资源管理器中打开"
+                disabled={opening || loading || !listing}
+                onClick={() => {
+                  if (!listing || opening) return;
+                  setOpening(true);
+                  setRenameError("");
+                  void api
+                    .openDirectory(listing.path)
+                    .catch((reason: unknown) => {
+                      if (mounted.current) setRenameError(errorMessage(reason));
+                    })
+                    .finally(() => {
+                      if (mounted.current) setOpening(false);
+                    });
+                }}
+              >
+                <FolderIcon />
+              </Button>
+            </Tip>
           )}
           <Button
             variant={browseOnly ? "outline" : "ghost"}

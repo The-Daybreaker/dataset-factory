@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError, api, errorMessage } from "../../api";
 import type { components } from "../../api-types.gen";
 import { Button } from "../../components/ui/button";
+import { Tip } from "../../components/ui/tooltip";
 
 interface Props {
   wid: string;
@@ -151,29 +152,32 @@ export function CaptionPreview({
             const primary = entry.id === batch;
             const selected = primary || compared.includes(entry.id);
             return (
-              <button
+              <Tip
                 key={entry.id}
-                type="button"
-                aria-pressed={selected}
-                disabled={primary || (!selected && compared.length >= 2)}
-                title={
+                label={
                   primary
                     ? "当前策略固定为第一栏"
                     : !selected && compared.length >= 2
                       ? "同时最多对比三套策略"
                       : entry.name
                 }
-                onClick={() =>
-                  setComparison((previous) =>
-                    previous.includes(entry.id)
-                      ? previous.filter((id) => id !== entry.id)
-                      : [...previous, entry.id],
-                  )
-                }
-                className={`h-(--h-xs) min-w-[88px] shrink-0 rounded-full border px-4 text-t-sm ${primary ? "border-primary/45 bg-primary/10 font-medium text-primary" : selected ? "border-border bg-card text-foreground" : "border-border bg-secondary text-text-3"}`}
               >
-                {entry.name} · {entry.id}
-              </button>
+                <button
+                  type="button"
+                  aria-pressed={selected}
+                  disabled={primary || (!selected && compared.length >= 2)}
+                  onClick={() =>
+                    setComparison((previous) =>
+                      previous.includes(entry.id)
+                        ? previous.filter((id) => id !== entry.id)
+                        : [...previous, entry.id],
+                    )
+                  }
+                  className={`h-(--h-xs) min-w-[88px] shrink-0 rounded-full border px-4 text-t-sm ${primary ? "border-primary/45 bg-primary/10 font-medium text-primary" : selected ? "border-border bg-card text-foreground" : "border-border bg-secondary text-text-3"}`}
+                >
+                  {entry.name} · {entry.id}
+                </button>
+              </Tip>
             );
           })}
         </section>

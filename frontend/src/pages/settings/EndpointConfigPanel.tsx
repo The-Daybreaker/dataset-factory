@@ -280,10 +280,8 @@ export function EndpointConfigPanel(): ReactElement {
       {/* 左：配置列表 */}
       <div className="flex min-h-0 flex-col p-2">
         <div className="flex items-baseline gap-2 px-3 pt-2.5 pb-1.5">
-          <h3 className="text-[13px] font-semibold">端点配置</h3>
-          <span className="text-[11px] text-muted-foreground">
-            {endpoints.length} 套
-          </span>
+          <h3 className="text-t-md font-semibold">端点配置</h3>
+          <span className="text-t-xs text-muted-foreground">{endpoints.length} 套</span>
         </div>
         <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-1">
           {endpoints.map((item) => {
@@ -316,14 +314,13 @@ export function EndpointConfigPanel(): ReactElement {
                   />
                   <span
                     className={
-                      "truncate text-[13.5px] font-medium" +
-                      (active ? " text-primary" : "")
+                      "truncate text-t-md font-medium" + (active ? " text-primary" : "")
                     }
                   >
                     {item.name}
                   </span>
                 </span>
-                <span className="mt-0.5 block truncate pl-4 text-[12.5px] text-muted-foreground">
+                <span className="mt-0.5 block truncate pl-4 text-t-sm text-muted-foreground">
                   {item.model}
                 </span>
               </button>
@@ -332,7 +329,7 @@ export function EndpointConfigPanel(): ReactElement {
           <button
             type="button"
             onClick={startCreate}
-            className="mt-1 flex w-full items-center gap-2 rounded-md border border-dashed border-border px-3 py-2.5 text-[13px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
+            className="mt-1 flex w-full items-center gap-2 rounded-md border border-dashed border-border px-3 py-2.5 text-t-md text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
           >
             <PlusIcon className="size-4" /> 添加配置
           </button>
@@ -344,7 +341,7 @@ export function EndpointConfigPanel(): ReactElement {
         {creating || current !== undefined ? (
           <div className="mx-auto w-full max-w-xl space-y-4">
             <div className="flex items-center gap-2">
-              <h3 className="text-[15px] font-semibold">
+              <h3 className="text-t-lg font-semibold">
                 {creating ? "添加配置" : current?.name}
               </h3>
               {!creating && current?.is_active && (
@@ -372,7 +369,7 @@ export function EndpointConfigPanel(): ReactElement {
                 placeholder="如 siliconflow"
                 onInput={(event) => setDraftName(event.currentTarget.value)}
               />
-              <p className="text-[12px] text-muted-foreground">
+              <p className="text-t-sm text-muted-foreground">
                 {creating
                   ? "即数据目录名，创建后不可改。"
                   : "名称即目录名，创建后不可改。"}
@@ -432,7 +429,7 @@ export function EndpointConfigPanel(): ReactElement {
                 }
                 onInput={(event) => setDraftKey(event.currentTarget.value)}
               />
-              <p className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+              <p className="flex items-center gap-1.5 text-t-sm text-muted-foreground">
                 {(current?.has_api_key ?? draftKey.trim() !== "") && (
                   <span className="size-2 rounded-full bg-success" aria-hidden />
                 )}
@@ -440,7 +437,7 @@ export function EndpointConfigPanel(): ReactElement {
                   ? `已配置${current?.is_active ? " · 来源：credentials 文件" : ""}`
                   : "未配置——可之后补配，或用环境变量 DSF_API_KEY 兜底"}
               </p>
-              <p className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+              <p className="flex items-center gap-1.5 text-t-sm text-muted-foreground">
                 <LockIcon className="size-3" /> 密钥写入该配置的 credentials
                 文件，界面不回显、接口不返回内容。
               </p>
@@ -455,7 +452,7 @@ export function EndpointConfigPanel(): ReactElement {
             <div className="flex items-center gap-2.5">
               <Button
                 type="button"
-                variant="outline"
+                variant="accent"
                 size="sm"
                 disabled={
                   testing || draftBaseUrl.trim() === "" || draftModel.trim() === ""
@@ -467,8 +464,7 @@ export function EndpointConfigPanel(): ReactElement {
               {testResult !== null && (
                 <span
                   className={
-                    "text-[12.5px] " +
-                    (testResult.ok ? "text-success" : "text-destructive")
+                    "text-t-sm " + (testResult.ok ? "text-success" : "text-destructive")
                   }
                   role="status"
                 >
@@ -484,7 +480,7 @@ export function EndpointConfigPanel(): ReactElement {
                 type="button"
                 aria-expanded={advOpen}
                 onClick={() => setAdvOpen((open) => !open)}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-[13px] font-medium transition-colors hover:bg-accent"
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-t-md font-medium transition-colors hover:bg-accent"
               >
                 <ChevronDownIcon
                   className={cn(
@@ -494,7 +490,7 @@ export function EndpointConfigPanel(): ReactElement {
                   aria-hidden
                 />
                 高级参数（可选）
-                <span className="text-[11.5px] font-normal text-muted-foreground">
+                <span className="text-t-xs font-normal text-muted-foreground">
                   temperature / top_p / max_tokens / 超时 / 重试 / extra_body——留空 =
                   端点默认值
                 </span>
@@ -502,7 +498,7 @@ export function EndpointConfigPanel(): ReactElement {
               {advOpen && (
                 <div className="space-y-4 border-t border-border px-3 py-3">
                   <div className="space-y-2">
-                    <p className="text-[12px] font-medium">
+                    <p className="text-t-sm font-medium">
                       模型通用参数（JSON，与表单双向同步——可直接从厂商文档粘贴）
                     </p>
                     <div className="grid grid-cols-3 gap-2">
@@ -510,7 +506,7 @@ export function EndpointConfigPanel(): ReactElement {
                         <div key={key} className="space-y-1">
                           <Label
                             htmlFor={`adv-${key}`}
-                            className="font-mono text-[11.5px] font-normal text-muted-foreground"
+                            className="text-t-xs font-normal text-muted-foreground"
                           >
                             {key}
                           </Label>
@@ -535,7 +531,7 @@ export function EndpointConfigPanel(): ReactElement {
                     <Textarea
                       aria-label="模型通用参数 JSON"
                       spellCheck={false}
-                      className="min-h-[110px] font-mono text-[12.5px]"
+                      className="min-h-[110px] text-t-sm"
                       value={advJson}
                       placeholder={`{
   "temperature": 0.7,
@@ -548,7 +544,7 @@ export function EndpointConfigPanel(): ReactElement {
                     <p
                       role="status"
                       className={cn(
-                        "text-[12px]",
+                        "text-t-sm",
                         advState.kind === "invalid" && "text-destructive",
                         advState.kind === "ignored" &&
                           "text-amber-600 dark:text-amber-500",
@@ -559,14 +555,14 @@ export function EndpointConfigPanel(): ReactElement {
                     </p>
                   </div>
                   <div className="space-y-2">
-                    <p className="text-[12px] font-medium">
+                    <p className="text-t-sm font-medium">
                       本项目传输参数（仅表单，不提供 JSON）
                     </p>
                     <div className="grid grid-cols-2 gap-2">
                       <div className="space-y-1">
                         <Label
                           htmlFor="adv-timeout"
-                          className="font-mono text-[11.5px] font-normal text-muted-foreground"
+                          className="text-t-xs font-normal text-muted-foreground"
                         >
                           timeout_seconds · 单次请求超时秒数
                         </Label>
@@ -590,7 +586,7 @@ export function EndpointConfigPanel(): ReactElement {
                       <div className="space-y-1">
                         <Label
                           htmlFor="adv-retries"
-                          className="font-mono text-[11.5px] font-normal text-muted-foreground"
+                          className="text-t-xs font-normal text-muted-foreground"
                         >
                           max_retries · 失败自动重试次数
                         </Label>
@@ -618,28 +614,23 @@ export function EndpointConfigPanel(): ReactElement {
 
             <div className="flex items-center gap-2 border-t border-border pt-4">
               {!creating && (
-                <span className="text-[12px] text-muted-foreground">
+                <span className="text-t-sm text-muted-foreground">
                   切换「设为当前使用」立即生效于新请求
                 </span>
               )}
               <span className="flex-1" />
-              <Button
-                type="button"
-                disabled={!canSave}
-                variant="outline"
-                onClick={() => void save()}
-              >
+              <Button type="button" disabled={!canSave} onClick={() => void save()}>
                 {creating ? "创建配置" : "保存更改"}
               </Button>
               {!creating && current !== undefined && !current.is_active && (
-                <Button type="button" onClick={() => void activate()}>
+                <Button type="button" variant="outline" onClick={() => void activate()}>
                   设为当前使用
                 </Button>
               )}
             </div>
           </div>
         ) : (
-          <div className="flex h-full items-center justify-center text-[13px] text-muted-foreground">
+          <div className="flex h-full items-center justify-center text-t-md text-muted-foreground">
             左侧选择一套配置，或「添加配置」新建。
           </div>
         )}
