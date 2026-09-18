@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .._clock import now_iso
 from .._fs import data_root
 from .errors import (
     SessionError,
@@ -253,7 +254,7 @@ def append_message(
         SessionNotFoundError: 没有这个会话。
         SessionError: 写入失败，或内容含 UTF-8 无法编码的字符。
     """
-    ts = datetime.now(UTC).isoformat()
+    ts = now_iso()
     _append_event(
         session_id, MessageEvent(ts=ts, role=role, text=text, attachment=attachment)
     )
@@ -273,7 +274,7 @@ def append_envelope(session_id: str, request: Mapping[str, JsonValue]) -> None:
         SessionNotFoundError: 没有这个会话。
         SessionError: 写入失败、request 不可 JSON 序列化，或含 UTF-8 无法编码的字符。
     """
-    ts = datetime.now(UTC).isoformat()
+    ts = now_iso()
     _append_event(session_id, EnvelopeEvent(ts=ts, request=dict(request)))
 
 
@@ -291,7 +292,7 @@ def append_settings(session_id: str, settings: Mapping[str, JsonValue]) -> None:
         SessionNotFoundError: 没有这个会话。
         SessionError: 写入失败、settings 不可 JSON 序列化，或含 UTF-8 无法编码的字符。
     """
-    ts = datetime.now(UTC).isoformat()
+    ts = now_iso()
     _append_event(session_id, SettingsEvent(ts=ts, settings=dict(settings)))
 
 

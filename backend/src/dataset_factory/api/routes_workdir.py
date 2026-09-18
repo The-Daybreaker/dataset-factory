@@ -20,7 +20,6 @@ from __future__ import annotations
 import os
 import secrets
 import threading
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
@@ -28,6 +27,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from .._clock import now_iso
 from ..runs.journal import load_recent_success_hashes
 from ..strategies import get_batch, list_batches, parse_seq
 from ..tasks import RETRY_AFTER_SECONDS, TaskManager, TaskResult
@@ -336,7 +336,7 @@ def verify_integrity(wid: str, batch: str | None = None) -> IntegrityReport:
         else list_batches(workdir)
     )
     return IntegrityReport(
-        checked_at=datetime.now(UTC).isoformat(),
+        checked_at=now_iso(),
         imports_available=bool(store.read_import_records()),
         batches=[
             BatchIntegrity(

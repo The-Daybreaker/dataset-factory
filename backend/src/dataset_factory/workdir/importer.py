@@ -24,10 +24,10 @@ import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .._clock import now_iso
 from .._fs import hash_file
 from ..llm import (
     IMAGE_EXTENSIONS,
@@ -414,7 +414,7 @@ def _import_assets(
     if progress is not None:
         progress(0.95)
     record: dict[str, object] = {
-        "imported_at": datetime.now(UTC).isoformat(),
+        "imported_at": now_iso(),
         "source": str(source_path),
         "files": registered,
     }

@@ -35,6 +35,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Literal, cast
 
+from .._clock import now_iso, now_log_stamp
 from .._fs import atomic_write_text
 from ..labeling import LabelingEngine, MaterialOversizeError, MaterialReadError
 from ..llm import (
@@ -405,7 +406,7 @@ class BatchRunner:
         lock.acquire(
             {
                 "pid": os.getpid(),
-                "started_at": _utc_now_iso(),
+                "started_at": now_iso(),
                 "hostname": platform.node(),
                 "batch": f"s{self._seq}",
                 "mode": self._mode,
@@ -444,7 +445,7 @@ class BatchRunner:
             counters["skipped"] = len(skip_stems)
 
         journal = RunJournal(store.runs_dir / self._run_id)
-        started_at = _utc_now_iso()
+        started_at = now_iso()
         model = cast(str, snapshot.endpoint["model"])
         engine = LabelingEngine(self._completer, model)
 
@@ -502,7 +503,7 @@ class BatchRunner:
             else _STATUS_COMPLETED
         )
         self._status = status
-        finished_at = _utc_now_iso()
+        finished_at = now_iso()
         run_meta["status"] = status
         run_meta["counters"] = dict(counters)
         run_meta["finished_at"] = finished_at
@@ -585,7 +586,7 @@ class BatchRunner:
             ):
                 delay = failure.retry_after or _backoff_seconds(attempt)
                 journal.append_log_line(
-                    f"[{_utc_now_compact()}] {item} 尝试 {attempt} 失败"
+                    f"[{now_log_stamp()}] {item} 尝试 {attempt} 失败"
                     f"（{failure.reason_code}：{_one_line(failure.message)}）；"
                     f"{delay:.1f}s 后重试"
                 )
@@ -625,7 +626,7 @@ class BatchRunner:
                 )
             )
             journal.append_log_line(
-                f"[{_utc_now_compact()}] {item} 失败（{failure.reason_code}："
+                f"[{now_log_stamp()}] {item} 失败（{failure.reason_code}："
                 f"{_one_line(failure.message)}）"
             )
             return False
@@ -723,7 +724,7 @@ class BatchRunner:
                 can_retry=True,
             )
         )
-        journal.append_log_line(f"[{_utc_now_compact()}] {item} 尝试 {attempt} 成功")
+        journal.append_log_line(f"[{now_log_stamp()}] {item} 尝试 {attempt} 成功")
         return None
 
     # -- 事件多播 -------------------------------------------------------------
@@ -857,16 +858,6 @@ def _backoff_seconds(attempt: int) -> float:
     base = _BACKOFF_BASE_SECONDS * (2 ** (attempt - 1))
     # S311：抖动只为了让重试错峰，不是加密用途。
     return base * random.uniform(1 - _JITTER_RATIO, 1 + _JITTER_RATIO)  # noqa: S311
-
-
-def _utc_now_iso() -> str:
-    """当前 UTC 时刻（ISO 8601，进 run.json / 占用者信息）。"""
-    return datetime.now(UTC).isoformat()
-
-
-def _utc_now_compact() -> str:
-    """当前 UTC 时刻（秒精度紧凑 ISO，run.log 行首时间戳用）。"""
-    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _one_line(message: str) -> str:

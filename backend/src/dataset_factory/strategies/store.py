@@ -19,10 +19,10 @@ import json
 import re
 import secrets
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
+from .._clock import now_iso
 from .._fs import atomic_write_text, canonical_sha256, data_root
 from ..llm.endpoints import has_config as _endpoint_exists
 from ..prompts.store import list_prompts
@@ -99,11 +99,6 @@ def _entry_path(strategy_id: str) -> Path:
 def _generate_id() -> str:
     """生成字母开头的随机短 ID，避免 CLI 将它解析为选项。"""
     return "s" + secrets.token_urlsafe(8)[: _STRATEGY_ID_LENGTH - 1]
-
-
-def _now_iso() -> str:
-    """当前 UTC 时刻（ISO 8601，与导入记录同一时刻格式）。"""
-    return datetime.now(UTC).isoformat()
 
 
 def _validate_name(name: str) -> str:
@@ -263,8 +258,8 @@ def create_strategy(
         endpoint=endpoint,
         prompt=prompt,
         skills=skill_refs,
-        created_at=_now_iso(),
-        updated_at=_now_iso(),
+        created_at=now_iso(),
+        updated_at=now_iso(),
     )
     while _entry_path(entry.id).exists():  # ID 撞号重摇（概率极低）
         entry.id = _generate_id()
@@ -290,7 +285,7 @@ def update_strategy(
     existing.endpoint = endpoint
     existing.prompt = prompt
     existing.skills = skill_refs
-    existing.updated_at = _now_iso()
+    existing.updated_at = now_iso()
     _write_entry(existing)
     return existing
 
@@ -316,7 +311,7 @@ def rebind_strategy(
     existing.endpoint = new_endpoint
     existing.prompt = new_prompt
     existing.skills = new_skills
-    existing.updated_at = _now_iso()
+    existing.updated_at = now_iso()
     _write_entry(existing)
     return existing
 
@@ -331,8 +326,8 @@ def copy_strategy(strategy_id: str) -> LibraryStrategy:
         endpoint=source.endpoint,
         prompt=source.prompt,
         skills=list(source.skills),
-        created_at=_now_iso(),
-        updated_at=_now_iso(),
+        created_at=now_iso(),
+        updated_at=now_iso(),
     )
     while _entry_path(clone.id).exists():
         clone.id = _generate_id()

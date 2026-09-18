@@ -22,12 +22,12 @@ import logging
 import logging.handlers
 import os
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
+from .._clock import now_iso
 from .._obs import RequestIdFilter
 from . import (
     batch,
@@ -144,7 +144,7 @@ def serve(
         "version": app.version,
         "host": host,
         "port": port,
-        "started_at": datetime.now(UTC).isoformat(),
+        "started_at": now_iso(),
         "log_file": str(log_file),
     }
     add_server_file_handler(log_file)

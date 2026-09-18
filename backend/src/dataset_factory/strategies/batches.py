@@ -24,10 +24,10 @@ import json
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
+from .._clock import now_iso
 from .._fs import atomic_write_text
 from ..workdir import (
     WorkdirMetadataCorruptedError,
@@ -72,11 +72,6 @@ class BatchEntry:
     snapshot: str  # 快照文件名（sN.json）
     active: bool  # False = 停用（隐藏）：不出现在下拉 / 列表 / 打包选项
     created_at: str
-
-
-def _now_iso() -> str:
-    """当前 UTC 时刻（ISO 8601）。"""
-    return datetime.now(UTC).isoformat()
 
 
 def parse_seq(raw: str) -> int:
@@ -264,7 +259,7 @@ def create_batch(
         BatchNotFoundError: state.json 形状不对。
     """
     require_refs_exist(endpoint, prompt, skills)
-    now = _now_iso()
+    now = now_iso()
     snapshot = build_snapshot(endpoint, prompt, skills, built_at=now, source=source)
     store = WorkdirStore(workdir)
     seq = _reserve_seq(store)
@@ -302,7 +297,7 @@ def apply_library_strategy(
             "该策略引用的资产已不存在，暂不可应用（可回到策略库「重新指定」后重试）："
             + "；".join(problems)
         )
-    now = _now_iso()
+    now = now_iso()
     snapshot = build_snapshot(
         library_entry.endpoint,
         library_entry.prompt,

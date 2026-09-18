@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event
 from typing import Literal
 
+from .._clock import now_iso
 from .._fs import is_single_path_segment
 from ..tasks import TaskCancelledError
 from .assets import confine_to_workdir, registered_origins
@@ -130,7 +130,7 @@ def _rebuild_import_records(
         raise TaskCancelledError()
     store.append_import_record(
         {
-            "imported_at": datetime.now(UTC).isoformat(),
+            "imported_at": now_iso(),
             "source": "",
             "files": files,
             "kind": "rebuild",
