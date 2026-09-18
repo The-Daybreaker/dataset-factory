@@ -10,7 +10,6 @@ import type { components } from "./api-types.gen";
 
 /** 后端契约里的 schema 类型（别名导出：调用方不必知道生成结构）。 */
 export type LabelRequest = components["schemas"]["LabelRequest"];
-export type SettingsView = components["schemas"]["SettingsView"];
 export type HistoryMessageView = components["schemas"]["HistoryMessageView"];
 export type SessionSnapshotResponse = components["schemas"]["SessionSnapshotResponse"];
 export type PromptInfo = components["schemas"]["PromptInfo"];
@@ -69,7 +68,6 @@ function parseTask(value: unknown): TaskView {
   };
 }
 /** 错误体的契约形状（{"detail": string}）——错误路径也在契约里，不再有盲区。 */
-export type ErrorDetail = components["schemas"]["ErrorDetail"];
 
 /** 把任意抛出的东西变成可展示的一句话（界面上不该出现 "[object Object]"）。 */
 export function errorMessage(error: unknown): string {

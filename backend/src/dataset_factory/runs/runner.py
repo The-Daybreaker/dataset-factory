@@ -88,6 +88,7 @@ __all__ = [
     "clear_retry_list",
     "completer_for_snapshot",
     "read_retry_list",
+    "remove_batch",
     "remove_retry_items",
 ]
 

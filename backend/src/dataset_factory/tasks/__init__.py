@@ -25,11 +25,9 @@ from typing import Protocol
 __all__ = [
     "RETRY_AFTER_SECONDS",
     "TaskCancelledError",
-    "TaskId",
     "TaskInfo",
     "TaskManager",
     "TaskNotFoundError",
-    "TaskRunner",
 ]
 
 #: Retry-After 建议轮询间隔（秒）：受理 202 响应带此头，提示前端轮询节奏
