@@ -36,6 +36,9 @@ _UPDATE = os.environ.get("DSF_UPDATE_CLI_SNAPSHOTS") == "1"
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 _RUNNER = CliRunner()
 _SNAPSHOT_WIDTH = 80
+# 面板边框字形归一：圆角还是直角由终端的 Unicode 能力决定（Windows 传统控制台画不出圆角，
+# rich 自动降级），不是 CLI 对外的承诺；比的是命令名、参数、文案、列宽与退出码。
+_BOX_GLYPHS = str.maketrans("╭╮╰╯", "┌┐└┘")
 
 
 def _command_tree(
@@ -77,8 +80,9 @@ def _invoke(cli: TyperGroup, args: list[str]) -> Result:
 def _normalize(text: str, data_root: Path) -> str:
     """把采集到的输出折成跨平台一致的可比文本。
 
-    做三件事：剥掉颜色转义（Windows/Linux 终端差异）、把临时数据根换成占位符（每台机器
-    路径不同）、统一行尾与行尾空白（快照比对是逐字节的）。
+    做四件事：剥掉颜色转义（Windows/Linux 终端差异）、面板边框字形归一（圆角/直角同为终端能力
+    差异）、把临时数据根换成占位符（每台机器路径不同）、统一行尾与行尾空白（快照比对是逐字节
+    的）。
 
     Args:
         text: 原始输出。
@@ -87,7 +91,7 @@ def _normalize(text: str, data_root: Path) -> str:
     Returns:
         规范化后的文本，可直接写入黄金文件。
     """
-    stripped = _ANSI_RE.sub("", text)
+    stripped = _ANSI_RE.sub("", text).translate(_BOX_GLYPHS)
     replaced = stripped.replace(str(data_root), "<DATA_ROOT>")
     replaced = replaced.replace(str(data_root).replace("\\", "/"), "<DATA_ROOT>")
     lines = [line.rstrip() for line in replaced.replace("\r\n", "\n").split("\n")]
