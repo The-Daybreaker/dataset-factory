@@ -56,6 +56,8 @@ describe("App 外壳", () => {
     await user.click(screen.getByRole("button", { name: "设置" }));
     await user.click(screen.getByRole("button", { name: "技能" }));
 
+    // 设置页现在是进页面才载的分包：先等它出现，再按原样断言（断言对象与强度不变）。
+    await screen.findByRole("heading", { name: "技能", level: 1 });
     expect(screen.getByRole("heading", { name: "技能", level: 1 })).toBeVisible();
     expect(
       screen.queryByRole("navigation", { name: "设置二级导航" }),

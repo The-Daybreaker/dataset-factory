@@ -15,7 +15,7 @@ import {
   TagsIcon,
 } from "lucide-react";
 import type { ReactElement } from "react";
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { ShutdownButton } from "./components/shutdown-button";
 import { ThemeToggle } from "./components/theme-toggle";
 import { Dialog, DialogContent, DialogTitle } from "./components/ui/dialog";
@@ -28,9 +28,22 @@ import {
 import { useTheme } from "./hooks/use-theme";
 import { cn } from "./lib/utils";
 import logo from "./logo-speed-d.png";
-import { LabelingPage } from "./pages/labeling/LabelingPage";
 import { PromptWorkbench } from "./pages/prompt-workbench/PromptWorkbench";
-import { SettingsPage, type SettingsSection } from "./pages/settings/SettingsPage";
+import type { SettingsSection } from "./pages/settings/SettingsPage";
+
+/**
+ * 打标页与设置容器切成分包、进页面时才载（G4「减少无谓开销」）。
+ *
+ * 为什么这样切：应用永远从工作台起画（`useState<PageKey>("prompts")`），工作台是首屏，
+ * 保持静态导入不动；另两页的代码（含它们独用的 radix 弹层与大量业务组件）在首屏那一帧
+ * 是纯浪费的下载与解析。加载在本地服务下是一帧内的事。
+ */
+const LabelingPage = lazy(() =>
+  import("./pages/labeling/LabelingPage").then((m) => ({ default: m.LabelingPage })),
+);
+const SettingsPage = lazy(() =>
+  import("./pages/settings/SettingsPage").then((m) => ({ default: m.SettingsPage })),
+);
 
 /** 顶级页面：一期两项（提示词工作台 / 设置容器）；后续期页面届时挂主导航长入。 */
 type PageKey = "prompts" | "settings" | "labeling";
@@ -295,11 +308,14 @@ export function App(): ReactElement {
           </DialogContent>
         </Dialog>
         <main className="min-h-0 min-w-0 flex-1 overflow-y-auto">
-          {page === "prompts" && (
-            <PromptWorkbench onNavigateToSettings={openSettings} />
-          )}
-          {page === "settings" && <SettingsPage section={settingsSection} />}
-          {page === "labeling" && <LabelingPage />}
+          {/* fallback 给 null 而非骨架屏：占位元素本身就是新像素，切换路由时宁可空一帧。 */}
+          <Suspense fallback={null}>
+            {page === "prompts" && (
+              <PromptWorkbench onNavigateToSettings={openSettings} />
+            )}
+            {page === "settings" && <SettingsPage section={settingsSection} />}
+            {page === "labeling" && <LabelingPage />}
+          </Suspense>
         </main>
       </div>
     </TooltipProvider>

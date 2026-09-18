@@ -261,7 +261,7 @@ async function stubApi(page: Page, sink: string[]): Promise<void> {
  * 拿到插值色（同一份代码两次采集色差可达 60/255），快照因此假红。稳定化只影响取值时机，
  * 不改任何布局与类名；探针本身不采集 transition/animation 属性，注入的样式不进快照。
  */
-async function settle(page: Page): Promise<void> {
+async function settle(page: Page, sink: string[]): Promise<void> {
   await page.addStyleTag({
     content: "*,*::before,*::after{transition:none !important;animation:none !important}",
   });
@@ -275,6 +275,31 @@ async function settle(page: Page): Promise<void> {
         });
       }),
   );
+  // 路由级分包（React.lazy + <Suspense fallback={null}>）让一次路由切换要等一个网络往返；
+  // React 在边界重挂时会把旧子树留着但置 display:none，所以「有没有子节点」不能当信号。
+  // 取「可见元素数连续三次一致」为准（三次约 450ms，够分包落地，也不会被 3s 轮询误伤）。
+  let stable = 0;
+  let previous = "";
+  for (let round = 0; round < 40 && stable < 4; round += 1) {
+    const count = await page.evaluate(
+      () =>
+        // 只数「渲染出来的」元素：与 probe 同样的可见性口径，避免隐藏子树把计数带偏。
+        Array.from(document.body.querySelectorAll("*")).filter((element) => {
+          const rect = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          return (
+            rect.width > 0 &&
+            rect.height > 0 &&
+            style.visibility !== "hidden" &&
+            style.display !== "none"
+          );
+        }).length,
+    );
+    const signature = `${String(count)}:${String(sink.length)}`;
+    stable = signature === previous && count > 0 ? stable + 1 : 0;
+    previous = signature;
+    await page.waitForTimeout(120);
+  }
 }
 
 /**
@@ -362,7 +387,7 @@ test.describe("视觉与请求基线", () => {
 
   /** 采集当前屏：探针快照 + 请求清单快照 + 落一张截图供目检。 */
   async function snap(page: Page, sink: string[], name: string): Promise<void> {
-    await settle(page);
+    await settle(page, sink);
     const styles = await probe(page);
     expect(styles + NEWLINE).toMatchSnapshot(`${name}.styles.txt`);
     expect(sink.join(NEWLINE) + NEWLINE).toMatchSnapshot(`${name}.requests.txt`);
@@ -402,6 +427,9 @@ test.describe("视觉与请求基线", () => {
   test("05 设置-服务段", async ({ page }) => {
     const sink = await boot(page);
     await page.getByRole("button", { name: "设置", exact: true }).click();
+    // 先等默认子页（端点配置）真的挂载完再切子页：否则「点了设置立刻点子导航」会让端点面板
+    // 根本没挂载，那一屏发不发 /api/endpoints 就由分包到达时机决定，请求清单快照会飘。
+    await settle(page, sink);
     await page.getByRole("button", { name: "服务运行", exact: true }).click();
     await snap(page, sink, "05-settings-service");
   });
@@ -409,6 +437,7 @@ test.describe("视觉与请求基线", () => {
   test("06 设置-Skill 段", async ({ page }) => {
     const sink = await boot(page);
     await page.getByRole("button", { name: "设置", exact: true }).click();
+    await settle(page, sink);
     await page.getByRole("button", { name: "技能", exact: true }).click();
     await snap(page, sink, "06-settings-skill");
   });
