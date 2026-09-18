@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 import typer.main
+import typer.rich_utils
 from click import Command
 from click.testing import CliRunner
 from typer.core import TyperGroup
@@ -34,6 +35,7 @@ GOLDEN_DIR = Path(__file__).parent / "cli-golden"
 _UPDATE = os.environ.get("DSF_UPDATE_CLI_SNAPSHOTS") == "1"
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 _RUNNER = CliRunner()
+_SNAPSHOT_WIDTH = 80
 
 
 def _command_tree(
@@ -124,6 +126,23 @@ def _check(name: str, actual: str) -> None:
 
 
 _COMMAND_PATHS = sorted(_command_tree(app, ()))
+
+
+@pytest.fixture(scope="module", autouse=True)
+def pinned_rich_rendering() -> Iterator[None]:
+    """把 typer 的 rich 渲染参数钉死，让快照只反映命令自身口径、不反映跑它的机器。
+
+    typer 一见 ``GITHUB_ACTIONS`` / ``FORCE_COLOR`` 就把控制台切进「终端模式」：面板边框从
+    ``┌┐└┘`` 换成 ``╭╮╰╯``，宽度也从固定值换成实时探测值——同一份代码在本地和 CI 上会渲染
+    出两套字节。固定成「非终端 + 80 列」后，两平台采集结果一致。
+
+    Yields:
+        渲染参数被钉住期间让出控制权，退出时自动还原。
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(typer.rich_utils, "FORCE_TERMINAL", False)
+        patch.setattr(typer.rich_utils, "MAX_WIDTH", _SNAPSHOT_WIDTH)
+        yield
 
 
 @pytest.fixture(scope="module")

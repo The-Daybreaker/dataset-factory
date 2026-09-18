@@ -5,25 +5,25 @@
 
  单发打标：发图片或视频 + 指令，输出 caption；带 --session 续接即迭代改写。
 
-┌─ Options ───────────────────────────────────────────────────────────────────┐
-│ --message           -m      <str>                   打标指令（纯图轮可省，… │
-│ --prompt            -p      <str>                   基础提示词名称；续接已… │
-│ --skill             -s      <str>                   启用的                  │
-│                                                     skill（可多次）；缺省 … │
-│ --image             -i      <path>                  图片文件路径            │
-│ --video             -v      <path>                  视频文件路径（与        │
-│                                                     --image 互斥）          │
-│ --video-fps                 <int range> [1<=x<=10]  视频抽帧 fps（整型      │
-│                                                     1–10，默认 2）          │
-│                                                     [default: 2]            │
-│ --video-max-frames          <int>                   视频抽帧帧数上限（默认  │
-│                                                     16）                    │
-│                                                     [default: 16]           │
-│ --session                   <str>                   续接的会话              │
-│                                                     id；缺省新建会话        │
-│ --json                                              按 JSON 输出（会话 id … │
-│                                                     caption），供外部 agen… │
-│                                                     解析                    │
-│ --help                                              Show this message and   │
-│                                                     exit.                   │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌─ Options ────────────────────────────────────────────────────────────────────┐
+│ --message           -m      <str>                   打标指令（纯图轮可省， … │
+│ --prompt            -p      <str>                   基础提示词名称；续接已 … │
+│ --skill             -s      <str>                   启用的                   │
+│                                                     skill（可多次）；缺省沿… │
+│ --image             -i      <path>                  图片文件路径             │
+│ --video             -v      <path>                  视频文件路径（与 --imag… │
+│                                                     互斥）                   │
+│ --video-fps                 <int range> [1<=x<=10]  视频抽帧 fps（整型       │
+│                                                     1–10，默认 2）           │
+│                                                     [default: 2]             │
+│ --video-max-frames          <int>                   视频抽帧帧数上限（默认   │
+│                                                     16）                     │
+│                                                     [default: 16]            │
+│ --session                   <str>                   续接的会话               │
+│                                                     id；缺省新建会话         │
+│ --json                                              按 JSON 输出（会话 id +  │
+│                                                     caption），供外部 agent  │
+│                                                     解析                     │
+│ --help                                              Show this message and    │
+│                                                     exit.                    │
+└──────────────────────────────────────────────────────────────────────────────┘
