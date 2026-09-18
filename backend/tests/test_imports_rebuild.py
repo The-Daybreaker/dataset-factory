@@ -39,7 +39,7 @@ def test_rebuild_scans_current_files(tmp_path: Path, temp_data_root: Path) -> No
             response = await client.post(f"/api/workdirs/{origin.id}/imports/rebuild")
             assert response.status_code == 202
             task_id = response.json()["task_id"]
-            deadline = time.monotonic() + 5
+            deadline = time.monotonic() + 30
             while time.monotonic() < deadline:
                 task = (await client.get(f"/api/tasks/{task_id}")).json()
                 if task["status"] == "succeeded":
@@ -227,7 +227,7 @@ def test_import_and_rebuild_share_cross_process_lock(tmp_path: Path) -> None:
         text=True,
     )
     try:
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + 30
         while not ready.exists() and time.monotonic() < deadline:
             assert process.poll() is None, "持锁子进程提前退出"
             time.sleep(0.01)
@@ -239,10 +239,10 @@ def test_import_and_rebuild_share_cross_process_lock(tmp_path: Path) -> None:
             rebuild_import_records(tmp_path)
     finally:
         try:
-            process.communicate("\n", timeout=10)
+            process.communicate("\n", timeout=60)
         except subprocess.TimeoutExpired:
             process.kill()
-            process.communicate(timeout=10)
+            process.communicate(timeout=60)
 
     assert process.returncode == 0
     assert rebuild_import_records(tmp_path)["file_count"] == 0

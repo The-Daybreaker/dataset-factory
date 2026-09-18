@@ -383,7 +383,7 @@ def test_batch_removal_refuses_occupied_directory_without_changing_files(
             result = runner.invoke(app, ["batch", "rm", str(prepared), "s1", "--yes"])
         finally:
             release.set()
-        future.result(timeout=10)
+        future.result(timeout=30)
 
     assert result.exit_code == 1
     assert "占用" in result.stderr
@@ -433,7 +433,7 @@ root, ready, proceed = map(Path, sys.argv[1:])
 class WaitingCompleter(FakeCompleter):
     def complete(self, messages):
         ready.touch()
-        deadline = time.monotonic() + 20
+        deadline = time.monotonic() + 45
         while not proceed.exists():
             if time.monotonic() > deadline:
                 raise RuntimeError('test gate timed out')
@@ -451,18 +451,18 @@ assert report.status == 'interrupted', report
         text=True,
     )
     try:
-        deadline = time.monotonic() + 20
+        deadline = time.monotonic() + 45
         while not ready.exists() and process.poll() is None:
             assert time.monotonic() < deadline
             time.sleep(0.02)
         status = runner.invoke(app, ["batch", "status", str(prepared), "s1"])
         stopped = runner.invoke(app, ["batch", "stop", str(prepared), "s1"])
         proceed.touch()
-        stdout, stderr = process.communicate(timeout=20)
+        stdout, stderr = process.communicate(timeout=60)
     finally:
         if process.poll() is None:
             process.kill()
-            process.communicate(timeout=10)
+            process.communicate(timeout=30)
 
     assert process.returncode == 0, stdout + stderr
     assert status.exit_code == stopped.exit_code == 0, status.stderr + stopped.stderr

@@ -4,6 +4,7 @@
  * 为什么值得测：这层是「错误按层展示」的唯一出口——网络断、超时、后端报错三种
  * 情况在界面上要有各自的说法。mock fetch 就能模拟这三种失败，不必真起后端。
  */
+/** @vitest-environment node */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, api, errorMessage } from "./api";

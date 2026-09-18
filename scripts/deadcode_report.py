@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """死代码扫描（入站引用口径）：把「零入站引用」证明出来，而不是 grep 出来。
 
 为什么需要这件脚本：knip / vulture 这类工具各有口径盲区（vulture 看不见「只在 `__all__`

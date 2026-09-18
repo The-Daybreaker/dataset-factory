@@ -224,11 +224,11 @@ def test_cli_subprocess_deletes_only_confirmed_workdir(tmp_path: Path) -> None:
     ]
 
     refused = subprocess.run(  # noqa: S603 -- 固定解释器与测试生成的目录参数。
-        command, input=b"", capture_output=True, timeout=20, check=False
+        command, input=b"", capture_output=True, timeout=60, check=False
     )
     kept = (root / "a.jpg").read_bytes()
     deleted = subprocess.run(  # noqa: S603 -- 固定解释器与测试生成的目录参数。
-        [*command, "--yes"], input=b"", capture_output=True, timeout=20, check=False
+        [*command, "--yes"], input=b"", capture_output=True, timeout=60, check=False
     )
 
     assert refused.returncode == 2

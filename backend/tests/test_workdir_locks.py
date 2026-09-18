@@ -75,7 +75,7 @@ def workdir(tmp_path: Path, temp_data_root: Path) -> Path:
     return target
 
 
-def _wait_for_marker(marker: Path, deadline_seconds: float = 15.0) -> None:
+def _wait_for_marker(marker: Path, deadline_seconds: float = 45.0) -> None:
     """等子进程持锁成功的标记文件出现（子进程启动 + import 需要一点时间）。"""
     limit = time.monotonic() + deadline_seconds
     while time.monotonic() < limit:

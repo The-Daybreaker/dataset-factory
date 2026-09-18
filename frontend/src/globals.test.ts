@@ -1,3 +1,4 @@
+/** @vitest-environment node */
 import { readFileSync } from "node:fs";
 import { parse } from "postcss";
 import { describe, expect, it } from "vitest";

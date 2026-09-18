@@ -12,7 +12,7 @@ backend | ruff check | fast | uv run ruff check .
 backend | ruff format | fast | uv run ruff format --check .
 backend | pyright strict | fast | uv run pyright
 backend | import-linter 架构契约 | fast | uv run lint-imports
-backend | pytest + 覆盖率 | fast | uv run pytest --cov=dataset_factory -q
+backend | pytest + 覆盖率（并行） | fast | uv run pytest --cov=dataset_factory -q -n auto
 backend | 核心覆盖率闸门 ≥80% | fast | uv run coverage report --include="*/dataset_factory/labeling/*,*/dataset_factory/strategies/*,*/dataset_factory/workdir/*,*/dataset_factory/runs/*,*/dataset_factory/export/*,*/dataset_factory/llm/*,*/dataset_factory/prompts/*,*/dataset_factory/skills/*,*/dataset_factory/sessions/*,*/dataset_factory/tasks/*" --fail-under=80
 backend | 入口层覆盖率闸门 cli ≥70% | fast | uv run coverage report --include="*/dataset_factory/cli/*" --fail-under=70
 backend | 入口层覆盖率闸门 api ≥70% | fast | uv run coverage report --include="*/dataset_factory/api/*" --fail-under=70

@@ -23,7 +23,11 @@ export default defineConfig({
     // uv run --project backend：用后端的 uv 环境（里面有 dataset_factory 与全部依赖）。
     // 前置 npm run build：serving.py 托管的是 frontend/dist 构建产物，不先构建就会
     // 「测的是上次构建的旧界面」（本地实锤过——改完源码忘了 build，e2e 红得莫名其妙）。
-    command: "npm run build --prefix ../frontend && uv run --project ../backend python serving.py",
+    // CI 上 dist 已由「Build frontend」步骤产出，再 build 一遍纯属重复；本地保留这层兜底
+    // （改完源码忘了 build 会「测的是旧界面」，本机实锤过）。
+    command: process.env.CI
+      ? "uv run --project ../backend python serving.py"
+      : "npm run build --prefix ../frontend && uv run --project ../backend python serving.py",
     url: `http://127.0.0.1:${PORT}/api/prompts`,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

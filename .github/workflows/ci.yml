@@ -49,7 +49,10 @@ jobs:
         run: uv run pre-commit run --all-files   # 钩子清单见仓库根 .pre-commit-config.yaml
 
       - name: Test + coverage
-        run: uv run pytest --cov=dataset_factory  # 跑测试 + 覆盖率（整体报告参考，不设硬门槛）
+        # -n auto：按 runner 核数并行（pytest-xdist）。前置条件是夹具之间不共享数据根——
+        # 全部测试走 monkeypatch.setenv("DATASET_FACTORY_HOME", tmp) 与随机空闲端口，
+        # 实锤记录见 process/review-refactor.md 的 G5 节；本地与 CI 同一口径。
+        run: uv run pytest --cov=dataset_factory -n auto
 
       - name: Core coverage gate (≥80%)
         run: >-                                   # 核心模块（labeling/llm/prompts/skills/sessions + 二期新增的 strategies/workdir/runs/tasks）行覆盖率 ≥80% 才算过；入口层单独设门槛（见下一步骤），整体不设硬门槛（goal B3）
@@ -125,17 +128,33 @@ jobs:
           npm run gen:api
           git diff --exit-code -- src/api-types.gen.ts
 
+      # 以下三步与平台无关（Biome / tsc / Vite 都是同一份 JS 实现，产物字节一致），
+      # 只在 ubuntu 侧跑一遍；Windows 侧保留 npm ci + 生成类型漂移检查 + Vitest
+      # （Vitest 跑的是真实源码在 Windows 路径分隔符下的行为，平台敏感）。
       - name: Lint (Biome)
+        if: matrix.os == 'ubuntu-latest'
         run: npm run lint
 
       - name: Type check (tsc --noEmit)
-        run: npm run typecheck                    # 类型检查独立成步：Vite 构建只转译、不做类型检查
+        if: matrix.os == 'ubuntu-latest'
+        run: npm run typecheck                    # 类型检查独立成步：Vite 构建只转译、不做类型检查                    # 类型检查独立成步：Vite 构建只转译、不做类型检查
 
       - name: Test (Vitest)
         run: npm run test
 
       - name: Build (Vite)
+        if: matrix.os == 'ubuntu-latest'
         run: npm run build
+
+      # dist 交给 e2e 复用：E2E 的被测服务托管的就是构建产物，过去它自己再 build 一遍
+      # （加上 webServer 内的第三遍，一次 CI 构建三次）。
+      - name: Upload dist (for e2e)
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 1
 
   api-contract:
     name: "api-contract (breaking changes)"
@@ -167,6 +186,7 @@ jobs:
   e2e:
     name: "e2e (browser)"
     runs-on: ubuntu-latest
+    needs: frontend                               # 复用 frontend job 的 dist 产物，不再重复构建
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -191,18 +211,32 @@ jobs:
             frontend/package-lock.json
             e2e/package-lock.json
 
-      - name: Build frontend
-        run: npm ci && npm run build              # 后端托管的是构建产物，E2E 前必须先 build
+      - name: Download dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist                     # 被测服务托管的就是构建产物，来自 frontend job
         working-directory: frontend
 
       - name: Install e2e deps
         run: npm ci
         working-directory: e2e
 
+      - name: Cache Playwright browser
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('e2e/package-lock.json') }}
+          restore-keys: playwright-${{ runner.os }}-
+
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
         working-directory: e2e
 
       - name: Run E2E
-        run: npx playwright test
+        # 视觉与请求基线（visual-baseline）在 CI 上跳过：那 12 屏快照的盒尺寸依赖本机字体
+        # 度量（本仓基线在 Windows 上采集），Linux runner 上没有对应字体必然报差。
+        # 它由本地 scripts/verify.sh --all 每次都跑，是「改前/改后逐屏 0 差异」的那道门；
+        # CI 侧的界面断言仍由功能 E2E（含精确 px 与计算色值断言）在双系统上承担。
+        run: npx playwright test --grep-invert "视觉与请求基线"
         working-directory: e2e

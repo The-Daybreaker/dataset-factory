@@ -24,11 +24,18 @@ test("技能拖入、正文与描述写回经真实接口保存并刷新恢复",
   await page.getByLabel("技能描述").fill("Updated description");
   await page.getByRole("button", { name: "保存更改" }).click();
   await expect(page.getByRole("button", { name: "保存更改" })).toBeDisabled();
-  const result = await request.get("/api/skills/e2e-caption/files/SKILL.md");
-  expect(result.ok()).toBeTruthy();
-  const saved = (await result.json()).content;
-  expect(saved).toContain("Updated description");
-  expect(saved).toContain("Updated instructions");
+  // 「保存更改」按钮变灰只代表前端认为写完了，落盘与登记是服务端另一回事：直接 GET 一次
+  // 会在写可见之前读到旧内容（Linux runner 上实弹过一次）。改成轮询到内容落地再断言。
+  let saved = "";
+  await expect
+    .poll(async () => {
+      const result = await request.get("/api/skills/e2e-caption/files/SKILL.md");
+      if (!result.ok()) return "";
+      const body: { content?: string } = await result.json();
+      saved = body.content ?? "";
+      return saved.includes("Updated description") && saved.includes("Updated instructions");
+    })
+    .toBe(true);
   expect(saved).toContain("license: MIT");
   await expect(editor).toHaveValue(saved);
   await page.screenshot({ path: testInfo.outputPath("skill-light.png") });

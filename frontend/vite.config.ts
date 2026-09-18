@@ -24,5 +24,11 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test-setup.ts"],
+    // 每个测试文件建一个 jsdom 要 ~218ms（26 个文件 ≈ 5.7s，是墙钟的三分之一）。
+    // vmThreads + 不隔离 = 同一 worker 内复用环境；跨文件全局状态本来就由
+    // test-setup 的 afterEach cleanup 与逐文件 vi.mock 管住，改完连跑结果一致（见
+    // process/review-refactor.md G5 节）。纯逻辑的四个文件另走 node 环境（省 jsdom）。
+    pool: "vmThreads",
+    isolate: false,
   },
 });
