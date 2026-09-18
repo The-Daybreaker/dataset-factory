@@ -1,0 +1,41 @@
+$ dsf workdir list
+退出码：0
+---- 输出 ----
+[]
+
+$ dsf prompt list
+退出码：0
+---- 输出 ----
+详细描述	通用主力——三到五句自然语言详细描述，覆盖主体到光影风格。
+
+$ dsf skill list
+退出码：0
+---- 输出 ----
+（skill 库为空——dsf skill import <目录> 导入）
+
+$ dsf session list
+退出码：0
+---- 输出 ----
+（还没有会话——dsf label / dsf chat 会自动创建）
+
+$ dsf strategy list
+退出码：0
+---- 输出 ----
+[]
+
+$ dsf config show
+退出码：0
+---- 输出 ----
+配置名:   （未配置）
+base_url: （未配置——dsf config add 添加或在 Web 设置页添加）
+model:    （未配置——dsf config add 添加或在 Web 设置页添加）
+api_key:  （未配置——dsf config add 添加、设置页添加或环境变量 DSF_API_KEY）
+
+$ dsf batch list --workdir missing
+退出码：2
+---- 输出 ----
+Usage: root batch list [OPTIONS] {path}
+Try 'root batch list --help' for help.
+┌─ Error ─────────────────────────────────────────────────────────────────────┐
+│ No such option: --workdir                                                   │
+└─────────────────────────────────────────────────────────────────────────────┘

@@ -1,0 +1,37 @@
+# verify 步骤清单 —— 本地全门禁的唯一事实源
+#
+# 为什么要这份清单：memory 50⑧ 与 61③ 记过两次同一事故——「本地只跑了 pytest 就以为绿了，
+# 推到 CI 才被 pyright / 格式 / 文档构建红灯」。这份清单把 CI 的步骤原样搬到本地一条命令里，
+# Windows（verify.ps1）与 *nix / Git Bash（verify.sh）读同一份，步骤不会两边漂移。
+#
+# 格式：组 | 步骤名 | 档位 | 命令（组名即工作目录，命令在该目录下用系统 shell 执行）
+#   档位 fast = 每次提交前都该跑；slow = 耗时长（起浏览器），收口时跑。
+# 顺序即执行顺序；任一步非 0 退出即整体失败（快速失败，不吞红灯）。
+
+backend | ruff check | fast | uv run ruff check .
+backend | ruff format | fast | uv run ruff format --check .
+backend | pyright strict | fast | uv run pyright
+backend | import-linter 架构契约 | fast | uv run lint-imports
+backend | pytest + 覆盖率 | fast | uv run pytest --cov=dataset_factory -q
+backend | 核心覆盖率闸门 ≥80% | fast | uv run coverage report --include="*/dataset_factory/labeling/*,*/dataset_factory/strategies/*,*/dataset_factory/workdir/*,*/dataset_factory/runs/*,*/dataset_factory/export/*,*/dataset_factory/llm/*,*/dataset_factory/prompts/*,*/dataset_factory/skills/*,*/dataset_factory/sessions/*,*/dataset_factory/tasks/*" --fail-under=80
+backend | 入口层覆盖率闸门 cli ≥70% | fast | uv run coverage report --include="*/dataset_factory/cli/*" --fail-under=70
+backend | 入口层覆盖率闸门 api ≥70% | fast | uv run coverage report --include="*/dataset_factory/api/*" --fail-under=70
+backend | OpenAPI 快照漂移 | fast | uv run python scripts/export_openapi.py --output openapi.generated.json
+backend | OpenAPI 快照比对 | fast | git diff --exit-code --no-index -- openapi.json openapi.generated.json
+backend | OpenAPI 临时件清理 | fast | uv run python -c "import pathlib; pathlib.Path('openapi.generated.json').unlink(missing_ok=True)"
+backend | mkdocs --strict | fast | uv run mkdocs build --strict
+backend | pre-commit 全仓卫生 | fast | uv run pre-commit run --all-files
+
+frontend | 生成类型漂移检查 | fast | npm run gen:api
+frontend | 生成类型比对 | fast | git diff --exit-code -- src/api-types.gen.ts
+frontend | Biome | fast | npm run lint
+frontend | tsc | fast | npm run typecheck
+frontend | Vitest | fast | npm run test
+frontend | Vite build | fast | npm run build
+
+repo | 度量：重复实现与规模 | fast | python scripts/measure_metrics.py --json .verify/metrics.json
+repo | 度量：入站引用死代码报告 | fast | python scripts/deadcode_report.py
+frontend | 度量：knip + depcheck（只报不卡） | slow | npx knip --no-progress || true
+backend | 度量：vulture + deptry（只报不卡） | slow | uv run vulture src --min-confidence 80 || true
+
+e2e | Playwright 全量（含视觉与请求基线） | slow | npx playwright test

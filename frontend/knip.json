@@ -1,0 +1,6 @@
+{
+  "$schema": "https://unpkg.com/knip@latest/schema.json",
+  "entry": ["src/main.tsx", "src/test-setup.ts", "vite.config.ts"],
+  "ignore": ["src/api-types.gen.ts"],
+  "ignoreDependencies": ["depcheck"]
+}

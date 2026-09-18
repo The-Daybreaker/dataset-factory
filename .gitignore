@@ -25,6 +25,9 @@ frontend/tsconfig.tsbuildinfo
 .coverage.*
 htmlcov/
 
+# 本地全门禁与视觉基线的本机产物（verify 输出、截图对照，不入仓）
+.verify/
+
 # Playwright（E2E）运行产物
 test-results/
 playwright-report/

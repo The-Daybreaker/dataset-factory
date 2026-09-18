@@ -11,6 +11,8 @@ export default defineConfig({
   // 失败即停：冒烟套件不需要全量重跑浪费时间；traces 留给失败时诊断。
   fullyParallel: false,
   workers: 1,
+  // 快照名不带平台后缀：探针取的是 CSS 计算值，Win/Linux 上同一份代码应当同一结果。
+  snapshotPathTemplate: "{testDir}/{testFileDir}/{testFileName}-snapshots/{arg}{ext}",
   retries: 0,
   use: {
     baseURL: `http://127.0.0.1:${PORT}`,

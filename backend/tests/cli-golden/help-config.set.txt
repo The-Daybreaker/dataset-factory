@@ -1,0 +1,15 @@
+退出码：0
+---- 输出 ----
+
+ Usage: root config set [OPTIONS]
+
+ 设置端点配置：更新当前使用的配置（没有则创建 default 并启用）；API
+ 密钥交互输入（不回显）。
+
+┌─ Options ───────────────────────────────────────────────────────────────────┐
+│ *  --base-url        <str>  OpenAI 兼容端点地址（如                         │
+│                             https://api.example.com/v1）                    │
+│                             [required]                                      │
+│ *  --model           <str>  模型名 [required]                               │
+│    --help                   Show this message and exit.                     │
+└─────────────────────────────────────────────────────────────────────────────┘

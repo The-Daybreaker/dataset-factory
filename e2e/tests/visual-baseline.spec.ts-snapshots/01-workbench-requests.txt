@@ -1,0 +1,5 @@
+GET /api/prompts
+GET /api/skills
+GET /api/endpoints
+GET /api/sessions/latest
+GET /api/prompts/详细描述

@@ -1,0 +1,63 @@
+共 62 条命令
+batch add
+batch edit
+batch exclude
+batch hide
+batch items
+batch list
+batch retry add
+batch retry clear
+batch retry list
+batch retry remove
+batch rm
+batch show
+batch status
+batch stop
+batch unhide
+chat
+config add
+config list
+config params
+config remove
+config set
+config show
+config test
+config use
+export plan
+export run
+label
+prompt list
+prompt rename
+prompt rm
+prompt save
+prompt show
+run
+serve
+session list
+session show
+skill disable
+skill enable
+skill files
+skill import
+skill list
+skill read
+skill rm
+strategy add
+strategy copy
+strategy edit
+strategy list
+strategy rebind
+strategy rm
+strategy show
+workdir add
+workdir cleanup
+workdir cleanup-old
+workdir cleanup-runs
+workdir import
+workdir list
+workdir rebuild-imports
+workdir reimport
+workdir relocate
+workdir rm
+workdir show
+workdir verify
