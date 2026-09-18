@@ -1,10 +1,14 @@
-"""跨模块共享的底层存储工具：数据根定位 + 原子写。
+"""跨模块共享的底层存储与内容指纹工具：数据根定位 + 原子写 + 文件哈希 + 规范 JSON 哈希 + 路径段判定。
 
 llm（配置与密钥）、prompts、skills、sessions 都要「按数据根存文件、且崩溃不留半个损坏
 文件」。把这两件 correctness-critical、与具体数据域无关的事收敛到一处，各域复用、只负责
 把自己的错误消息套上去——本模块只抛标准 OSError / UnicodeEncodeError，不掺任何域专属异常
 （否则会反向依赖某个数据域，破坏分层）。
 
+- 内容指纹：`hash_file`（整文件 SHA-256）与 `canonical_sha256`（键排序 JSON 的 SHA-256）
+  全项目只此一份口径——快照哈希、策略内容哈希、导入记录哈希必须能互相对得上；
+- 名字能不能当目录里的一个文件名，统一由 `is_single_path_segment` 判（各域再按自己的
+  严格程度追加禁字符，见调用点）；
 - 数据根：环境变量 DATASET_FACTORY_HOME 覆盖，否则 ~/.dataset_factory；
 - 原子写：同目录临时文件 + fsync + os.replace（POSIX 下再刷父目录项），外界要么看到
   旧文件、要么看到新文件。
@@ -12,6 +16,8 @@ llm（配置与密钥）、prompts、skills、sessions 都要「按数据根存�
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import tempfile
 import time
@@ -106,3 +112,59 @@ def _fsync_directory(directory: Path) -> None:
         pass
     finally:
         os.close(fd)
+
+
+_NUL = chr(0)  # 源码里写 NUL 转义易被工具链吞成裸字节，这里按码位取。
+
+
+def hash_file(path: Path) -> str:
+    """一个文件的 SHA-256（`hashlib.file_digest`：C 级分块读，不把整文件拉进内存）。
+
+    Args:
+        path: 要哈希的文件。
+
+    Returns:
+        小写十六进制摘要。
+
+    Raises:
+        OSError: 文件打不开或读失败。
+    """
+    with path.open("rb") as handle:
+        return hashlib.file_digest(handle, "sha256").hexdigest()
+
+
+def canonical_sha256(data: object) -> str:
+    """结构化内容的规范哈希：键排序、保留非 ASCII 的 JSON，再取 SHA-256。
+
+    快照与库策略内容共用这一份口径——两侧各自实现时，一处改了排序或编码，
+    「从库更新」的就地比对就会静默失真。
+
+    Args:
+        data: 可 JSON 序列化的结构（dict / list / 标量）。
+
+    Returns:
+        小写十六进制摘要。
+    """
+    canonical = json.dumps(data, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def is_single_path_segment(name: str) -> bool:
+    """这个名字能不能当「某个目录里的一个文件名」用。
+
+    三件底线：不含 NUL、不含两种路径分隔符、且 ``Path(name).name`` 不改变它（挡掉
+    ``a/b``、绝对路径）。各域若要更严（空名、Windows 禁 ``<>:"|?*`` 与控制字符等），
+    在本判定之上再加自己的字符集——判定集合与替换前逐字一致，不顺手收紧。
+
+    Args:
+        name: 待判的名字。
+
+    Returns:
+        是单段安全名字返回 True。
+    """
+    return (
+        _NUL not in name
+        and "/" not in name
+        and "\\" not in name
+        and Path(name).name == name
+    )

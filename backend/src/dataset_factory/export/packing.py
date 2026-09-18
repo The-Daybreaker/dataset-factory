@@ -11,6 +11,7 @@ from pathlib import Path
 from threading import Event
 from zipfile import ZIP_DEFLATED, ZipFile
 
+from .._fs import is_single_path_segment
 from ..tasks import TaskCancelledError
 from ..workdir.assets import (
     ASSET_EXTENSIONS,
@@ -218,11 +219,8 @@ def write_export(
         for name in (row.asset_name, row.caption_name):
             if (
                 not name
-                or Path(name).name != name
-                or "/" in name
-                or "\\" in name
-                or "\x00" in name
-                or name.casefold() in names
+                or not is_single_path_segment(name)
+                or (name.casefold() in names)
             ):
                 raise ExportError("导出文件名存在路径或配对冲突，请重新生成导出计划。")
             names.add(name.casefold())

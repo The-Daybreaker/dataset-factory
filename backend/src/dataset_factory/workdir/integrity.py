@@ -9,6 +9,7 @@ from pathlib import Path
 from threading import Event
 from typing import Literal
 
+from .._fs import is_single_path_segment
 from ..tasks import TaskCancelledError
 from .assets import confine_to_workdir, registered_origins
 from .errors import AssetPathError, WorkdirPathError
@@ -33,7 +34,7 @@ class IntegrityItem:
 
 def _registered_path(workdir: Path, name: str) -> Path:
     """验证登记文件名后解析目录内文件，拒绝跨平台路径穿越。"""
-    if Path(name).name != name or "/" in name or "\\" in name or "\x00" in name:
+    if not is_single_path_segment(name):
         raise AssetPathError("登记文件名含路径分隔符，无法安全读取。")
     return confine_to_workdir(workdir, workdir / name)
 

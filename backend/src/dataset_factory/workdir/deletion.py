@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import shutil
@@ -10,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from .._fs import atomic_write_text, data_root
+from .._fs import atomic_write_text, data_root, hash_file
 from .errors import WorkdirPathError
 from .locks import (
     RunLock,
@@ -64,8 +63,7 @@ def _files(root: Path) -> dict[str, tuple[int, str]]:
                 continue
             if not path.is_file():
                 raise WorkdirPathError("工作目录包含非普通文件，请检查后再删除。")
-            with path.open("rb") as handle:
-                digest = hashlib.file_digest(handle, "sha256").hexdigest()
+            digest = hash_file(path)
             result[str(relative)] = (path.stat().st_size, digest)
     return result
 

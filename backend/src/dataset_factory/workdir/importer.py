@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .._fs import hash_file
 from ..llm import (
     IMAGE_EXTENSIONS,
     MAX_IMAGE_BYTES,
@@ -130,19 +131,6 @@ def _scan_assets(directory: Path) -> tuple[list[_Candidate], list[dict[str, str]
             continue
         candidates.append(_Candidate(name=entry.name, path=entry, size=size))
     return candidates, rejected
-
-
-def hash_file(path: Path) -> str:
-    """分块计算一个文件的 SHA-256（不整读进内存）。
-
-    导入记录与续跑判定的素材哈希共用（runs 执行器的断点续跑跳过判定也用它）——
-    「素材哈希」全项目只有一种算法口径。
-    """
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        while chunk := handle.read(_CHUNK_BYTES):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _copy_into_workdir(store: WorkdirStore, source_file: Path, dest_name: str) -> str:

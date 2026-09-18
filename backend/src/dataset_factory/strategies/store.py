@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import secrets
@@ -24,7 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from .._fs import atomic_write_text, data_root
+from .._fs import atomic_write_text, canonical_sha256, data_root
 from ..llm.endpoints import has_config as _endpoint_exists
 from ..prompts.store import list_prompts
 from ..skills.store import list_skills
@@ -365,5 +364,4 @@ def strategy_content_hash(entry: LibraryStrategy) -> str:
         "prompt": entry.prompt,
         "skills": entry.skills,
     }
-    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return canonical_sha256(payload)

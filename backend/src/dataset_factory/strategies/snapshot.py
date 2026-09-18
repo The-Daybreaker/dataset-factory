@@ -15,11 +15,11 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import asdict, dataclass, field
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, cast
 
+from .._fs import canonical_sha256
 from ..llm.endpoints import (
     SUPPORTED_API_FORMAT,
     read_config_data,
@@ -45,12 +45,6 @@ def tool_version() -> str:
 def _sha256_text(text: str) -> str:
     """文本内容哈希（UTF-8 字节的 SHA-256）。"""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _sha256_canonical(data: object) -> str:
-    """结构化内容的规范哈希（键排序 JSON，同 strategy_content_hash 的口径）。"""
-    canonical = json.dumps(data, ensure_ascii=False, sort_keys=True)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 @dataclass
@@ -130,7 +124,7 @@ def build_snapshot(
         "api_format": str(config.get("api_format") or SUPPORTED_API_FORMAT),
         "request_params": validated_request_params(config, endpoint_name),
     }
-    endpoint_block["sha256"] = _sha256_canonical(
+    endpoint_block["sha256"] = canonical_sha256(
         {
             key: endpoint_block[key]
             for key in ("base_url", "model", "api_format", "request_params")
