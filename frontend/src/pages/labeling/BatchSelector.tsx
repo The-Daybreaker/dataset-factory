@@ -188,7 +188,10 @@ export function BatchSelector({
                       {candidate.id}
                     </span>
                     {isCurrent && (
-                      <CheckIcon aria-hidden="true" className="size-4 shrink-0 text-ok-ink" />
+                      <CheckIcon
+                        aria-hidden="true"
+                        className="size-4 shrink-0 text-ok-ink"
+                      />
                     )}
                   </DropdownMenuItem>
                 );
