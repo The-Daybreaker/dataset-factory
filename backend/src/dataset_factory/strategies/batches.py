@@ -379,6 +379,14 @@ def delete_batch(
     运行锁阻止删除正在写出的产物。调用方提供附属状态清理函数，使跨域名单
     与批次条目在同一次状态写入中出清；回调只修改传入字典，不另写文件。
 
+    **文件删除留在状态锁外**：状态临界区只放「读—改—写 state.json」那几毫秒，
+    产物可能有几百个文件，逐条 unlink 是系统调用密集的操作，压在临界区里会把
+    其它写者（改名单 / 改名 / 跑批收尾出列）挡到状态锁的宽超时上、误报成
+    「状态锁卡死」。顺序取「先提交状态、再删文件」：万一删到一半失败，留下的是
+    批次已不存在、盘上却还有 `s<N>__*.txt` 的**无主产物**——它正是清理区
+    「清理无素材产物」认得、且用户能自己处置的那一类；反过来先删文件再提交状态，
+    失败会留下「批次还在、产物已少一半」的坏批次，那是用户看不见的窟窿。
+
     Returns:
         删除的产物 txt 数（历史 runs/ 保留）。
 
@@ -387,35 +395,35 @@ def delete_batch(
     """
     get_batch(workdir, seq)  # 不存在先报错，失败时现场不动
     store = WorkdirStore(workdir)
-
-    def mutator(state: dict[str, object]) -> int:
-        entries = _entries_from_state(state)
-        _require_entry(entries, seq)
-        seq_floor = max((item.seq for item in entries), default=0) + 1
-        _entries_into_state(
-            state,
-            [item for item in entries if item.seq != seq],
-            seq_floor=seq_floor,
-        )
-        exclusions = _exclusions_from_state(state)
-        exclusions.pop(str(seq), None)
-        state["exclusions"] = exclusions
-        if cleanup_state is not None:
-            cleanup_state(state)
+    lock = RunLock(store.dsf_path)
+    lock.acquire({"pid": os.getpid(), "batch": f"s{seq}", "operation": "delete-batch"})
+    try:
         products = list(store.dsf_path.parent.glob(product_pattern(seq)))
         for product in products:
             store.validate_cleanup_path(product)
         snapshot_path = store.strategies_dir / f"s{seq}.json"
         store.validate_cleanup_path(snapshot_path)
+
+        def mutator(state: dict[str, object]) -> None:
+            entries = _entries_from_state(state)
+            _require_entry(entries, seq)
+            seq_floor = max((item.seq for item in entries), default=0) + 1
+            _entries_into_state(
+                state,
+                [item for item in entries if item.seq != seq],
+                seq_floor=seq_floor,
+            )
+            exclusions = _exclusions_from_state(state)
+            exclusions.pop(str(seq), None)
+            state["exclusions"] = exclusions
+            if cleanup_state is not None:
+                cleanup_state(state)
+
+        store.mutate_state(mutator)
         for product in products:
             product.unlink()
         snapshot_path.unlink(missing_ok=True)
         return len(products)
-
-    lock = RunLock(store.dsf_path)
-    lock.acquire({"pid": os.getpid(), "batch": seq, "operation": "delete-batch"})
-    try:
-        return store.mutate_state(mutator)
     finally:
         lock.release()
 

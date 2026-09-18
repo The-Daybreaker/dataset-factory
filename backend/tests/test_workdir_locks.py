@@ -28,6 +28,7 @@ from dataset_factory.workdir import (
     RunOccupiedError,
     StateLock,
     StateLockTimeoutError,
+    WorkdirMaintenanceError,
     WorkdirPathError,
     WorkdirStore,
 )
@@ -202,6 +203,45 @@ def test_run_lock_waits_for_short_maintenance_guard(workdir: Path) -> None:
     assert not contender.is_alive()
     assert errors == []
     assert acquired.is_set()
+
+
+def test_maintenance_contention_reports_its_own_error(workdir: Path) -> None:
+    """维护锁被占时报「目录正在搬迁或删除」——不张冠李戴成「有跑批在跑」。
+
+    两者都劝用户等会儿再来，但占用者不同：报成 run-occupied，界面会提示
+    「等它结束或停止后再试」，而用户根本没有在跑批、找不到那个入口。
+    """
+    entered = threading.Event()
+    release = threading.Event()
+    acquired = threading.Event()
+    errors: list[Exception] = []
+
+    def holder_body() -> None:
+        with maintenance_guard(workdir, timeout=5):
+            entered.set()
+            release.wait(5)
+
+    def contender_body() -> None:
+        try:
+            with maintenance_guard(workdir):
+                acquired.set()
+        except WorkdirMaintenanceError as exc:
+            errors.append(exc)
+        finally:
+            release.set()
+
+    holder = threading.Thread(target=holder_body)
+    holder.start()
+    assert entered.wait(5)
+    contender = threading.Thread(target=contender_body)
+    contender.start()
+    contender.join(5)
+    holder.join(5)
+
+    assert not contender.is_alive()
+    assert not acquired.is_set()
+    assert len(errors) == 1
+    assert "搬迁" in str(errors[0])
 
 
 @pytest.mark.parametrize("stop", [False, True])

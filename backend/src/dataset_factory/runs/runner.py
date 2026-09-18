@@ -161,12 +161,20 @@ class RunStartedEvent:
 
 @dataclass(frozen=True)
 class ItemUpdatedEvent:
-    """item-updated：条目状态变化（started = 开始打标；succeeded / failed = 终态）。"""
+    """item-updated：条目状态变化（started = 开始打标；succeeded / failed = 终态）。
+
+    Attributes:
+        can_retry: 这条结果之后「能不能把它加进重试列表」——由服务端按
+            :data:`RETRYABLE_REASON_CODES` 现判后随帧下发。前端不必自己维护一份
+            原因码清单（那是同一份事实的第二个来源，后端加码时前端会滞后到下一次
+            全量刷新才纠正）。
+    """
 
     item: str
     batch: int
     status: str
     attempt: int
+    can_retry: bool
     reason_code: str | None = None
     message: str | None = None
 
@@ -182,6 +190,7 @@ class ItemUpdatedEvent:
             "batch": self.batch,
             "status": self.status,
             "attempt": self.attempt,
+            "can_retry": self.can_retry,
             "reason_code": self.reason_code,
             "message": self.message,
         }
@@ -380,13 +389,16 @@ class BatchRunner:
         acquire 也在 try/finally 内：抢锁成功后的任何失败（如 run-info 写盘，
         虽已被 RunLock 内部消化）都必须走到 release——锁泄漏等于该工作目录
         死锁到进程重启，违背文件锁「无需人工清理」的选型根基。
+
+        快照只在锁内读一次：锁外先读一份「探路」看似能省一次抢锁，但那份值
+        随即作废、真正执行用的还是锁内这份——两次读盘换不来任何保证，只让
+        读者猜哪份才算数（快照被并发改写时尤其误导）。
         """
         entry = get_batch(self._workdir, self._seq)
         if not entry.active:
             raise BatchInactiveError(
                 f"批次 s{self._seq} 已停用（隐藏）——请先在批次列表里「显示」再跑批。"
             )
-        snapshot = read_snapshot(self._workdir, self._seq)
         store = WorkdirStore(self._workdir)
         lock = RunLock(store.dsf_path)
         lock.acquire(
@@ -544,7 +556,15 @@ class BatchRunner:
             True = 最终成功（重试模式出列用）；False = 失败、素材缺失或中途中断。
         """
         self._emit(
-            ItemUpdatedEvent(item=item, batch=self._seq, status="started", attempt=0)
+            ItemUpdatedEvent(
+                item=item,
+                batch=self._seq,
+                status="started",
+                attempt=0,
+                # 刚开始打，条目此刻是「排队中」——排队中没什么可重试的（下一次
+                # 全量跑批本来就会打它），与条目视图 can_retry 的判定同口径。
+                can_retry=False,
+            )
         )
 
         attempt = 0
@@ -597,6 +617,8 @@ class BatchRunner:
                     batch=self._seq,
                     status="failed",
                     attempt=attempt,
+                    # 与条目视图同一份判定：可重试类失败才给「加入重试」。
+                    can_retry=failure.reason_code in RETRYABLE_REASON_CODES,
                     reason_code=failure.reason_code,
                     message=_one_line(failure.message),
                 )
@@ -692,7 +714,12 @@ class BatchRunner:
         self._counters["attempted"] += 1
         self._emit(
             ItemUpdatedEvent(
-                item=item, batch=self._seq, status="succeeded", attempt=attempt
+                item=item,
+                batch=self._seq,
+                status="succeeded",
+                attempt=attempt,
+                # 已完成条目可以重打（覆盖旧产物），与条目视图同口径。
+                can_retry=True,
             )
         )
         journal.append_log_line(f"[{_utc_now_compact()}] {item} 尝试 {attempt} 成功")

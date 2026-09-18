@@ -12,6 +12,8 @@ export interface WorkdirBatches {
   id: string;
   title: string;
   batches: components["schemas"]["BatchView"][];
+  /** 工作目录的规范绝对路径——胶囊被截断时靠它做悬停兜底（原型明写的用意）。 */
+  path?: string;
   error?: string;
 }
 
@@ -26,7 +28,24 @@ interface Props {
   onChange: (value: BatchSelection) => void;
   onSettings?: (wid: string) => void;
   onNewStrategy?: (wid: string) => void;
+  /** 当前批次的运行状态（跑批中 / 已完成 / 已中断 / 失败），无运行记录时为 null。 */
+  runState?: string | null;
 }
+
+/**
+ * 运行状态章的配方（顶栏胶囊第三段）。
+ *
+ * 取值沿用原型实测：已完成 = ink 实底 + `--on-ink` 字（暗色随 n-0 翻深，与
+ * ui-spec 5.2「状态章实底彩字」一致）；已中断 = 中性浅底 + 次级文字（原型实测
+ * `rgb(242,244,247)` 即本仓的 `--muted`）；跑批中 = 信息蓝实底。
+ */
+const RUN_STATE_BADGES: Record<string, { text: string; tone: string }> = {
+  running: { text: "跑批中", tone: "bg-info-ink text-on-ink" },
+  pending: { text: "跑批中", tone: "bg-info-ink text-on-ink" },
+  completed: { text: "已完成", tone: "bg-ok-ink text-on-ink" },
+  interrupted: { text: "已中断", tone: "bg-muted text-text-3" },
+  failed: { text: "失败", tone: "bg-bad-ink text-on-ink" },
+};
 
 /** 目录是分组，只有启用的批次可被选中；切换时一次传递完整身份。 */
 export function BatchSelector({
@@ -35,12 +54,14 @@ export function BatchSelector({
   onChange,
   onSettings,
   onNewStrategy,
+  runState,
 }: Props) {
   const [open, setOpen] = useState(false);
   const directory = workdirs.find((entry) => entry.id === value?.workdirId);
   const batch = directory?.batches.find(
     (entry) => entry.id === value?.batchId && entry.active,
   );
+  const badge = batch && runState ? RUN_STATE_BADGES[runState] : undefined;
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -48,15 +69,26 @@ export function BatchSelector({
         <button
           type="button"
           aria-label="选择工作目录与批次"
+          title={
+            directory?.path
+              ? `${directory.path}${batch ? ` / ${batch.name} · ${batch.id}` : ""}`
+              : undefined
+          }
           className="flex h-8.5 w-full min-w-0 items-center gap-2 rounded-lg border border-border bg-card px-3 text-t-md text-foreground hover:bg-accent"
         >
-          <FolderIcon className="size-4 shrink-0" />
           <span className="min-w-0 flex-1 truncate text-left font-medium">
             {directory?.title ?? "选择工作目录"}
           </span>
           {batch && (
             <span className="min-w-0 flex-1 truncate text-left text-t-sm text-muted-foreground">
               {batch.name} · {batch.id}
+            </span>
+          )}
+          {badge && (
+            <span
+              className={`inline-flex h-4.5 shrink-0 items-center rounded-full px-2 text-t-xs font-medium ${badge.tone}`}
+            >
+              {badge.text}
             </span>
           )}
           <ChevronDownIcon className="size-4 shrink-0" />

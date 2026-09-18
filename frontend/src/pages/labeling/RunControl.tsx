@@ -23,6 +23,22 @@ interface Props {
   onCurrentItem?: (item: string | null) => void;
   onImport?: () => void;
   externalRunId?: string;
+  /**
+   * 左列「重试列表」组头发起的开始重试请求（令牌式触发：值变化即发车）。
+   *
+   * 为什么用令牌而不是把 `start` 提上去：`start` 要用本组件的生命周期代次
+   * （`lifecycle`）做迟到响应护栏，提到父层就得把整套护栏也搬上去。令牌只
+   * 传「点了」这一个事实，动作仍由持有护栏的这里执行——与页面别处
+   * 「revision 计数器驱动重取」是同一个范式。
+   */
+  retryRequest?: number;
+  /**
+   * 报告本批次运行状态的每一次变化（进行中与终态都报），供顶栏状态章显示。
+   *
+   * 报的是「服务端说的事实」：受理成功报 running、SSE 终态报 run-finished 里的
+   * status、轮询到已在进行中的运行也报它自己的 status——父层不必自己猜状态。
+   */
+  onRunStatus?: (status: string) => void;
 }
 
 /** 断流不代表运行结束，重连前用 current 确认运行并刷新条目。 */
@@ -34,6 +50,8 @@ export function RunControl({
   onItemUpdate,
   onCurrentItem,
   externalRunId,
+  retryRequest,
+  onRunStatus,
 }: Props) {
   const [unimported, setUnimported] = useState<
     readonly { name: string; reason: string | null }[]
@@ -54,6 +72,8 @@ export function RunControl({
   itemRef.current = onItemUpdate;
   const currentItemRef = useRef(onCurrentItem);
   currentItemRef.current = onCurrentItem;
+  const runStatusRef = useRef(onRunStatus);
+  runStatusRef.current = onRunStatus;
 
   useEffect(() => {
     let source: EventSource | null = null;
@@ -109,6 +129,7 @@ export function RunControl({
         }
         observed = true;
         setStatus(view);
+        runStatusRef.current?.(view.status);
         setCurrent(view.current_item);
         if (view.current_item) currentItemRef.current?.(view.current_item);
         if (streamFailed) {
@@ -216,6 +237,7 @@ export function RunControl({
                     ? data.error
                     : "运行失败，请查看运行日志。",
                 );
+              runStatusRef.current?.(String(data.status));
               finish();
             }
           } catch {
@@ -264,6 +286,7 @@ export function RunControl({
           current_item: null,
           error: null,
         });
+        runStatusRef.current?.("running");
         setAcceptedRunId(accepted.run_id);
       } catch (reason) {
         if (lifecycle.current === generation) setError(errorMessage(reason));
@@ -277,6 +300,13 @@ export function RunControl({
     },
     [batch, wid],
   );
+
+  // 左列组头的「开始重试」：令牌从 0 起，父层点一次加一；切换批次时父层清零，
+  // 新挂载的组件因此不会被上一批次的令牌误触发。
+  useEffect(() => {
+    if (!retryRequest) return;
+    void start("retry");
+  }, [retryRequest, start]);
 
   const stop = useCallback(async () => {
     if (actionPending.current) return;

@@ -475,6 +475,38 @@ def test_delete_batch_removes_products_and_snapshot(
         get_batch(workdir, entry.seq)
 
 
+def test_delete_batch_commits_state_before_removing_files(
+    workdir: Path, assets: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """删批先提交状态、再删文件：删文件失败留下的是无主产物，不是「批次还在、产物少一半」。"""
+    entry = create_batch(
+        workdir,
+        name="策略",
+        description="",
+        endpoint="main",
+        prompt="详细描述",
+        skills=[],
+    )
+    product = workdir / "s1__cat_001.txt"
+    product.write_text("产物", encoding="utf-8")
+    original_unlink = Path.unlink
+
+    def _busy_product(self: Path, missing_ok: bool = False) -> None:
+        if self.suffix == ".txt":
+            raise PermissionError("产物被别的程序占用")
+        original_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", _busy_product)
+
+    with pytest.raises(PermissionError):
+        delete_batch(workdir, entry.seq)
+
+    monkeypatch.undo()
+
+    assert list_batches(workdir) == []
+    assert product.exists()
+
+
 def test_parse_seq_strict_format() -> None:
     """sN 解析：严格 s + 正整数；不合法一律按不存在处理（404 档）。"""
     assert parse_seq("s12") == 12

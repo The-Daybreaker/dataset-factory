@@ -46,6 +46,7 @@ describe("素材 Map", () => {
       item: "first",
       status: "failed",
       attempt: 4,
+      can_retry: true,
       reason_code: "timeout",
       message: "超时",
     });
@@ -55,6 +56,22 @@ describe("素材 Map", () => {
     expect(groupedItems(next, "").done).toHaveLength(1);
     expect(next.get("first")?.can_retry).toBe(true);
     expect(items.get("first")?.status).toBe("done");
+  });
+
+  it("可重试与否取服务端结论，不在前端重判原因码", () => {
+    const items = itemsFromGroups({ failed: [{ ...first, status: "failed" }] });
+
+    const next = withItemUpdate(items, {
+      batch: 1,
+      item: "first",
+      status: "failed",
+      attempt: 1,
+      can_retry: true,
+      reason_code: "brand-new-code",
+      message: "后端新加的可重试原因码",
+    });
+
+    expect(next.get("first")?.can_retry).toBe(true);
   });
 
   it("普通分组与重试列表共享唯一条目，移出不丢失完成状态", () => {

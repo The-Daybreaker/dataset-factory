@@ -657,10 +657,37 @@ def test_events_emitted_in_order_with_payloads(batch: Path) -> None:
         "batch": 1,
         "status": "started",
         "attempt": 0,
+        "can_retry": False,
+        "reason_code": None,
+        "message": None,
+    }
+    assert received[2].to_payload() == {
+        "item": "cat_001",
+        "batch": 1,
+        "status": "succeeded",
+        "attempt": 1,
+        "can_retry": True,
         "reason_code": None,
         "message": None,
     }
     assert received[-1].to_payload()["status"] == "completed"
+
+
+def test_failed_event_payload_carries_retry_eligibility(batch: Path) -> None:
+    """可重试类失败随帧下发 can_retry=True——前端不再自己维护一份原因码清单。"""
+    received: list[RunEvent] = []
+    runner = _runner(batch, ScriptedCompleter([LLMConnectionError("断网")] * 4))
+    runner.subscribe(received.append)
+
+    runner.run()
+
+    failed = [
+        event.to_payload()
+        for event in received
+        if event.kind == "item-updated" and event.to_payload()["status"] == "failed"
+    ]
+    assert [payload["reason_code"] for payload in failed] == ["network"]
+    assert all(payload["can_retry"] is True for payload in failed)
 
 
 def test_subscriber_exception_does_not_break_the_run(batch: Path) -> None:

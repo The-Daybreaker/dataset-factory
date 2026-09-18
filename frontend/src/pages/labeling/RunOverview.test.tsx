@@ -44,7 +44,7 @@ it("最近一次重试的统计不能用整个批次的素材数替代，日志�
   expect(within(region).getByText("总数").nextElementSibling).toHaveTextContent("1");
   expect(within(region).getByText(/未跑 2 条/)).toBeInTheDocument();
   expect(within(region).getByText("CLI")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "查看 run.log" }));
+  await user.click(screen.getByRole("button", { name: "查看日志" }));
   expect(await screen.findByText("运行已中断")).toBeInTheDocument();
   expect(api.readRunText).toHaveBeenCalledExactlyOnceWith(
     "work",

@@ -50,12 +50,14 @@ async function loadWorkdirBatches(): Promise<WorkdirBatches[]> {
         return {
           id: entry.id,
           title: entry.title,
+          path: entry.path,
           batches: await api.listBatches(entry.id),
         };
       } catch (reason) {
         return {
           id: entry.id,
           title: entry.title,
+          path: entry.path,
           batches: [],
           error: errorMessage(reason),
         };
@@ -110,11 +112,11 @@ const MaterialRow = memo(function MaterialRow({
       >
         <span className="flex h-[27px] w-9 shrink-0 items-center justify-center rounded-sm border border-border bg-muted/60 text-text-3">
           {row.media === "video" ? (
-            <FilmIcon className="size-[13px]" />
+            <FilmIcon className="size-3.5" />
           ) : row.media === "image" ? (
-            <FileImageIcon className="size-[13px]" />
+            <FileImageIcon className="size-3.5" />
           ) : (
-            <FileIcon className="size-[13px]" />
+            <FileIcon className="size-3.5" />
           )}
         </span>
         <span className="min-w-0 flex-1">
@@ -198,6 +200,8 @@ export function LabelingPage() {
   const followRun = useRef(true);
   const [foldedItem, setFoldedItem] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
+  const [retryRequest, setRetryRequest] = useState(0);
+  const [batchRunState, setBatchRunState] = useState<string | null>(null);
   const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -278,6 +282,7 @@ export function LabelingPage() {
     followRun.current = true;
     setChecked(new Set());
     setSelectionMode(false);
+    setRetryRequest(0);
     setSaving(false);
     setRecovery(null);
     setRemoval(null);
@@ -298,6 +303,28 @@ export function LabelingPage() {
   }, [selection]);
 
   const filtered = useMemo(() => groupedItems(items, query), [items, query]);
+
+  // 顶栏状态章的存量事实：进页面 / 换批次时回读磁盘上本批次最近一次运行的终态。
+  // 运行中的状态不在这里轮询——由 RunControl 受理即报、SSE 终态也报（见其
+  // onRunStatus），避免两处各轮一份。
+  useEffect(() => {
+    if (!selection) {
+      setBatchRunState(null);
+      return;
+    }
+    let current = true;
+    api
+      .latestRun(selection.workdirId, selection.batchId)
+      .then((history) => {
+        if (current) setBatchRunState(history.record?.status ?? null);
+      })
+      .catch(() => {
+        // 摘要读不到（批次刚被删、历史被清）不影响主流程：章留空，主区自己会报错。
+      });
+    return () => {
+      current = false;
+    };
+  }, [selection]);
   const choose = useCallback((row: ItemRow) => {
     followRun.current = false;
     setSelectedItem(itemKey(row));
@@ -497,6 +524,7 @@ export function LabelingPage() {
               onChange={setSelection}
               onSettings={setSettingsWid}
               onNewStrategy={setNewStrategyWid}
+              runState={batchRunState}
             />
           </div>
           <Button
@@ -524,6 +552,8 @@ export function LabelingPage() {
             externalRunId={
               externalRun?.identity === identity ? externalRun.id : undefined
             }
+            retryRequest={retryRequest}
+            onRunStatus={setBatchRunState}
             onFinish={() => refreshItems(true)}
             onCurrentItem={(item) => {
               if (followRun.current) setSelectedItem(item);
@@ -560,24 +590,27 @@ export function LabelingPage() {
             {selectionMode && (
               <>
                 <span className="shrink-0 tabular-nums">已选 {checked.size}</span>
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="sm"
                   disabled={saving || !checked.size}
                   onClick={() => setChecked(new Set())}
                 >
                   清空
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
                   disabled={saving || !checked.size}
                   onClick={() => void addSelected()}
                 >
                   加入重试
-                </button>
+                </Button>
               </>
             )}
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="sm"
               disabled={saving || !selection || loading}
               onClick={() => {
                 setSelectionMode((value) => !value);
@@ -585,7 +618,7 @@ export function LabelingPage() {
               }}
             >
               {selectionMode ? "退出选择" : "选择"}
-            </button>
+            </Button>
           </div>
           <div className="mr-3 mb-2 ml-4 flex h-(--h-sm) shrink-0 items-center gap-2 rounded-md border border-input bg-card px-2">
             <SearchIcon className="size-3 shrink-0 text-text-3" />
@@ -622,7 +655,7 @@ export function LabelingPage() {
                       }
                     >
                       <ChevronDownIcon
-                        className={`size-[13px] shrink-0 text-text-3 ${!query && collapsed.has(key) ? "-rotate-90" : ""}`}
+                        className={`size-3.5 shrink-0 text-text-3 ${!query && collapsed.has(key) ? "-rotate-90" : ""}`}
                       />
                       {label}
                       <span
@@ -632,14 +665,25 @@ export function LabelingPage() {
                       </span>
                     </button>
                     {key === "retry" && !!filtered.retry?.length && (
-                      <button
-                        type="button"
-                        className="text-t-xs text-text-3"
-                        disabled={saving}
-                        onClick={() => void removeRetry()}
-                      >
-                        清空列表
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          className="text-t-xs text-text-3"
+                          disabled={saving}
+                          onClick={() => void removeRetry()}
+                        >
+                          清空列表
+                        </button>
+                        <Button
+                          variant="accent"
+                          size="xs"
+                          disabled={saving}
+                          title="冻结本轮名单发车：名单里的条目转入排队中并打「重打」标记"
+                          onClick={() => setRetryRequest((value) => value + 1)}
+                        >
+                          开始重试
+                        </Button>
+                      </>
                     )}
                     {key === "missing" && !!filtered.missing?.length && (
                       <Button

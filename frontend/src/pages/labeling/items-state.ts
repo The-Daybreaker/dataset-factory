@@ -13,6 +13,7 @@ export interface ItemUpdate {
   item: string;
   status: "started" | "succeeded" | "failed";
   attempt: number;
+  can_retry: boolean;
   reason_code: string | null;
   message: string | null;
 }
@@ -33,6 +34,8 @@ export function parseItemUpdate(value: unknown): ItemUpdate {
     !("attempt" in value) ||
     typeof value.attempt !== "number" ||
     !Number.isInteger(value.attempt) ||
+    !("can_retry" in value) ||
+    typeof value.can_retry !== "boolean" ||
     !("reason_code" in value) ||
     (value.reason_code !== null && typeof value.reason_code !== "string") ||
     !("message" in value) ||
@@ -44,12 +47,19 @@ export function parseItemUpdate(value: unknown): ItemUpdate {
     item: value.item,
     status: value.status,
     attempt: value.attempt,
+    can_retry: value.can_retry,
     reason_code: value.reason_code,
     message: value.message,
   };
 }
 
-/** 与 runs 的 F5 原因码口径一致；成功条目仍以服务端收尾名单为准。 */
+/**
+ * 把一条运行事件叠加到条目上。
+ *
+ * `can_retry` 直接取服务端下发的值——可重试与否是后端按原因码清单现判的结论，
+ * 前端再抄一份清单就等于给同一件事实留了第二个来源（后端加码时会滞后到下一次
+ * 全量刷新才纠正）。服务端与条目视图 `can_retry` 同一口径，两边不会各说各话。
+ */
 export function withItemUpdate(items: ItemMap, event: ItemUpdate): ItemMap {
   const row = items.get(event.item);
   if (!row) return items;
@@ -65,12 +75,7 @@ export function withItemUpdate(items: ItemMap, event: ItemUpdate): ItemMap {
     attempt: event.attempt,
     reason_code: event.reason_code,
     message: event.message,
-    can_retry:
-      event.status === "succeeded" ||
-      (event.status === "failed" &&
-        ["network", "timeout", "rate-limit", "5xx", "llm-content"].includes(
-          event.reason_code ?? "",
-        )),
+    can_retry: event.can_retry,
   });
   return next;
 }

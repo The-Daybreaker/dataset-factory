@@ -173,7 +173,7 @@ test("重建导入记录经真实任务恢复登记并自动刷新概览", async
   await snapshotDialog.getByRole("button", { name: "关闭", exact: true }).first().click();
   await expect(overview.getByText("成功", { exact: true }).locator("..")).toContainText("1");
   await expect(overview.getByText("日志路径", { exact: true }).locator("..")).toContainText(history.log_path);
-  await page.getByRole("button", { name: "查看 run.log", exact: true }).click();
+  await page.getByRole("button", { name: "查看日志", exact: true }).click();
   const logDialog = page.getByRole("dialog", { name: "运行日志" });
   await expect(logDialog.locator("pre")).toHaveText(await readFile(path.join(runDirectory, "run.log"), "utf8"));
   await logDialog.getByRole("button", { name: "关闭", exact: true }).click();

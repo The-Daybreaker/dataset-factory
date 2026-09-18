@@ -720,10 +720,14 @@ export const api = {
         }
         const event = eventLine.slice(7);
         // SSE data 字段理论上恒在；缺字段时给空串兜底（noUncheckedIndexedAccess 下不裸索引）。
-        const data = JSON.parse(dataLine.slice(6)) as Record<
-          string,
-          string | undefined
-        >;
+        let data: Record<string, string | undefined>;
+        try {
+          data = JSON.parse(dataLine.slice(6)) as Record<string, string | undefined>;
+        } catch {
+          // 帧解析失败是「服务端发了不认识的东西」，与网络断开同类：给一句能读懂的
+          // 话再中止本次读取，别把 SyntaxError 的原始报文丢给用户看。
+          throw new ApiError("http", "收到的响应帧无法解析——请重发本轮。", null, null);
+        }
         const sessionId = data.session_id ?? "";
         if (event === "start") {
           handlers.onStart(sessionId);

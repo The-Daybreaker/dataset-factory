@@ -80,6 +80,7 @@ from ..workdir import (
     ProductNotFoundError,
     RunOccupiedError,
     StateLockTimeoutError,
+    WorkdirMaintenanceError,
     WorkdirMetadataCorruptedError,
     WorkdirNotFoundError,
     WorkdirPathError,
@@ -247,6 +248,14 @@ def _register_error_handlers(app: FastAPI) -> None:
         return problem_response(400, "workdir-path-invalid", "路径不合法", str(exc))
 
     app.add_exception_handler(WorkdirPathError, workdir_path_invalid_handler)
+
+    def workdir_maintenance_handler(request: Request, exc: Exception) -> JSONResponse:
+        # 与 run-occupied 分开：占用者是「目录正在搬迁 / 删除」，不是「有跑批在跑」。
+        return problem_response(
+            409, "workdir-maintenance", "工作目录正在维护", str(exc)
+        )
+
+    app.add_exception_handler(WorkdirMaintenanceError, workdir_maintenance_handler)
 
     def workdir_metadata_corrupted_handler(
         request: Request, exc: Exception

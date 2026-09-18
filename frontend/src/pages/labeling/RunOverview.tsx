@@ -166,7 +166,7 @@ export function RunOverview({ wid, batch, refreshKey, fallback }: Props) {
                 size="xs"
                 onClick={() => setLog({ runId: record.run_id, file: "run.log" })}
               >
-                查看 run.log
+                查看日志
               </Button>
               <Button
                 variant="ghost"

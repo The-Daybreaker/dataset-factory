@@ -54,6 +54,7 @@ from .errors import (
     ImportInProgressError,
     RunOccupiedError,
     StateLockTimeoutError,
+    WorkdirMaintenanceError,
     WorkdirPathError,
 )
 
@@ -118,14 +119,21 @@ def maintenance_record(workdir: Path) -> Path:
 
 @contextmanager
 def maintenance_guard(workdir: Path, *, timeout: float = 0) -> Generator[None]:
-    """串行化同一源目录的搬迁及旧位置清理，锁不随源目录删除。"""
+    """串行化同一源目录的搬迁及旧位置清理，锁不随源目录删除。
+
+    抢不到 = 该目录正在被搬迁或删除，抛 ``WorkdirMaintenanceError`` 而不是
+    ``RunOccupiedError``——两者都劝用户「等会儿再来」，但占用者不同，提示不能
+    张冠李戴（详见该异常类的 docstring）。
+    """
     path = maintenance_record(workdir).with_suffix(".lock")
     path.parent.mkdir(parents=True, exist_ok=True)
     lock = _shared_file_lock(path)
     try:
         lock.acquire(timeout=timeout)
     except Timeout as exc:
-        raise RunOccupiedError("工作目录正在维护，请等待完成后重试。") from exc
+        raise WorkdirMaintenanceError(
+            "工作目录正在搬迁或删除，请等待完成后重试。"
+        ) from exc
     try:
         yield
     finally:
@@ -340,7 +348,7 @@ class StateLock:
                     )
                     self._lock.acquire(timeout=0)
                 break
-            except (Timeout, RunOccupiedError) as exc:
+            except (Timeout, WorkdirMaintenanceError) as exc:
                 if time.monotonic() >= deadline:
                     raise StateLockTimeoutError(
                         f"等待工作目录状态锁超时（{self._timeout:g} 秒）——"

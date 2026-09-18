@@ -111,4 +111,38 @@ describe("批次选择器", () => {
     expect(screen.getByText("没有启用的批次")).toBeInTheDocument();
     expect(screen.queryByRole("menuitem")).not.toBeInTheDocument();
   });
+
+  it("胶囊第三段按运行状态显示状态章，无记录时不显示", () => {
+    const { rerender } = render(
+      <BatchSelector
+        workdirs={workdirs}
+        value={{ workdirId: "first", batchId: "s1" }}
+        onChange={vi.fn()}
+        runState="completed"
+      />,
+    );
+
+    expect(screen.getByText("已完成")).toBeInTheDocument();
+
+    rerender(
+      <BatchSelector
+        workdirs={workdirs}
+        value={{ workdirId: "first", batchId: "s1" }}
+        onChange={vi.fn()}
+        runState="running"
+      />,
+    );
+    expect(screen.getByText("跑批中")).toBeInTheDocument();
+    expect(screen.queryByText("已完成")).not.toBeInTheDocument();
+
+    rerender(
+      <BatchSelector
+        workdirs={workdirs}
+        value={{ workdirId: "first", batchId: "s1" }}
+        onChange={vi.fn()}
+        runState={null}
+      />,
+    );
+    expect(screen.queryByText("跑批中")).not.toBeInTheDocument();
+  });
 });

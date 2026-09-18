@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api } from "../../api";
@@ -132,6 +132,7 @@ describe("运行控制", () => {
         item: "frame",
         status: "succeeded",
         attempt: 1,
+        can_retry: true,
         reason_code: null,
         message: null,
       });
@@ -248,6 +249,7 @@ describe("运行控制", () => {
       item: "frame",
       status: "succeeded",
       attempt: 1,
+      can_retry: true,
       reason_code: null,
       message: null,
     };
@@ -350,6 +352,7 @@ describe("运行控制", () => {
         item: "cat_002",
         status: "started",
         attempt: 1,
+        can_retry: false,
         reason_code: null,
         message: null,
       });
@@ -387,5 +390,35 @@ describe("运行控制", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("已有跑批在运行");
     expect(screen.getByRole("button", { name: "开始打标" })).toBeEnabled();
+  });
+
+  it("左列组头的重试令牌变化即按 retry 模式发车，并把状态报给顶栏", async () => {
+    const onRunStatus = vi.fn();
+    const { rerender } = render(
+      <RunControl
+        wid="work"
+        batch="s1"
+        onFinish={vi.fn()}
+        onRunStatus={onRunStatus}
+        retryRequest={0}
+      />,
+    );
+
+    expect(api.startRun).not.toHaveBeenCalled();
+
+    rerender(
+      <RunControl
+        wid="work"
+        batch="s1"
+        onFinish={vi.fn()}
+        onRunStatus={onRunStatus}
+        retryRequest={1}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(api.startRun).toHaveBeenCalledWith("work", "s1", "retry"),
+    );
+    expect(onRunStatus).toHaveBeenCalledWith("running");
   });
 });
