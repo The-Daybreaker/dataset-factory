@@ -107,10 +107,7 @@ it("日志视图显示尾部 200 行且最新在最上", async () => {
   render(<RunOverview wid="work" batch="s1" refreshKey={0} fallback={fallback} />);
   await screen.findByRole("region", { name: "本次运行" });
   await user.click(screen.getByRole("button", { name: "查看日志" }));
-  const pre = await screen.findByText(
-    (_, element) =>
-      element?.tagName === "PRE" && (element.textContent ?? "").includes("第 260 行"),
-  );
+  const pre = await screen.findByTestId("run-log-body");
   expect(pre.textContent?.startsWith("第 260 行")).toBe(true);
   expect(pre?.textContent).toContain("第 61 行");
   expect(pre?.textContent).not.toContain("第 60 行");

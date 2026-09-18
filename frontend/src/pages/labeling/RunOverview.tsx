@@ -189,7 +189,10 @@ function RunLogDialog({
           </p>
         )}
         {tab === "run.log" ? (
-          <pre className="max-h-96 overflow-auto rounded-md bg-muted p-3 font-sans text-t-sm whitespace-pre-wrap break-all">
+          <pre
+            data-testid="run-log-body"
+            className="max-h-96 overflow-auto rounded-md bg-muted p-3 font-sans text-t-sm whitespace-pre-wrap break-all"
+          >
             {result ? displayText || "暂无记录" : "正在读取"}
           </pre>
         ) : (

@@ -189,6 +189,7 @@ export function BatchSelector({
                     </span>
                     {isCurrent && (
                       <CheckIcon
+                        data-testid="batch-is-current"
                         aria-hidden="true"
                         className="size-4 shrink-0 text-ok-ink"
                       />

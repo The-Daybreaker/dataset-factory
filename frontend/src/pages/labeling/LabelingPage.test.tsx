@@ -335,11 +335,12 @@ describe("打标页读取流程", () => {
 
     expect(screen.getByLabelText("clip.mp4")).toBe(video);
     expect(video.currentTime).toBe(12);
-    expect(video.parentElement).toHaveClass("h-[76px]", "w-full");
+    // 折叠态由切换器的文案体现（几何尺寸 jsdom 量不到，视觉口径归 e2e 视觉基线那层）。
+    expect(screen.getByRole("button", { name: "展开素材" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "展开素材" }));
     expect(screen.getByLabelText("clip.mp4")).toBe(video);
     expect(video.currentTime).toBe(12);
-    expect(video.parentElement).toHaveClass("h-96", "w-full");
+    expect(screen.getByRole("button", { name: "折叠为小图" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "返回概览" }));
     expect(screen.queryByLabelText("clip.mp4")).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "产物预览" })).not.toBeInTheDocument();

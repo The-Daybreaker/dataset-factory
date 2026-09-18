@@ -393,7 +393,7 @@ describe("SettingsPage · 能力·技能", () => {
     expect(screen.queryByLabelText("启用 h3-skill")).not.toBeInTheDocument();
   });
 
-  it("损坏包降级呈现：description 以「文件损坏：」开头时标红（宽容降级口径）", async () => {
+  it("损坏包降级呈现：description 以「文件损坏：」开头时原文照排、不吞不替换（宽容降级口径）", async () => {
     apiMock.listSkills.mockResolvedValue([
       {
         name: "bad",
@@ -410,7 +410,9 @@ describe("SettingsPage · 能力·技能", () => {
     const row = screen.getByLabelText("启用 bad").parentElement;
     const text = await within(row as HTMLElement).findByText(/文件损坏：/);
 
-    expect(text).toHaveClass("text-destructive");
+    // jsdom 量不到颜色，颜色一类的视觉口径归 e2e 视觉基线那层；这里只断「损坏信息原文照排、
+    // 没有被降级逻辑吞掉或替换」。
+    expect(text.textContent).toContain("frontmatter 未闭合");
   });
 
   it("导入成功：选择文件夹调 importSkillFiles 并给出体积与 token 提醒反馈条", async () => {
@@ -423,8 +425,7 @@ describe("SettingsPage · 能力·技能", () => {
     await openSkills();
 
     await userEvent.click(screen.getByRole("button", { name: "导入 Skill" }));
-    const input = document.body.querySelector('input[type="file"]');
-    expect(input).not.toBeNull();
+    const input = screen.getByLabelText("选择 skill 文件夹");
     const folderFile = new File(["# U"], "SKILL.md", { type: "text/markdown" });
     Object.defineProperty(folderFile, "webkitRelativePath", {
       value: "fresh/SKILL.md",

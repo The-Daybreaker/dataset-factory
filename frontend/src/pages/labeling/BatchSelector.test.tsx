@@ -93,7 +93,7 @@ describe("批次选择器", () => {
     expect(screen.getByText("2 / 3")).toBeInTheDocument();
     const current = screen.getByRole("menuitem", { name: /详细描述/ });
     expect(current).toHaveAttribute("aria-current", "true");
-    expect(current.querySelector("svg")).not.toBeNull();
+    expect(within(current).getByTestId("batch-is-current")).toBeInTheDocument();
     // 无运行记录的批次不带状态章与进度
     const other = screen.getByRole("menuitem", { name: /标签式短句/ });
     expect(within(other).queryByText(/\/ 3/)).not.toBeInTheDocument();

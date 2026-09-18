@@ -59,9 +59,9 @@ describe("App 外壳", () => {
     // 设置页现在是进页面才载的分包：先等它出现，再按原样断言（断言对象与强度不变）。
     await screen.findByRole("heading", { name: "技能", level: 1 });
     expect(screen.getByRole("heading", { name: "技能", level: 1 })).toBeVisible();
-    expect(
-      screen.queryByRole("navigation", { name: "设置二级导航" }),
-    ).not.toBeInTheDocument();
+    // 「设置页不加二级导航地标」得是可证伪的断言：数当前有几个导航地标
+    // （只有侧栏那一个），多加一个就会红——原来查一个根本不存在的名字必然永真。
+    expect(screen.getAllByRole("navigation")).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "返回工作区" }));
     expect(screen.getByRole("button", { name: "策略" })).toHaveAttribute(
       "aria-current",
