@@ -137,7 +137,7 @@ jobs:
 
       - name: Type check (tsc --noEmit)
         if: matrix.os == 'ubuntu-latest'
-        run: npm run typecheck                    # 类型检查独立成步：Vite 构建只转译、不做类型检查                    # 类型检查独立成步：Vite 构建只转译、不做类型检查
+        run: npm run typecheck                    # 类型检查独立成步：Vite 构建只转译、不做类型检查
 
       - name: Test (Vitest)
         run: npm run test
@@ -216,7 +216,6 @@ jobs:
         with:
           name: frontend-dist
           path: frontend/dist                     # 被测服务托管的就是构建产物，来自 frontend job
-        working-directory: frontend
 
       - name: Install e2e deps
         run: npm ci
