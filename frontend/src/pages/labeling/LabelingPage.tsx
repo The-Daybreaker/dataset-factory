@@ -137,7 +137,7 @@ const MaterialRow = memo(function MaterialRow({
       {row.status === "missing" && (
         <Button
           variant="ghost"
-          size="xs"
+          size="mini"
           className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
           title={
             row.recoverable ? `来源：${row.source}` : "原始来源不可用，请从别处导入"
@@ -150,7 +150,7 @@ const MaterialRow = memo(function MaterialRow({
       {row.status === "unimported" && (
         <Button
           variant="ghost"
-          size="xs"
+          size="mini"
           disabled={row.reason !== "未登记"}
           title={row.reason === "未登记" ? "导入此文件" : (row.reason ?? "不能导入")}
           onClick={() => onRecover(row)}
@@ -161,7 +161,7 @@ const MaterialRow = memo(function MaterialRow({
       {retryGroup && (
         <Button
           variant="ghost"
-          size="xs"
+          size="icon-xs"
           disabled={saving}
           title="移出重试列表"
           aria-label={`移出重试 ${row.name}`}
@@ -173,8 +173,8 @@ const MaterialRow = memo(function MaterialRow({
       {row.status === "unimported" && (
         <Button
           variant="destructive"
-          size="xs"
-          className="w-(--h-xs) p-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [&_svg]:size-[13px]"
+          size="icon-xs"
+          className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
           aria-label={`删除未导入 ${row.name}`}
           title="删除"
           onClick={() => onRemoveUnimported(row)}
@@ -666,17 +666,19 @@ export function LabelingPage() {
                     </button>
                     {key === "retry" && !!filtered.retry?.length && (
                       <>
-                        <button
-                          type="button"
-                          className="text-t-xs text-text-3"
+                        <Button
+                          variant="ghost"
+                          size="mini"
+                          className="shrink-0"
                           disabled={saving}
                           onClick={() => void removeRetry()}
                         >
                           清空列表
-                        </button>
+                        </Button>
                         <Button
                           variant="accent"
                           size="xs"
+                          className="shrink-0"
                           disabled={saving}
                           title="冻结本轮名单发车：名单里的条目转入排队中并打「重打」标记"
                           onClick={() => setRetryRequest((value) => value + 1)}
@@ -689,6 +691,7 @@ export function LabelingPage() {
                       <Button
                         variant="ghost"
                         size="xs"
+                        className="shrink-0"
                         disabled={!filtered.missing.some((row) => row.recoverable)}
                         title="把当前清单中可从来源找回的缺失素材重新导入"
                         onClick={() =>
@@ -707,6 +710,7 @@ export function LabelingPage() {
                       <Button
                         variant="ghost"
                         size="xs"
+                        className="shrink-0"
                         disabled={
                           !filtered.unimported.some((row) => row.reason === "未登记")
                         }

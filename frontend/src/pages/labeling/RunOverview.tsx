@@ -163,14 +163,14 @@ export function RunOverview({ wid, batch, refreshKey, fallback }: Props) {
             <div className="ml-auto flex gap-2">
               <Button
                 variant="ghost"
-                size="xs"
+                size="mini"
                 onClick={() => setLog({ runId: record.run_id, file: "run.log" })}
               >
                 查看日志
               </Button>
               <Button
                 variant="ghost"
-                size="xs"
+                size="mini"
                 onClick={() => setLog({ runId: record.run_id, file: "items.jsonl" })}
               >
                 逐条流水
@@ -186,7 +186,7 @@ export function RunOverview({ wid, batch, refreshKey, fallback }: Props) {
           </p>
           <Button
             variant="ghost"
-            size="xs"
+            size="mini"
             onClick={() => setRevision((value) => value + 1)}
           >
             重新查询

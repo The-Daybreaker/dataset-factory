@@ -230,7 +230,7 @@ export function BatchOverview({
         <h2 className="text-t-xl font-medium">批次概览</h2>
         <Button
           variant="ghost"
-          size="xs"
+          size="mini"
           onClick={() => setSnapshotIdentity(`${wid}/${batch}`)}
         >
           <BookOpenIcon />
@@ -278,7 +278,7 @@ export function BatchOverview({
           <Button
             className="ml-auto"
             variant="ghost"
-            size="sm"
+            size="mini"
             disabled={checking}
             onClick={() => void scan()}
           >
@@ -299,7 +299,7 @@ export function BatchOverview({
           <div aria-busy={checking}>
             {(!report.imports_available ||
               problems.some((row) => row.status === "unknown")) && (
-              <Button variant="ghost" size="sm" onClick={() => setRebuildOpen(true)}>
+              <Button variant="ghost" size="mini" onClick={() => setRebuildOpen(true)}>
                 重建导入记录
               </Button>
             )}
@@ -424,7 +424,7 @@ export function BatchOverview({
                       {status === "changed" && (
                         <Button
                           variant="ghost"
-                          size="xs"
+                          size="mini"
                           disabled={
                             excluding || checking || !items.get(row.item)?.can_retry
                           }

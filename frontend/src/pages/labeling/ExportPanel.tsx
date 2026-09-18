@@ -63,7 +63,7 @@ function ExportList({
               <span className="tabular-nums">已选 {chosen.length}</span>
               <Button
                 variant="ghost"
-                size="xs"
+                size="mini"
                 disabled={busy}
                 onClick={() =>
                   setSelected(
@@ -144,7 +144,7 @@ function ExportList({
                     <Button
                       className="ml-auto"
                       variant="ghost"
-                      size="xs"
+                      size="mini"
                       onClick={onImport}
                     >
                       导入素材
@@ -172,7 +172,7 @@ function ExportList({
       {rows.length > 10 && !selecting && (
         <Button
           variant="ghost"
-          size="xs"
+          size="mini"
           className="mt-1"
           onClick={() => setExpanded(!expanded)}
         >
