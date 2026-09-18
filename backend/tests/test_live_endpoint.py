@@ -34,8 +34,6 @@ import uvicorn
 from dataset_factory.api import create_app
 from dataset_factory.llm import DEFAULT_CONFIG_NAME, SecretValue, create_config
 
-system_app = create_app()
-
 # ---------- 环境与跳过逻辑 ----------
 
 _LIVE_BASE_URL = os.environ.get("DSF_LIVE_BASE_URL", "")
@@ -55,7 +53,11 @@ pytestmark = [
 def live_system_client(
     temp_data_root: Path,
 ) -> Iterator[tuple[httpx.Client, Path]]:
-    """真实端点配置 + 线程内真服务的组合（复用 T17 的服务装配方式）。"""
+    """真实端点配置 + 线程内真服务的组合（复用 T17 的服务装配方式）。
+
+    应用装配放在夹具里而不是模块顶层：``api/__init__.py`` 写明「每个入口在各自启动点显式调用
+    ``create_app``」，模块级调用会在 collection 期就探测磁盘。
+    """
     create_config(
         DEFAULT_CONFIG_NAME,
         base_url=_LIVE_BASE_URL,
@@ -68,7 +70,11 @@ def live_system_client(
 
     server = uvicorn.Server(
         uvicorn.Config(
-            system_app, host="127.0.0.1", port=port, log_config=None, access_log=False
+            create_app(),
+            host="127.0.0.1",
+            port=port,
+            log_config=None,
+            access_log=False,
         )
     )
     thread = threading.Thread(target=server.run, daemon=True)

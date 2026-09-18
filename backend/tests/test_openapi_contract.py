@@ -10,14 +10,21 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from dataset_factory.api import create_app
+import pytest
+from fastapi import FastAPI
 
-app = create_app()
+from dataset_factory.api import create_app
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 
-def test_openapi_snapshot_matches_code() -> None:
+@pytest.fixture(scope="module")
+def app() -> FastAPI:
+    """装配放在夹具里：模块级 ``create_app()`` 会在 collection 期就探测磁盘。"""
+    return create_app()
+
+
+def test_openapi_snapshot_matches_code(app: FastAPI) -> None:
     """快照与代码生成的 spec 必须逐字节一致。"""
     expected = (
         json.dumps(app.openapi(), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
@@ -33,7 +40,7 @@ def test_openapi_snapshot_matches_code() -> None:
     )
 
 
-def test_contract_declares_error_responses() -> None:
+def test_contract_declares_error_responses(app: FastAPI) -> None:
     """契约必须覆盖错误路径：每个非 2xx 声明都用统一的 ErrorDetail 形状。
 
     为什么值得单独立一条：OpenAPI 默认只渲染成功响应，错误体不声明的话，

@@ -685,15 +685,14 @@ def test_copy_failure_fails_loud_with_filename(
     workdir: Path,
     source: Path,
     temp_data_root: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """复制失败（磁盘 / 权限）：任务失败消息带文件名，不静默吞掉。"""
+    """复制写盘失败（磁盘 / 权限）：任务失败消息带文件名，不静默吞掉。
+
+    故障用真实磁盘条件造：暂存目录里先占一个与目标同名的目录，`open("wb")` 必失败（POSIX 与
+    Windows 都是 `IsADirectoryError`），比往模块内私有函数上打补丁更贴近现场、也不钉实现。
+    """
     _write(source, "cat_001.jpg", _PNG_BYTES)
-
-    def broken_copy(store: WorkdirStore, source_file: Path, dest_name: str) -> None:
-        raise OSError("disk full")
-
-    monkeypatch.setattr(importer_module, "_copy_into_workdir", broken_copy)
+    (workdir / ".dsf" / "tmp" / "cat_001.jpg").mkdir(parents=True)
 
     with pytest.raises(WorkdirError, match=r"cat_001\.jpg"):
         import_assets(workdir, source)
