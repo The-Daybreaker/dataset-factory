@@ -444,11 +444,23 @@ def test_current_run_reports_progress_then_404(
             assert running["counters"]["planned"] == 2
             assert running["error"] is None
 
-            history = await http.get(f"/api/workdirs/{wid}/batches/s1/runs/latest")
-            assert history.status_code == 200
-            assert history.json()["record"]["run_id"] == running["run_id"]
-            assert history.json()["record"]["status"] == "running"
-            assert history.json()["record"]["counters"] == running["counters"]
+            # current 镜像在「计划算完」的一刻就报 running，磁盘 run.json 紧随其后落盘
+            # （两条路径无同刻保证，也不需要有——UI 的活动态读 current、latest 只供切批次
+            # 时回读存量）。轮询到记录落盘，再校验它经 routes_runs 的对账分支后与 current
+            # 口径一致：轮询把「记录尚未刷盘」这一合法瞬态排除，断言仍锁住对账逻辑。
+            rec: dict[str, Any] | None = None
+            deadline = time.monotonic() + _WAIT_TIMEOUT
+            while time.monotonic() < deadline:
+                history = await http.get(f"/api/workdirs/{wid}/batches/s1/runs/latest")
+                assert history.status_code == 200
+                if history.json()["record"] is not None:
+                    rec = history.json()["record"]
+                    break
+                await asyncio.sleep(0.01)
+            assert rec is not None, "latest 未在超时内出现运行记录"
+            assert rec["run_id"] == running["run_id"]
+            assert rec["status"] == "running"
+            assert rec["counters"] == running["counters"]
 
             gates[0].set()
             gates[1].set()
