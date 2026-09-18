@@ -12,6 +12,7 @@ import threading
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any, NamedTuple
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -208,171 +209,111 @@ _ERROR_MAP: list[tuple[int, tuple[type[Exception], ...]]] = [
 ]
 
 
+class _ProblemRule(NamedTuple):
+    """一条 problem+json 规则：异常类 → 状态码 + type slug + title（可附扩展字段名）。"""
+
+    exc: type[Exception]
+    status: int
+    slug: str
+    title: str
+    extras_from: str | None = None
+
+
+#: 二期端点的异常 → problem+json 规则表：一条一行 (异常类, 状态码, type slug, title, 扩展字段名)。
+#: 原先这 23 条各写一个闭包（168 行），彼此差别只有四个字段——摊成表才看得出全貌、也才改得动。
+_PROBLEM_RULES: tuple[_ProblemRule, ...] = (
+    _ProblemRule(ExportError, 400, "export-invalid", "无法导出"),
+    _ProblemRule(TaskNotFoundError, 404, "task-not-found", "任务不存在"),
+    _ProblemRule(WorkdirNotFoundError, 404, "workdir-not-found", "工作目录不存在"),
+    # 占用者是「目录正在搬迁 / 删除」，不是「有跑批在跑」——提示不能张冠李戴，故两条分开。
+    _ProblemRule(
+        WorkdirMaintenanceError, 409, "workdir-maintenance", "工作目录正在维护"
+    ),
+    _ProblemRule(WorkdirPathError, 400, "workdir-path-invalid", "路径不合法"),
+    _ProblemRule(
+        WorkdirMetadataCorruptedError,
+        500,
+        "workdir-metadata-corrupted",
+        "工作目录元数据损坏",
+    ),
+    # 状态锁等满宽超时 = 诊断信号（临界区毫秒级，正常永不触发）：500 档。
+    _ProblemRule(StateLockTimeoutError, 500, "state-lock-timeout", "状态锁等待超时"),
+    _ProblemRule(AssetNotFoundError, 404, "asset-not-found", "素材不存在"),
+    _ProblemRule(ProductNotFoundError, 404, "product-not-found", "产物不存在"),
+    _ProblemRule(AssetPathError, 400, "asset-path-invalid", "条目名不合法"),
+    _ProblemRule(
+        ImportSourceConflictError, 422, "import-source-conflict", "导入来源冲突"
+    ),
+    _ProblemRule(ImportInProgressError, 409, "import-in-progress", "导入任务进行中"),
+    _ProblemRule(StrategyNotFoundError, 404, "strategy-not-found", "库策略不存在"),
+    _ProblemRule(StrategyNameError, 400, "strategy-name-invalid", "策略名不合法"),
+    _ProblemRule(StrategyRefsError, 400, "strategy-refs-invalid", "策略引用不合法"),
+    _ProblemRule(BatchNotFoundError, 404, "batch-not-found", "批次不存在"),
+    # 基类兜底（库策略文件损坏等）：500 档，消息已可操作。
+    _ProblemRule(StrategyError, 500, "strategy-error", "策略数据异常"),
+    # occupier 进 RFC 9457 扩展字段（前端提示「谁在占用」用）；跨进程残留信息损坏时为
+    # None，detail 已有笼统文案兜底。
+    _ProblemRule(
+        RunOccupiedError,
+        409,
+        "run-occupied",
+        "工作目录已有跑批在运行",
+        extras_from="occupier",
+    ),
+    _ProblemRule(BatchInactiveError, 409, "batch-inactive", "批次已停用"),
+    _ProblemRule(RunNotActiveError, 404, "run-not-active", "当前没有进行中的跑批"),
+    _ProblemRule(
+        RunJournalCorruptedError, 500, "run-journal-corrupted", "运行流水损坏"
+    ),
+    # runs 域基类兜底：500 档，消息已可操作。
+    _ProblemRule(RunError, 500, "run-error", "跑批数据异常"),
+    # 逐条拒绝原因进扩展字段（前端弹「哪些没进名单、为什么」用）。
+    _ProblemRule(
+        RetryItemNotEligibleError,
+        422,
+        "retry-item-not-eligible",
+        "有不可加入重试列表的条目",
+        extras_from="rejections",
+    ),
+)
+
+
+def _problem_handler(
+    rule: _ProblemRule,
+) -> Callable[[Request, Exception], JSONResponse]:
+    """按规则表造一个 problem+json 处理器（响应体与逐条闭包写法逐字段一致）。
+
+    Args:
+        rule: 表里的一条规则（状态码 / type slug / title / 可选的扩展字段名）。
+
+    Returns:
+        可直接交给 ``add_exception_handler`` 的处理器。
+    """
+
+    def handler(request: Request, exc: Exception) -> JSONResponse:
+        extras: dict[str, Any] | None = None
+        if rule.extras_from is not None:
+            value = getattr(exc, rule.extras_from, None)
+            if value:
+                extras = {rule.extras_from: value}
+        return problem_response(rule.status, rule.slug, rule.title, str(exc), extras)
+
+    return handler
+
+
+def _detail_handler(status_code: int) -> Callable[[Request, Exception], JSONResponse]:
+    """一期端点的简形处理器：域异常消息进 detail、状态码按 ``_ERROR_MAP`` 分类。"""
+
+    def handler(request: Request, exc: Exception) -> JSONResponse:
+        return JSONResponse(status_code=status_code, content={"detail": str(exc)})
+
+    return handler
+
+
 def _register_error_handlers(app: FastAPI) -> None:
-    """按映射表注册异常处理器：域异常消息进 detail、状态码按分类。"""
-
-    def export_handler(request: Request, exc: Exception) -> JSONResponse:
-        return problem_response(
-            status_code=400,
-            type_slug="export-invalid",
-            title="无法导出",
-            detail=str(exc),
-        )
-
-    app.add_exception_handler(ExportError, export_handler)
-
-    def make_handler(
-        status_code: int,
-    ) -> Callable[[Request, Exception], JSONResponse]:
-        def handler(request: Request, exc: Exception) -> JSONResponse:
-            return JSONResponse(status_code=status_code, content={"detail": str(exc)})
-
-        return handler
-
+    """按两张表注册异常处理器：一期 ``{"detail"}`` 简形、二期 problem+json。"""
     for status_code, exc_types in _ERROR_MAP:
         for exc_type in exc_types:
-            app.add_exception_handler(exc_type, make_handler(status_code))
-
-    # 二期新端点走 problem+json 错误形（api.problems）：错误体 = type slug + title + status + detail。
-    def task_not_found_handler(request: Request, exc: Exception) -> JSONResponse:
-        return problem_response(404, "task-not-found", "任务不存在", str(exc))
-
-    app.add_exception_handler(TaskNotFoundError, task_not_found_handler)
-
-    def workdir_not_found_handler(request: Request, exc: Exception) -> JSONResponse:
-        return problem_response(404, "workdir-not-found", "工作目录不存在", str(exc))
-
-    app.add_exception_handler(WorkdirNotFoundError, workdir_not_found_handler)
-
-    def workdir_path_invalid_handler(request: Request, exc: Exception) -> JSONResponse:
-        return problem_response(400, "workdir-path-invalid", "路径不合法", str(exc))
-
-    app.add_exception_handler(WorkdirPathError, workdir_path_invalid_handler)
-
-    def workdir_maintenance_handler(request: Request, exc: Exception) -> JSONResponse:
-        # 与 run-occupied 分开：占用者是「目录正在搬迁 / 删除」，不是「有跑批在跑」。
-        return problem_response(
-            409, "workdir-maintenance", "工作目录正在维护", str(exc)
-        )
-
-    app.add_exception_handler(WorkdirMaintenanceError, workdir_maintenance_handler)
-
-    def workdir_metadata_corrupted_handler(
-        request: Request, exc: Exception
-    ) -> JSONResponse:
-        return problem_response(
-            500, "workdir-metadata-corrupted", "工作目录元数据损坏", str(exc)
-        )
-
-    app.add_exception_handler(
-        WorkdirMetadataCorruptedError, workdir_metadata_corrupted_handler
-    )
-
-    def state_lock_timeout_handler(request: Request, exc: Exception) -> JSONResponse:
-        # 状态锁等满宽超时 = 诊断信号（临界区毫秒级，正常永不触发）：500 档。
-        return problem_response(500, "state-lock-timeout", "状态锁等待超时", str(exc))
-
-    app.add_exception_handler(StateLockTimeoutError, state_lock_timeout_handler)
-
-    def asset_not_found_handler(request: Request, exc: Exception) -> JSONResponse:
-        return problem_response(404, "asset-not-found", "素材不存在", str(exc))
-
-    app.add_exception_handler(AssetNotFoundError, asset_not_found_handler)
-
-    def product_not_found_handler(request: Request, exc: Exception) -> JSONResponse:
-        return problem_response(404, "product-not-found", "产物不存在", str(exc))
-
-    app.add_exception_handler(ProductNotFoundError, product_not_found_handler)
-
-    def asset_path_invalid_handler(request: Request, exc: Exception) -> JSONResponse:
-        return problem_response(400, "asset-path-invalid", "条目名不合法", str(exc))
-
-    app.add_exception_handler(AssetPathError, asset_path_invalid_handler)
-
-    def import_source_conflict_handler(
-        request: Request, exc: Exception
-    ) -> JSONResponse:
-        return problem_response(422, "import-source-conflict", "导入来源冲突", str(exc))
-
-    app.add_exception_handler(ImportSourceConflictError, import_source_conflict_handler)
-
-    def import_in_progress_handler(request: Request, exc: Exception) -> JSONResponse:
-        return problem_response(409, "import-in-progress", "导入任务进行中", str(exc))
-
-    app.add_exception_handler(ImportInProgressError, import_in_progress_handler)
-
-    def strategy_not_found_handler(request: Request, exc: Exception) -> JSONResponse:
-        return problem_response(404, "strategy-not-found", "库策略不存在", str(exc))
-
-    app.add_exception_handler(StrategyNotFoundError, strategy_not_found_handler)
-
-    def strategy_name_invalid_handler(request: Request, exc: Exception) -> JSONResponse:
-        return problem_response(400, "strategy-name-invalid", "策略名不合法", str(exc))
-
-    app.add_exception_handler(StrategyNameError, strategy_name_invalid_handler)
-
-    def strategy_refs_invalid_handler(request: Request, exc: Exception) -> JSONResponse:
-        return problem_response(
-            400, "strategy-refs-invalid", "策略引用不合法", str(exc)
-        )
-
-    app.add_exception_handler(StrategyRefsError, strategy_refs_invalid_handler)
-
-    def batch_not_found_handler(request: Request, exc: Exception) -> JSONResponse:
-        return problem_response(404, "batch-not-found", "批次不存在", str(exc))
-
-    app.add_exception_handler(BatchNotFoundError, batch_not_found_handler)
-
-    def strategy_error_handler(request: Request, exc: Exception) -> JSONResponse:
-        # 基类兜底（库策略文件损坏等）：500 档，消息已可操作。
-        return problem_response(500, "strategy-error", "策略数据异常", str(exc))
-
-    app.add_exception_handler(StrategyError, strategy_error_handler)
-
-    def run_occupied_handler(request: Request, exc: Exception) -> JSONResponse:
-        # occupier 进 RFC 9457 扩展字段（前端提示「谁在占用」用）；跨进程残留信息
-        # 损坏时为 None，detail 已有笼统文案兜底。
-        occupier = getattr(exc, "occupier", None)
-        return problem_response(
-            409,
-            "run-occupied",
-            "工作目录已有跑批在运行",
-            str(exc),
-            extras={"occupier": occupier} if occupier else None,
-        )
-
-    app.add_exception_handler(RunOccupiedError, run_occupied_handler)
-
-    def batch_inactive_handler(request: Request, exc: Exception) -> JSONResponse:
-        return problem_response(409, "batch-inactive", "批次已停用", str(exc))
-
-    app.add_exception_handler(BatchInactiveError, batch_inactive_handler)
-
-    def run_not_active_handler(request: Request, exc: Exception) -> JSONResponse:
-        return problem_response(404, "run-not-active", "当前没有进行中的跑批", str(exc))
-
-    app.add_exception_handler(RunNotActiveError, run_not_active_handler)
-
-    def run_journal_corrupted_handler(request: Request, exc: Exception) -> JSONResponse:
-        return problem_response(500, "run-journal-corrupted", "运行流水损坏", str(exc))
-
-    app.add_exception_handler(RunJournalCorruptedError, run_journal_corrupted_handler)
-
-    def run_error_handler(request: Request, exc: Exception) -> JSONResponse:
-        # runs 域基类兜底：500 档，消息已可操作。
-        return problem_response(500, "run-error", "跑批数据异常", str(exc))
-
-    app.add_exception_handler(RunError, run_error_handler)
-
-    def retry_not_eligible_handler(request: Request, exc: Exception) -> JSONResponse:
-        # 逐条拒绝原因进扩展字段（前端弹「哪些没进名单、为什么」用）。
-        rejections = getattr(exc, "rejections", None)
-        return problem_response(
-            422,
-            "retry-item-not-eligible",
-            "有不可加入重试列表的条目",
-            str(exc),
-            extras={"rejections": rejections} if rejections else None,
-        )
-
-    app.add_exception_handler(RetryItemNotEligibleError, retry_not_eligible_handler)
+            app.add_exception_handler(exc_type, _detail_handler(status_code))
+    for rule in _PROBLEM_RULES:
+        app.add_exception_handler(rule.exc, _problem_handler(rule))
