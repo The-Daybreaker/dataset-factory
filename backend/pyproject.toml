@@ -156,3 +156,6 @@ source_paths = [
     "src/dataset_factory/api/deps.py",
     "src/dataset_factory/cli/operations.py",
 ]
+# 首跑在统计采集阶段抛 BadTestExecutionCommandsException（pytest 非 0 退出），但 mutmut 默认不打印
+# pytest 的报错正文；开 debug 让下一次手工 dispatch 能把真实原因写进日志（度量件专用，不影响门禁）。
+debug = true
