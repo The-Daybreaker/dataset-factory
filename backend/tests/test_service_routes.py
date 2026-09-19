@@ -150,8 +150,10 @@ def test_add_server_file_handler_writes_logs(
     logger = logging.getLogger("dataset_factory.tests.probe")
     try:
         logger.warning("写入探测 %s", "一条")
-        for h in logging.getLogger().handlers:
-            h.flush()
+        # 只刷自己挂上去的那只：刷 root 上「所有」handler 会连带别人的流一起 flush，
+        # 别处遗留一只已关流的 handler 时本用例就红（mutmut 沙箱里实锤：ValueError:
+        # I/O operation on closed file）。
+        handler.flush()
         assert log_file.exists()
         assert "写入探测 一条" in log_file.read_text(encoding="utf-8")
     finally:
