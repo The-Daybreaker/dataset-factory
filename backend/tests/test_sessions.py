@@ -78,6 +78,46 @@ def test_sessions_listed_in_creation_order(temp_data_root: Path) -> None:
     assert latest_session_id() == third
 
 
+def test_burst_creation_keeps_ids_unique_and_ordered(temp_data_root: Path) -> None:
+    """连创一批会话：id 互不相同（id 就是目录名，撞名会覆盖旧会话）且字典序即创建序。"""
+    created = [create_session() for _ in range(12)]
+
+    assert len(set(created)) == 12
+    assert created == sorted(created)
+    assert list_sessions() == created
+    assert latest_session_id() == created[-1]
+
+
+def test_same_tick_ids_take_sequence_suffixes(
+    temp_data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """时钟冻在同一微秒：第 2、3 个会话靠 -<序号> 区分，不覆盖先建的那个。
+
+    本机时间戳带微秒、连发不易撞（上一条就是证明），所以这条把 `datetime.now` 冻住，
+    专门走「同 tick 撞名再加序号」这条分支——序号不自增就会原地打转。
+    """
+
+    class FrozenDatetime(datetime):
+        """只冻 `now()` 的 datetime：其余行为沿用真实实现。"""
+
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            """固定返回同一时刻（带 tz 时按该时区换算）。"""
+            frozen = datetime(2026, 9, 19, 7, 41, 20, 873535, tzinfo=UTC)
+            return frozen if tz is None else frozen.astimezone(tz)
+
+    monkeypatch.setattr("dataset_factory.sessions.store.datetime", FrozenDatetime)
+
+    created = [create_session() for _ in range(3)]
+
+    assert created == [
+        "20260919-074120-873535",
+        "20260919-074120-873535-1",
+        "20260919-074120-873535-2",
+    ]
+    assert list_sessions() == created
+
+
 def test_list_skips_junk_dirs(temp_data_root: Path) -> None:
     """list 只认含 events.jsonl 的目录：跳过点前缀临时目录与没有事件流的杂目录。"""
     session_id = create_session()

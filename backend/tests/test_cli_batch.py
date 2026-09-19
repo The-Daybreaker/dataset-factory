@@ -56,6 +56,25 @@ def prepared(tmp_path: Path, temp_data_root: Path) -> Path:
     return root
 
 
+def test_add_requires_explicit_refs_when_not_a_tty(
+    tmp_path: Path, temp_data_root: Path
+) -> None:
+    """非交互（管道 / 脚本）新建批次：缺 --name/--endpoint/--prompt 直接拒绝并点名缺什么。
+
+    交互式挑选（`_choose`）要真终端才走得到，CI 与脚本环境都到不了——这条钉的是
+    「脚本化调用必须显式给引用」这一对外承诺，也是那处交互代码的边界证明。
+    """
+    root = tmp_path / "work"
+    root.mkdir()
+    WorkdirRegistry.register(root)
+
+    result = runner.invoke(app, ["batch", "add", str(root)])
+
+    assert result.exit_code != 0
+    assert "非交互新建须提供" in result.stderr + result.stdout
+    assert list_batches(root) == []
+
+
 def test_run_writes_products_report_and_resumes_without_model_calls(
     prepared: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
