@@ -3,9 +3,9 @@
 对外接口：
 - 配置与密钥：EndpointConfig / SecretValue / ConfigError / data_root / read_config /
   describe_config；多配置存储（endpoints/ 目录）——EndpointConfigInfo / list_configs /
-  create_config / update_config / delete_config / set_active_config / active_config_name /
-  read_config_data / read_stored_api_key / has_config / has_stored_key /
-  validated_request_params / DEFAULT_CONFIG_NAME / SUPPORTED_API_FORMAT
+  config_info / create_config / update_config / delete_config / set_active_config /
+  active_config_name / read_config_data / read_stored_api_key / has_config /
+  has_stored_key / validated_request_params / DEFAULT_CONFIG_NAME / SUPPORTED_API_FORMAT
 - 补全接口与客户端：Completer / OpenAIChatClient / build_completer
 - 消息模型：Message / Role / TextPart / ImagePart / ContentPart
 - 媒体护栏常量（单一事实源）：MAX_IMAGE_BYTES / MAX_VIDEO_BYTES / IMAGE_MIME_BY_SUFFIX / VIDEO_MIME_BY_SUFFIX / IMAGE_EXTENSIONS / VIDEO_EXTENSIONS
@@ -40,6 +40,7 @@ from .endpoints import (
     EndpointConfigInfo,
     SecretValue,
     active_config_name,
+    config_info,
     create_config,
     delete_config,
     has_config,
@@ -120,6 +121,7 @@ __all__ = [
     "VideoPart",
     "active_config_name",
     "build_completer",
+    "config_info",
     "create_config",
     "data_root",
     "delete_config",

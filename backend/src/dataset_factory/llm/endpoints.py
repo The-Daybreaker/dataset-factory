@@ -247,22 +247,26 @@ def list_configs() -> list[EndpointConfigInfo]:
             坏数据不该被列表悄悄藏起来）。
     """
     active = active_config_name()
-    infos: list[EndpointConfigInfo] = []
-    for name in _existing_config_dirs():
-        data = _read_config_file(name)
-        infos.append(
-            EndpointConfigInfo(
-                name=name,
-                base_url=cast(str, data["base_url"]),
-                model=cast(str, data["model"]),
-                api_format=cast("str | None", data.get("api_format"))
-                or SUPPORTED_API_FORMAT,
-                has_api_key=_has_file_key(_config_dir(name) / _CREDENTIALS_FILENAME),
-                is_active=active is not None and active == name,
-                request_params=validated_request_params(data, name),
-            )
-        )
-    return infos
+    return [
+        _config_info(name, _read_config_file(name), active)
+        for name in _existing_config_dirs()
+    ]
+
+
+def config_info(name: str) -> EndpointConfigInfo:
+    """读单套配置的概要（与 list_configs 走同一份取数规则）。
+
+    Args:
+        name: 配置名（先过名称校验，杜绝路径穿越）。
+
+    Returns:
+        该配置的概要；is_active 按 active 指针判定。
+
+    Raises:
+        ConfigError: 名称不合法 / config.json 缺失 / 损坏 / 字段不全。
+    """
+    clean = validate_config_name(name)
+    return _config_info(clean, _read_config_file(clean), active_config_name())
 
 
 def read_config_data(name: str) -> dict[str, object]:
@@ -574,7 +578,7 @@ def _existing_config_dirs() -> list[str]:
 
 
 def _read_config_file(name: str) -> dict[str, object]:
-    """读并校验一套配置的 config.json（供列表与请求装配共用的底层读取）。
+    """读并校验一套配置的 config.json（列表、单套读与请求装配共用的底层读取）。
 
     Args:
         name: 配置名（来自文件系统枚举或已校验的指针，不再重复名称校验）。
@@ -613,6 +617,33 @@ def _read_config_file(name: str) -> dict[str, object]:
     if not isinstance(model, str) or not model.strip():
         raise ConfigError(f"端点配置「{name}」的 model 缺失或不是非空字符串；请补全。")
     return data
+
+
+def _config_info(
+    name: str, data: dict[str, object], active: str | None
+) -> EndpointConfigInfo:
+    """config.json 对象 + active 指针 → 概要（列表与单套读共用这一份取数规则）。
+
+    Args:
+        name: 已校验的配置名。
+        data: `_read_config_file` 校验过的 config.json 对象。
+        active: 当前使用的配置名，未设置时 None。
+
+    Returns:
+        该配置的概要。
+
+    Raises:
+        ConfigError: 请求参数键存在但类型不对。
+    """
+    return EndpointConfigInfo(
+        name=name,
+        base_url=cast(str, data["base_url"]),
+        model=cast(str, data["model"]),
+        api_format=cast("str | None", data.get("api_format")) or SUPPORTED_API_FORMAT,
+        has_api_key=_has_file_key(_config_dir(name) / _CREDENTIALS_FILENAME),
+        is_active=active == name,
+        request_params=validated_request_params(data, name),
+    )
 
 
 def _write_config_files(

@@ -20,6 +20,7 @@ from dataset_factory.llm import (
     ConfigNotFoundError,
     SecretValue,
     active_config_name,
+    config_info,
     create_config,
     delete_config,
     has_config,
@@ -75,6 +76,56 @@ def test_list_sorted_casefold(temp_data_root: Path) -> None:
     _create("charlie")
 
     assert [info.name for info in list_configs()] == ["Alpha", "beta", "charlie"]
+
+
+def test_config_info_matches_list_entry(temp_data_root: Path) -> None:
+    """单套读与列表读给出逐字段相同的概要（两条读路共用一份取数规则）。
+
+    三种形态各一份：带密钥与请求参数的、不带密钥的、旧格式（config.json 里没有
+    api_format 键，读侧回退到支持格式）。任一侧改了自己的口径，这里就红。
+    """
+    create_config(
+        "full",
+        base_url="https://full/v1",
+        model="m-full",
+        api_key=SecretValue("sk-full"),
+        request_params={"temperature": 0.3, "extra_body": {"think": False}},
+    )
+    create_config("nokey", base_url="https://no/v1", model="m-no", api_key=None)
+    legacy_dir = temp_data_root / "endpoints" / "legacy"
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "config.json").write_text(
+        json.dumps({"base_url": "https://legacy/v1", "model": "m-legacy"}),
+        encoding="utf-8",
+    )
+    by_name = {info.name: info for info in list_configs()}
+
+    assert sorted(by_name) == ["full", "legacy", "nokey"]
+    for name, info in by_name.items():
+        assert config_info(name) == info
+    assert by_name["full"].is_active
+    assert by_name["full"].has_api_key
+    assert not by_name["nokey"].has_api_key
+    assert by_name["legacy"].api_format == SUPPORTED_API_FORMAT
+    assert by_name["full"].request_params == {
+        "temperature": 0.3,
+        "extra_body": {"think": False},
+    }
+
+
+@pytest.mark.parametrize("bad_name", ["../outside", "a:b", ""])
+def test_config_info_rejects_illegal_name(temp_data_root: Path, bad_name: str) -> None:
+    """单套读先过名称校验：非法名（含路径穿越形态）报错，不去拼别人目录的路径。"""
+    _create("safe")
+
+    with pytest.raises(ConfigError):
+        config_info(bad_name)
+
+
+def test_config_info_missing_config_fails_loud(temp_data_root: Path) -> None:
+    """单套读不存在的配置点名缺 config.json，不静默给出空概要。"""
+    with pytest.raises(ConfigError, match=r"config\.json"):
+        config_info("ghost")
 
 
 def test_create_rejects_duplicate_casefold(temp_data_root: Path) -> None:

@@ -8,27 +8,21 @@ try/except 翻译——test 例外：连通性探测的成败是业务结果而�
 
 from __future__ import annotations
 
-from typing import cast
-
 from fastapi import APIRouter, Response, status
 
 from ..llm import (
-    SUPPORTED_API_FORMAT,
     EndpointConfig,
     EndpointConfigInfo,
     SecretValue,
-    active_config_name,
+    config_info,
     create_config,
     delete_config,
     first_api_key,
-    has_stored_key,
     list_configs,
     probe_endpoint,
-    read_config_data,
     read_stored_api_key,
     set_active_config,
     update_config,
-    validated_request_params,
 )
 from .schemas import (
     EndpointConfigSummary,
@@ -182,11 +176,6 @@ def _params_payload(
     return payload
 
 
-def _params_view(data: dict[str, object], name: str) -> EndpointRequestParams:
-    """config.json 数据 → 响应里的参数视图（未设置的键保持 null）。"""
-    return EndpointRequestParams.model_validate(validated_request_params(data, name))
-
-
 def _to_summary(info: EndpointConfigInfo) -> EndpointConfigSummary:
     """存储概要 → 响应模型：字段同名，交给 pydantic 按属性取值（含嵌套的 request_params）。"""
     return EndpointConfigSummary.model_validate(info)
@@ -194,13 +183,4 @@ def _to_summary(info: EndpointConfigInfo) -> EndpointConfigSummary:
 
 def _summary_of(name: str) -> EndpointConfigSummary:
     """写盘后重读一份概要（保证响应反映的是落盘事实，不是请求参数）。"""
-    data = read_config_data(name)
-    return EndpointConfigSummary(
-        name=name,
-        base_url=cast(str, data["base_url"]),
-        model=cast(str, data["model"]),
-        api_format=cast("str | None", data.get("api_format")) or SUPPORTED_API_FORMAT,
-        has_api_key=has_stored_key(name),
-        is_active=active_config_name() == name,
-        request_params=_params_view(data, name),
-    )
+    return _to_summary(config_info(name))
