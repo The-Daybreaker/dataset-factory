@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import secrets
 import threading
-from typing import Protocol
+from collections.abc import Callable
 
 __all__ = [
     "RETRY_AFTER_SECONDS",
@@ -50,21 +50,12 @@ class TaskCancelledError(Exception):
     """任务体检查到取消信号后抛出，干净退出；管理器统一记 cancelled。"""
 
 
-class TaskRunner(Protocol):
-    """长任务执行体协议：调用方实现具体业务（导入 / 搬迁 / 打包）。
-
-    协作式取消约定：任务体在安全点（每处理完一个文件等）检查 `should_stop.is_set()`，
-    需要中止就抛 `TaskCancelledError`——管理器据此记 cancelled。不检查也不影响正确性，
-    只是取消不生效（任务自然跑完记 succeeded）。
-
-    自愈语义由任务体保证，不由本包负责。
-    """
-
-    def __call__(
-        self, task_id: TaskId, should_stop: threading.Event
-    ) -> TaskResult | None:
-        """执行业务逻辑。返回值作为任务结果载荷；抛 TaskCancelled 记取消，其余异常记失败。"""
-        ...
+#: 长任务执行体：`(task_id, should_stop) -> 结果载荷 | None`（同步阻塞函数，管理器丢线程）。
+#:
+#: 协作式取消约定：任务体在安全点（每处理完一个文件等）检查 `should_stop.is_set()`，
+#: 需要中止就抛 `TaskCancelledError`——管理器据此记 cancelled；不检查也不影响正确性，
+#: 只是取消不生效（任务自然跑完记 succeeded）。自愈语义由任务体保证，不由本包负责。
+TaskRunner = Callable[[TaskId, threading.Event], TaskResult | None]
 
 
 class TaskInfo:
@@ -117,8 +108,8 @@ class TaskManager:
     def create(self, runner: TaskRunner) -> TaskId:
         """受理一个长任务：分配 task_id、立即派后台线程执行。
 
-        Args:
-            runner: 任务体（同步阻塞函数）；管理器传入 task_id 与 should_stop 事件。
+        任务体是 :data:`TaskRunner`——同步阻塞函数，管理器传入 task_id 与 should_stop 事件；
+        它按 `TaskCancelledError` 报告取消、按返回值报告结果，其余异常一律记 failed。
 
         Returns:
             新分配的 task_id。

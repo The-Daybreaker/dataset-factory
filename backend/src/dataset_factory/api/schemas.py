@@ -11,6 +11,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..llm import SUPPORTED_API_FORMAT
+from ..runs import RunMode
 
 
 class ErrorDetail(BaseModel):
@@ -688,7 +689,7 @@ class ExclusionsView(BaseModel):
 class RunStartRequest(BaseModel):
     """启动跑批的请求体。"""
 
-    mode: Literal["full", "retry"] = Field(
+    mode: RunMode = Field(
         description="full = 全量打未完成的条目；retry = 只打重试列表快照"
     )
     items: list[str] | None = Field(
