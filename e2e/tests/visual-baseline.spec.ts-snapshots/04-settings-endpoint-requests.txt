@@ -4,4 +4,3 @@ GET /api/endpoints
 GET /api/sessions/latest
 GET /api/prompts/详细描述
 GET /api/endpoints
-GET /api/endpoints

@@ -57,8 +57,9 @@ describe("App 外壳", () => {
     await user.click(screen.getByRole("button", { name: "技能" }));
 
     // 设置页现在是进页面才载的分包：先等它出现，再按原样断言（断言对象与强度不变）。
-    await screen.findByRole("heading", { name: "技能", level: 1 });
-    expect(screen.getByRole("heading", { name: "技能", level: 1 })).toBeVisible();
+    // A9 按原型还原后设置页不再有页头 h1，子页标题与「端点配置 / 服务运行」同为 h2。
+    await screen.findByRole("heading", { name: "技能", level: 2 });
+    expect(screen.getByRole("heading", { name: "技能", level: 2 })).toBeVisible();
     // 「设置页不加二级导航地标」得是可证伪的断言：数当前有几个导航地标
     // （只有侧栏那一个），多加一个就会红——原来查一个根本不存在的名字必然永真。
     expect(screen.getAllByRole("navigation")).toHaveLength(1);
