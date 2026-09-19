@@ -21,9 +21,10 @@ from pathlib import Path, PurePosixPath
 from typing import cast
 
 import yaml
-from filelock import FileLock, Timeout
+from filelock import Timeout
 
 from .._fs import atomic_write_text, data_root
+from .._locks import shared_file_lock
 from .errors import (
     SkillError,
     SkillExistsError,
@@ -193,7 +194,7 @@ def _write_disabled(disabled: set[str]) -> None:
 def _mutation_lock(path: Path) -> Generator[None]:
     """将跨进程写锁的等待失败统一转换为技能域异常。"""
     try:
-        with FileLock(str(path), timeout=10):
+        with shared_file_lock(path).acquire(timeout=10):
             yield
     except Timeout as exc:
         raise SkillExistsError("技能库正在修改，请稍后重试。") from exc
@@ -696,7 +697,9 @@ def save_skill_file(
         if updated_name != name:
             raise SkillFormatError("SKILL.md 的 name 必须与当前技能包名称一致。")
     try:
-        with FileLock(str(directory.parent / f".{name}.edit.lock"), timeout=10):
+        with shared_file_lock(directory.parent / f".{name}.edit.lock").acquire(
+            timeout=10
+        ):
             current = read_skill_file(name, path)
             if current != original_content:
                 raise SkillExistsError("文件已被其他写者修改；请重新读取后合并修改。")

@@ -20,11 +20,9 @@
 
 - **锁序 ``run.lock`` → ``state.lock``，绝不反向**（跑批先持运行锁，收尾出列时
   经 ``WorkdirStore.mutate_state`` 短暂取状态锁）。单向就不成环。
-- **锁实例按 realpath 共享、不每次新建**：filelock 的可重入计数按实例记账，
-  而 Windows 的 ``LockFileEx`` 按句柄记账——同一线程拿两个不同实例去锁同一个
-  文件会自己把自己锁死。实例按 realpath 共享后，同线程重入、跨线程互斥都由
-  单实例保证（filelock 3.32 实测核实：可重入计数与句柄按实例 + 线程本地记账，
-  跨线程互斥由 OS 锁本身成立）。
+- **锁实例按 realpath 共享、不每次新建**：注册表在层中立的 :mod:`dataset_factory._locks`
+  （`shared_file_lock`），理由与实测都写在那儿；本模块与 skills / prompts 域共用同一份，
+  任何一处都不再自己 ``FileLock(path)`` 新建实例。
 - ``run.lock`` / ``state.lock`` 都只表达占用与否、**锁内不写业务数据**；运行锁的
   占用者信息写 ``run-info.json``（启动时写、结束时删），残留无需人工处理——
   下次抢锁成功后直接覆盖。
@@ -39,7 +37,6 @@ import inspect
 import json
 import logging
 import os
-import threading
 import time
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -47,9 +44,10 @@ from functools import wraps
 from pathlib import Path
 from typing import Any, cast
 
-from filelock import FileLock, Timeout
+from filelock import Timeout
 
 from .._fs import atomic_write_text, data_root
+from .._locks import shared_file_lock
 from .errors import (
     ImportInProgressError,
     RunOccupiedError,
@@ -127,7 +125,7 @@ def maintenance_guard(workdir: Path, *, timeout: float = 0) -> Generator[None]:
     """
     path = maintenance_record(workdir).with_suffix(".lock")
     path.parent.mkdir(parents=True, exist_ok=True)
-    lock = _shared_file_lock(path)
+    lock = shared_file_lock(path)
     try:
         lock.acquire(timeout=timeout)
     except Timeout as exc:
@@ -161,7 +159,7 @@ def workdir_write[**P, T](
 def registry_guard(directory: Path) -> Generator[None]:
     """保护全局注册表的读改写，锁放数据根而非将被搬迁的工作目录内。"""
     directory.mkdir(parents=True, exist_ok=True)
-    lock = _shared_file_lock(directory / "workdirs.lock")
+    lock = shared_file_lock(directory / "workdirs.lock")
     try:
         lock.acquire(timeout=10)
     except Timeout as exc:
@@ -181,7 +179,7 @@ def import_guard(
     导入会先扫描再写登记集合，必须保护整段操作而不只保护追加一行。
     与运行锁独立，补充导入不阻塞已经开始的跑批。
     """
-    lock = _shared_file_lock(dsf_path / "imports.lock")
+    lock = shared_file_lock(dsf_path / "imports.lock")
     try:
         if lock.is_locked:
             lock.acquire(timeout=0)
@@ -220,33 +218,13 @@ _STATE_LOCK_NAME = "state.lock"
 #: 诊断信号。构造参数可注入更短的值（测试与特殊调用方用）。
 _STATE_LOCK_TIMEOUT_SECONDS: float = 10.0
 
-#: 共享锁实例注册表（key = 锁文件 realpath）。进程生命周期内只增不减：
-#: 条目是「每把物理锁一个小对象」，工作目录数量级很小，无需淘汰。
-_SHARED_LOCKS: dict[str, FileLock] = {}
-_SHARED_LOCKS_GUARD = threading.Lock()
-
-
-def _shared_file_lock(path: Path) -> FileLock:
-    """按 realpath 取共享 ``FileLock`` 实例（同一物理锁文件全进程一个实例）。
-
-    用 realpath 而不是字面路径做 key：符号链接与盘符大小写差异必须解析成
-    同一把锁，否则同线程两个「看起来不同、物理相同」的实例照样自锁。
-    """
-    key = os.path.normcase(os.path.realpath(path))
-    with _SHARED_LOCKS_GUARD:
-        lock = _SHARED_LOCKS.get(key)
-        if lock is None:
-            lock = FileLock(Path(key), timeout=-1, preserve_lock_file=True)
-            _SHARED_LOCKS[key] = lock
-        return lock
-
 
 class RunLock:
     """一个工作目录的运行锁：非阻塞抢锁 + run-info 写读清（同一个工作目录一把锁）。"""
 
     def __init__(self, dsf_path: Path) -> None:
         """以 ``.dsf/`` 路径构造（锁文件与占用者文件都落在这里）。"""
-        self._lock = _shared_file_lock(dsf_path / _RUN_LOCK_NAME)
+        self._lock = shared_file_lock(dsf_path / _RUN_LOCK_NAME)
         self._info_path = dsf_path / _RUN_INFO_NAME
         self._acquired = False
 
@@ -321,7 +299,7 @@ class StateLock:
         directory_identity: tuple[int, int] | None = None,
     ) -> None:
         """以 ``.dsf/`` 路径构造；timeout 为等锁宽超时（秒）。"""
-        self._lock = _shared_file_lock(dsf_path / _STATE_LOCK_NAME)
+        self._lock = shared_file_lock(dsf_path / _STATE_LOCK_NAME)
         self._dsf_path = dsf_path
         self._timeout = timeout
         self._directory_identity = directory_identity
@@ -380,7 +358,7 @@ def read_live_occupier(dsf_path: Path) -> dict[str, Any] | None:
     """只有系统锁仍被持有时才返回占用信息，崩溃残留文件不表示运行中。"""
     with maintenance_guard(dsf_path.parent):
         require_workdir_writable(dsf_path)
-        lock = _shared_file_lock(dsf_path / _RUN_LOCK_NAME)
+        lock = shared_file_lock(dsf_path / _RUN_LOCK_NAME)
         if lock.is_locked:
             return read_occupier(dsf_path / _RUN_INFO_NAME)
         try:

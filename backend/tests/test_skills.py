@@ -199,17 +199,21 @@ def test_save_skill_file_waits_for_concurrent_writer(
             assert saver_entered.wait(timeout=5)
             target.write_text(original + "\n另一写者\n", encoding="utf-8")
 
-    def saving_lock(lock_file: str, timeout: float) -> FileLock:
-        with pytest.raises(Timeout), FileLock(lock_file, timeout=0):
+    real_shared_lock = skill_store.shared_file_lock
+
+    def saving_lock(lock_file: Path) -> FileLock:
+        """经共享注册表取实例，并先探一次「对方还持着」，再交给被测代码去等。"""
+        probe = real_shared_lock(lock_file)
+        with pytest.raises(Timeout), probe.acquire(timeout=0):
             pytest.fail("竞争写者应仍持有编辑锁")
         saver_entered.set()
-        return FileLock(lock_file, timeout=timeout)
+        return probe
 
     with ThreadPoolExecutor(max_workers=1) as executor:
         worker = executor.submit(hold_lock)
         try:
             assert writer_ready.wait(timeout=5)
-            monkeypatch.setattr(skill_store, "FileLock", saving_lock)
+            monkeypatch.setattr(skill_store, "shared_file_lock", saving_lock)
             with pytest.raises(SkillExistsError, match="其他写者"):
                 save_skill_file(
                     "full-pack",

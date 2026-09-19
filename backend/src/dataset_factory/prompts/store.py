@@ -15,7 +15,10 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
+from filelock import Timeout
+
 from .._fs import atomic_write_text, data_root
+from .._locks import shared_file_lock
 from .builtin import BUILTIN_PRESET_VERSION, BUILTIN_PROMPTS
 from .errors import (
     PromptError,
@@ -33,6 +36,9 @@ _SUFFIX = ".md"
 _MAX_ENTRY_BYTES = (
     32 * 1024
 )  # 单条提示词字节上限，对齐 Codex project_doc_max_bytes；可调。
+#: 写者与写者之间的等待上限：临界区只有「复制旧版 + 原子写」，毫秒级，10 秒只用于诊断卡死。
+_EDIT_LOCK_TIMEOUT_SECONDS = 10.0
+
 _HISTORY_KEEP = 20  # 每条提示词在 _history/ 保留的最近版本数；可调。
 _STAMP_FORMAT = (
     "%Y%m%d-%H%M%S-%f"  # 定宽、字典序即时间序；微秒精度让同秒多次保存不撞名。
@@ -201,10 +207,19 @@ def save_prompt(prompt: Prompt) -> None:
         raise PromptError(
             f"无法在 {directory} 准备写入：{exc.strerror or exc}"
         ) from exc
-    if path.is_file():
-        _backup_to_history(directory, prompt.name, path)
+    # 备份 + 换版是一个整体：不加锁时两个写者会互相吞掉历史（各自的 copyfile 与
+    # 原子写交错，裁历史还会删掉对方刚写进去的那一份）。锁名沿用 skills 的约定。
     try:
-        atomic_write_text(path, text)
+        with shared_file_lock(_edit_lock_path(directory, prompt.name)).acquire(
+            timeout=_EDIT_LOCK_TIMEOUT_SECONDS
+        ):
+            if path.is_file():
+                _backup_to_history(directory, prompt.name, path)
+            atomic_write_text(path, text)
+    except Timeout as exc:
+        raise PromptError(
+            f"提示词 {prompt.name!r} 正在被另一个进程修改；请稍后重试。"
+        ) from exc
     except OSError as exc:
         raise PromptError(f"无法写入提示词 {path}：{exc.strerror or exc}") from exc
 
@@ -226,13 +241,25 @@ def delete_prompt(name: str) -> None:
     if not path.is_file():
         raise PromptNotFoundError(f"未找到提示词 {name!r}；无需删除。")
     try:
-        path.unlink()
+        with shared_file_lock(_edit_lock_path(directory, name)).acquire(
+            timeout=_EDIT_LOCK_TIMEOUT_SECONDS
+        ):
+            path.unlink()
+    except Timeout as exc:
+        raise PromptError(
+            f"提示词 {name!r} 正在被另一个进程修改；请稍后重试。"
+        ) from exc
     except OSError as exc:
         raise PromptError(f"无法删除提示词 {path}：{exc.strerror or exc}") from exc
     history_dir = directory / _HISTORY_DIRNAME
     if history_dir.is_dir():
         for old in _history_versions(history_dir, name):
             old.unlink(missing_ok=True)
+
+
+def _edit_lock_path(directory: Path, name: str) -> Path:
+    """条目级写锁的文件路径（点前缀：列目录时天然被跳过，与原子写的临时文件同类）。"""
+    return directory / f".{name}.edit.lock"
 
 
 def _backup_to_history(directory: Path, name: str, current: Path) -> None:
