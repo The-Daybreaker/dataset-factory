@@ -18,7 +18,7 @@ from .locks import (
     maintenance_guard,
     maintenance_record,
 )
-from .store import WorkdirRegistry, WorkdirStore
+from .store import WorkdirRegistry, WorkdirStore, registered_path
 
 
 @dataclass(frozen=True)
@@ -69,7 +69,7 @@ def _files(root: Path) -> dict[str, tuple[int, str]]:
 
 
 def _root(wid: str) -> Path:
-    path = Path(WorkdirRegistry.get(wid).path).absolute()
+    path = registered_path(wid).absolute()
     if path.is_symlink() or path.is_junction() or path == Path(path.anchor):
         raise WorkdirPathError("不能删除文件系统根目录或目录链接。")
     root = path.resolve()

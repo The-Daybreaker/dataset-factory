@@ -55,10 +55,20 @@ PATTERNS: tuple[
     ),
     (
         "G2 重复实现",
-        "wid→路径内联展开",
+        "wid→路径解析内联抄本",
+        BACKEND_SRC,
+        r"Path\(WorkdirRegistry\.get\(",
+        "逐字写「查注册表再取 .path」的处数（含两处允许的出口定义与 docstring 提及）",
+    ),
+    (
+        "G2 重复实现",
+        "wid→路径内联展开（粗筛对照）",
         BACKEND_SRC / "api",
         r"\.path\)",
-        "在调用点内联写「注册表查出来再取 .path」的处数",
+        (
+            "上一口径的粗筛：任何以 `.path)` 结尾的调用都算，会把「请求体里的目录字段」"
+            "（Path(body.path)）与助手 docstring 里的举例一并算进来，只作对照"
+        ),
     ),
     (
         "G2 重复实现",

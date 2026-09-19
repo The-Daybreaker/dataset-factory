@@ -192,13 +192,13 @@ class WorkdirRegistry:
     @staticmethod
     def update_path(wid: str, new_path: Path) -> WorkdirEntry:
         """搬迁后原地更新 path（wid 不变）。"""
-        source = Path(WorkdirRegistry.get(wid).path)
+        source = registered_path(wid)
         with (
             maintenance_guard(source),
             maintenance_guard(new_path),
             registry_guard(data_root()),
         ):
-            if _realpath(Path(WorkdirRegistry.get(wid).path)) != _realpath(source):
+            if _realpath(registered_path(wid)) != _realpath(source):
                 raise WorkdirPathError("工作目录位置已变化，请刷新后重试。")
             require_workdir_writable(new_path / ".dsf")
             return WorkdirRegistry._update_path(wid, new_path)
@@ -229,12 +229,22 @@ class WorkdirRegistry:
     @staticmethod
     def remove(wid: str) -> None:
         """从注册表移除（工作目录本身不动）。"""
-        source = Path(WorkdirRegistry.get(wid).path)
+        source = registered_path(wid)
         with maintenance_guard(source), registry_guard(data_root()):
-            if _realpath(Path(WorkdirRegistry.get(wid).path)) != _realpath(source):
+            if _realpath(registered_path(wid)) != _realpath(source):
                 raise WorkdirPathError("工作目录位置已变化，请刷新后重试。")
             entries = _read_registry()
             _write_registry([entry for entry in entries if entry.id != wid])
+
+
+def registered_path(wid: str) -> Path:
+    """按 wid 取注册表里记下的规范路径（本域唯一出口）。
+
+    api 层与 CLI 层各有自己的同名出口（`api/deps.py`、`cli/operations.py`）——那两层不许
+    反向依赖彼此，本域也不该再抄一遍：这一句此前在 workdir 域内有 10 份。`WorkdirNotFoundError`
+    照旧由注册表抛出，交给上层的全局映射表翻译。
+    """
+    return Path(WorkdirRegistry.get(wid).path)
 
 
 @workdir_write

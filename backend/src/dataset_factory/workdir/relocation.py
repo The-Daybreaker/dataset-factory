@@ -21,7 +21,7 @@ from .locks import (
     maintenance_guard,
     maintenance_record,
 )
-from .store import WorkdirRegistry, WorkdirStore
+from .store import WorkdirRegistry, WorkdirStore, registered_path
 
 _RUNTIME_FILES = frozenset(
     Path(".dsf") / name
@@ -234,12 +234,12 @@ def relocate_workdir(
     progress: Callable[[float], None] | None = None,
 ) -> dict[str, object]:
     """复制校验后切换注册表，自动清理旧目录，删除失败保留重试记录。"""
-    source = Path(WorkdirRegistry.get(wid).path).resolve()
+    source = registered_path(wid).resolve()
     if destination.is_symlink() or destination.is_junction():
         raise WorkdirPathError("搬迁目标不能是链接，请检查后重试。")
     destination = destination.resolve()
     with maintenance_guard(source), maintenance_guard(destination):
-        if Path(WorkdirRegistry.get(wid).path).resolve() != source:
+        if registered_path(wid).resolve() != source:
             raise WorkdirPathError("工作目录位置已变化，请刷新后重试。")
         store = WorkdirStore(source)
         run = RunLock(store.dsf_path)
@@ -365,7 +365,7 @@ def _read_record(path: Path) -> dict[str, object]:
 
 def relocation_status(wid: str) -> list[dict[str, object]]:
     """从持久记录发现中断副本与待清理旧位置，状态以当前注册表为准。"""
-    current = Path(WorkdirRegistry.get(wid).path).resolve()
+    current = registered_path(wid).resolve()
     results: list[dict[str, object]] = []
     for path in sorted((data_root() / "workdir-maintenance").glob("*.json")):
         record = _read_record(path)
@@ -444,9 +444,9 @@ def _remove_old_location(
 def retry_relocation_cleanup(wid: str, old_path: Path) -> dict[str, object]:
     """只清理由该工作目录搬迁记录证明的旧位置，不能指定任意删除路径。"""
     source = old_path.absolute()
-    destination = Path(WorkdirRegistry.get(wid).path).resolve()
+    destination = registered_path(wid).resolve()
     with maintenance_guard(source), maintenance_guard(destination):
-        if Path(WorkdirRegistry.get(wid).path).resolve() != destination:
+        if registered_path(wid).resolve() != destination:
             raise WorkdirPathError("工作目录位置已变化，请刷新后重试。")
         record = maintenance_record(source)
         if not record.is_file():
