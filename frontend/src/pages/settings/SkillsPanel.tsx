@@ -34,9 +34,9 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "../../components/ui/tooltip";
+import type { Feedback } from "../../lib/feedback";
 import { cn } from "../../lib/utils";
 import { readSkillDrop } from "./skill-drop";
-import type { Feedback } from "./types";
 
 /** 注入正文字符数（SKILL.md + references）→ 列表徽标文案（即打标请求的实际注入量）。 */
 function formatChars(count: number): string {

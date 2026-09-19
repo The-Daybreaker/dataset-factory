@@ -36,6 +36,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "../../components/ui/tooltip";
+import type { Feedback } from "../../lib/feedback";
 import { BodyEditor } from "./BodyEditor";
 import { EndpointSwitcher } from "./EndpointSwitcher";
 import { InputArea } from "./InputArea";
@@ -45,12 +46,6 @@ import type { ChatMessage, PendingMedia } from "./types";
 
 /** 基础提示词的字节护栏（对齐 Codex project_doc_max_bytes，后端同值校验）。 */
 const PROMPT_BYTE_BUDGET = 32 * 1024;
-
-/** 一次性反馈（编辑器列的操作结果）；id 让同文案重复出现也能触发重渲染。 */
-interface Feedback {
-  kind: "success" | "error";
-  text: string;
-}
 
 export function PromptWorkbench({
   onNavigateToSettings,

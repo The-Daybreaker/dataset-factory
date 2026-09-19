@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from "../../components/ui/select";
 import { Textarea } from "../../components/ui/textarea";
+import type { Feedback } from "../../lib/feedback";
 import { cn } from "../../lib/utils";
 import {
   type AdvJsonState,
@@ -33,7 +34,6 @@ import {
   paramsToJson,
   syncFormFromJson,
 } from "./adv-params";
-import type { Feedback } from "./types";
 
 /** 一期唯一支持的调用格式；其余选项灰显「暂未支持」，未来补适配器即启用。 */
 const SUPPORTED_API_FORMAT = "openai-chat-completions";
