@@ -50,7 +50,7 @@ _LOG_LEVEL_ENV = "DSF_LOG_LEVEL"
 _DEFAULT_LOG_LEVEL = "INFO"
 
 
-def _configure_logging(level_name: str) -> None:
+def configure_logging(level_name: str) -> None:
     """配置应用日志输出到 stderr（stdout 留给结果正文，供外部 agent 干净解析）。
 
     应用层负责日志配置、核心库只发记录（见 design「可观测性与日志」分工）；请求 id 由
@@ -137,7 +137,7 @@ def serve(
     from ..api.routes_service import server_log_path
 
     if log_level is not None:
-        _configure_logging(log_level)
+        configure_logging(log_level)
     app = create_app()
     log_file = server_log_path()
     app.state.service_info = {
@@ -164,4 +164,4 @@ def serve(
 
 
 # 应用层在最早期配置日志（stdout 留给结果正文，退出码约定见模块 docstring）。
-_configure_logging(os.environ.get(_LOG_LEVEL_ENV, _DEFAULT_LOG_LEVEL))
+configure_logging(os.environ.get(_LOG_LEVEL_ENV, _DEFAULT_LOG_LEVEL))
