@@ -79,11 +79,12 @@ jobs:
           }
           # `mutmut results` 默认只列**未击杀**的变异体（`--all` 才连 killed 一起列，
           # 且它是需要取值的选项、写成裸 `--all` 会直接报错）。这里只要可行动的两类：
-          # survived（有用例跑到却没杀）与 no_tests（覆盖空洞）；segfault 属工具/环境噪声，
+          # survived（有用例跑到却没杀）与 "no tests"（覆盖空洞；mutmut 的状态标签里
+          # no_tests 这个键在 results 里写作带空格的 "no tests"）；segfault 属工具/环境噪声，
           # 只在计数里出现，逐条列出来只会淹没前两类。
           uncleared() {
             uv run --with mutmut mutmut results 2>&1 \
-              | grep -E ': (survived|no_tests)$' \
+              | grep -E ': (survived|no tests)$' \
               | sed 's/^ *//' \
               | sort
           }
@@ -104,10 +105,10 @@ jobs:
             cat uncleared-mutants.txt
             echo '```'
             echo
-            echo "### 按模块聚合"
+            echo "### 按模块聚合（键形如 `包.模块.函数__mutmut_N`，去掉最后一段即模块）"
             echo
             echo '```'
-            cut -d: -f1 uncleared-mutants.txt | sort | uniq -c | sort -rn
+            sed 's/:[a-z ]*$//; s/\.[^.]*$//' uncleared-mutants.txt | sort | uniq -c | sort -rn
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           score
