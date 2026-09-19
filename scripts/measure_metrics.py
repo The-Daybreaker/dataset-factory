@@ -259,6 +259,26 @@ PATTERNS: tuple[
         "各测试文件自己重抄的 api mock（目标收敛到 test-utils）",
     ),
     (
+        "G2 重复实现",
+        "跑批终态判定手写集合",
+        BACKEND_SRC,
+        r'\{"completed", "interrupted", "failed"\}',
+        (
+            "把「哪些状态算已终结」重抄一遍的位点——两处就会在新增终态时漏判（订阅 SSE 的"
+            "客户端永远等不到收尾帧）；现只由 `runs/progress.TERMINAL_RUN_STATUSES` 判"
+        ),
+    ),
+    (
+        "G2 重复实现",
+        "跑批计数键名手写枚举",
+        BACKEND_SRC,
+        r'"planned": 0|\("planned", "attempted"',
+        (
+            "五个计数键名被列第二遍的位点——读侧 `RunCounters` 是键名定义处，写侧重抄会在"
+            "加一个计数时漏键；现两处初值都走 `journal.empty_counters()`"
+        ),
+    ),
+    (
         "G3 测试质量",
         "前端 resetAllMocks",
         FRONTEND_SRC,

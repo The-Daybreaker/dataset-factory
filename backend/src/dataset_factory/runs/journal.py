@@ -48,6 +48,16 @@ class RunCounters(BaseModel):
     skipped: int = Field(ge=0)
 
 
+def empty_counters() -> dict[str, int]:
+    """五个计数的初始镜像（全 0），键名跟着 `RunCounters` 走。
+
+    执行器的运行中镜像与跨进程读到的占位进度都要一份「还没数过任何条目」的计数；
+    在此前两处各手写一遍键名，加一个计数就会有一处漏键（读侧 `RunCounters` 严格模式
+    会当场拒收）。
+    """
+    return dict.fromkeys(RunCounters.model_fields, 0)
+
+
 class RunRecord(BaseModel):
     """磁盘上的一次运行摘要；与当前进程的运行活性分开。"""
 

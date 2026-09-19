@@ -74,7 +74,14 @@ from ..workdir.locks import RunLock
 from ..workdir.store import WorkdirStore
 from .control import stop_requested
 from .errors import BatchInactiveError
-from .journal import RunJournal, load_recent_success_hashes
+from .journal import RunJournal, empty_counters, load_recent_success_hashes
+from .progress import (
+    RUN_STATUS_COMPLETED,
+    RUN_STATUS_FAILED,
+    RUN_STATUS_INTERRUPTED,
+    RUN_STATUS_PENDING,
+    RUN_STATUS_RUNNING,
+)
 
 __all__ = [
     "RETRYABLE_REASON_CODES",
@@ -104,15 +111,6 @@ RunTrigger = Literal["web", "cli"]
 _MAX_ATTEMPTS = 4
 _BACKOFF_BASE_SECONDS = 1.0
 _JITTER_RATIO = 0.2
-
-#: run.json 里 status 的取值：骨架写 running，正常结束写 completed，被停止写 interrupted。
-_STATUS_RUNNING = "running"
-_STATUS_COMPLETED = "completed"
-_STATUS_INTERRUPTED = "interrupted"
-#: 进度快照（current 端点）的运行前状态：已受理、后台线程尚未跑起来。
-_STATUS_PENDING = "pending"
-#: 进度快照的失败终态：跑批没能启动（如跨进程锁被占 / 快照在启动前被删）。
-_STATUS_FAILED = "failed"
 
 # state.json 的重试列表键（结构由本域定义，WorkdirStore 只忠实存取；缺键视为空）。
 _RETRY_LIST_KEY = "retry_list"
@@ -288,16 +286,10 @@ class BatchRunner:
         # 立即返回它；目录创建仍在持锁后进行——跨进程同秒撞名时输家抢不到锁、
         # 不会真建目录）。counters 全程持有一份运行中镜像，供无锁读取。
         self._run_id = _new_run_id(WorkdirStore(workdir).runs_dir)
-        self._status = _STATUS_PENDING
+        self._status = RUN_STATUS_PENDING
         self._error: str | None = None
         self._current_item: str | None = None
-        self._counters: dict[str, int] = {
-            "planned": 0,
-            "attempted": 0,
-            "succeeded": 0,
-            "failed": 0,
-            "skipped": 0,
-        }
+        self._counters: dict[str, int] = empty_counters()
 
     # -- 进度快照（current 端点数据源；跨线程无锁读——单键读写原子性够用） ----
 
@@ -368,17 +360,17 @@ class BatchRunner:
             RunOccupiedError: 工作目录已有跑批在运行（运行锁被占用）。
             RunJournalCorruptedError: 历史运行流水损坏（full 模式续跑判定要读它）。
         """
-        self._status = _STATUS_RUNNING
+        self._status = RUN_STATUS_RUNNING
         try:
             return self._run()
         except Exception as exc:
-            self._status = _STATUS_FAILED
+            self._status = RUN_STATUS_FAILED
             self._error = str(exc)
             self._emit(
                 RunFinishedEvent(
                     run_id=self._run_id,
                     batch=self._seq,
-                    status=_STATUS_FAILED,
+                    status=RUN_STATUS_FAILED,
                     counters=self._counters,
                     error=self._error,
                 )
@@ -459,7 +451,7 @@ class BatchRunner:
             "strategy_hash": strategy_hash,
             "snapshot": f"strategies/s{self._seq}.json",
             "dsf_version": tool_version(),
-            "status": _STATUS_RUNNING,
+            "status": RUN_STATUS_RUNNING,
             "counters": dict(counters),
             "started_at": started_at,
             "finished_at": None,
@@ -498,9 +490,9 @@ class BatchRunner:
                 succeeded_items.append(item)
 
         status = (
-            _STATUS_INTERRUPTED
+            RUN_STATUS_INTERRUPTED
             if interrupted or self._should_stop()
-            else _STATUS_COMPLETED
+            else RUN_STATUS_COMPLETED
         )
         self._status = status
         finished_at = now_iso()

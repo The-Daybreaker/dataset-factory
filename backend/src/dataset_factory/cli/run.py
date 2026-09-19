@@ -7,7 +7,7 @@ from typing import Annotated
 
 import typer
 
-from ..runs import BatchRunner, RunEvent, completer_for_snapshot
+from ..runs import RUN_STATUS_INTERRUPTED, BatchRunner, RunEvent, completer_for_snapshot
 from ..strategies import read_snapshot
 from ..workdir import WorkdirStore
 from ..workdir.assets import registered_origins, unimported_files
@@ -62,7 +62,7 @@ def run(
     result = asdict(report)
     result["log_path"] = str(report.run_dir / "run.log")
     print_result(result)
-    if stop.is_set() or report.status == "interrupted":
+    if stop.is_set() or report.status == RUN_STATUS_INTERRUPTED:
         raise typer.Exit(130)
     if report.counters["failed"]:
         raise typer.Exit(1)

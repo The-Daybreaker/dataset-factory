@@ -7,6 +7,8 @@ from typing import Any
 from .._fs import atomic_write_text
 from ..workdir.locks import maintenance_guard, read_live_occupier, read_occupier
 from .errors import RunNotActiveError
+from .journal import empty_counters
+from .progress import RUN_STATUS_RUNNING, TERMINAL_RUN_STATUSES
 
 
 def current_run(workdir: Path, seq: int) -> dict[str, Any]:
@@ -26,10 +28,8 @@ def current_run(workdir: Path, seq: int) -> dict[str, Any]:
             "run_id": run_id,
             "batch": seq,
             "mode": owner.get("mode", "full"),
-            "status": "running",
-            "counters": dict.fromkeys(
-                ("planned", "attempted", "succeeded", "failed", "skipped"), 0
-            ),
+            "status": RUN_STATUS_RUNNING,
+            "counters": empty_counters(),
             "current_item": None,
             "error": None,
         }
@@ -39,7 +39,7 @@ def request_stop(workdir: Path, seq: int) -> str:
     """请求当前运行在安全点停止；运行 ID 防止误停后续运行。"""
     with maintenance_guard(workdir, timeout=10):
         progress = current_run(workdir, seq)
-        if progress["status"] in {"completed", "interrupted", "failed"}:
+        if progress["status"] in TERMINAL_RUN_STATUSES:
             raise RunNotActiveError("该批次当前没有进行中的跑批。")
         run_id = str(progress["run_id"])
         atomic_write_text(

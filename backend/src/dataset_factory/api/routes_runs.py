@@ -30,6 +30,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..runs import (
+    RUN_STATUS_INTERRUPTED,
+    RUN_STATUS_RUNNING,
+    TERMINAL_RUN_STATUSES,
     BatchInactiveError,
     BatchRunner,
     RetryItemNotEligibleError,
@@ -89,14 +92,14 @@ def latest_run(wid: str, sN: str, request: Request) -> RunHistoryView:
     get_batch(workdir, seq)
     runs_dir = workdir / ".dsf" / "runs"
     record = load_latest_run(runs_dir, seq)
-    if record is not None and record.status == "running":
+    if record is not None and record.status == RUN_STATUS_RUNNING:
         try:
             progress = current_run(wid, sN, request)
         except RunNotActiveError:
             # 活性检查期间可能刚好收尾，先回读终态再判断是否异常中断。
             record = load_latest_run(runs_dir, seq)
-            if record is not None and record.status == "running":
-                record = record.model_copy(update={"status": "interrupted"})
+            if record is not None and record.status == RUN_STATUS_RUNNING:
+                record = record.model_copy(update={"status": RUN_STATUS_INTERRUPTED})
         else:
             if progress.run_id == record.run_id:
                 record = record.model_copy(
@@ -106,7 +109,7 @@ def latest_run(wid: str, sN: str, request: Request) -> RunHistoryView:
                     }
                 )
             else:
-                record = record.model_copy(update={"status": "interrupted"})
+                record = record.model_copy(update={"status": RUN_STATUS_INTERRUPTED})
     directory = runs_dir / record.run_id if record else None
     return RunHistoryView(
         record=record,
@@ -158,7 +161,7 @@ def _require_active(runner: BatchRunner) -> BatchRunner:
 
     此时 run-finished 已发过，订阅它只会挂死等不到帧。
     """
-    if runner.snapshot()["status"] in {"completed", "interrupted", "failed"}:
+    if runner.snapshot()["status"] in TERMINAL_RUN_STATUSES:
         raise RunNotActiveError("该批次当前没有进行中的跑批——启动一次跑批后再试。")
     return runner
 
