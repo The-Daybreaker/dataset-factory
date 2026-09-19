@@ -14,6 +14,7 @@ problem+json（404 strategy/batch/workdir 不存在、400 名字 / 引用不合�
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 from typing import cast
 
@@ -74,17 +75,8 @@ batches_router = APIRouter(
 def _to_strategy_view(entry: LibraryStrategy) -> StrategyView:
     """库策略 → 响应模型（健康度现查）。"""
     problems = missing_refs(entry)
-    return StrategyView(
-        id=entry.id,
-        name=entry.name,
-        description=entry.description,
-        endpoint=entry.endpoint,
-        prompt=entry.prompt,
-        skills=entry.skills,
-        available=not problems,
-        missing_refs=problems,
-        created_at=entry.created_at,
-        updated_at=entry.updated_at,
+    return StrategyView.model_validate(
+        asdict(entry) | {"available": not problems, "missing_refs": problems}
     )
 
 
@@ -92,17 +84,15 @@ def _to_batch_view(wid: str, entry: BatchEntry) -> BatchView:
     """批次记录 → 响应模型（产物计数与最近一次运行现查）。"""
     workdir = workdir_root(wid)
     record = load_latest_run(WorkdirStore(workdir).runs_dir, entry.seq)
-    return BatchView(
-        id=f"s{entry.seq}",
-        seq=entry.seq,
-        name=entry.name,
-        description=entry.description,
-        active=entry.active,
-        created_at=entry.created_at,
-        product_count=product_count(workdir, entry.seq),
-        run_status=record.status if record else None,
-        run_done=record.counters.succeeded if record else None,
-        run_total=record.counters.planned if record else None,
+    return BatchView.model_validate(
+        asdict(entry)
+        | {
+            "id": f"s{entry.seq}",
+            "product_count": product_count(workdir, entry.seq),
+            "run_status": record.status if record else None,
+            "run_done": record.counters.succeeded if record else None,
+            "run_total": record.counters.planned if record else None,
+        }
     )
 
 

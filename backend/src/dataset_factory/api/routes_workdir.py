@@ -306,13 +306,8 @@ def verify_integrity(wid: str, batch: str | None = None) -> IntegrityReport:
 
 
 def _to_info(entry: WorkdirEntry) -> WorkdirInfo:
-    """注册表条目 → 响应模型。"""
-    return WorkdirInfo(
-        id=entry.id,
-        path=entry.path,
-        title=entry.title,
-        last_used_at=entry.last_used_at,
-    )
+    """注册表条目 → 响应模型（字段同名，按属性取值）。"""
+    return WorkdirInfo.model_validate(entry)
 
 
 def _manager(request: Request) -> TaskManager:

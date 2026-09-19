@@ -135,6 +135,16 @@ PATTERNS: tuple[
     ),
     (
         "G2 重复实现",
+        "api 层逐字段搬运响应模型",
+        BACKEND_SRC / "api",
+        r"^\s+[a-z][a-z0-9_]*=\w+\.\w+,?$",
+        (
+            "形如「字段=域对象.属性,」的搬运行：响应契约在模型里已声明一遍，这里再抄一遍就是"
+            "两处事实。同名纯搬运已改由 pydantic 按属性取值，剩下的行都是从多处现拼/请求体组装"
+        ),
+    ),
+    (
+        "G2 重复实现",
         "前端 view model mapper 函数",
         FRONTEND_SRC,
         r"^\s*(?:export )?(?:async )?function \w+\([^)]*\): (?:\w+(?:View|Model|State)|Promise<)",

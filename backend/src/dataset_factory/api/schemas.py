@@ -280,6 +280,10 @@ class EndpointRequestParams(BaseModel):
 class EndpointConfigSummary(BaseModel):
     """端点配置概要——列表 / 创建 / 更新的响应体，密钥只报有无、绝不回内容。"""
 
+    # 由存储层的数据类按属性取值（`model_validate(info)`），api 层不再重抄一遍字段名——
+    # 抄本会在「模型加了字段、搬运忘了改」时把每个请求打成 500。契约仍是下面这张字段表。
+    model_config = ConfigDict(from_attributes=True)
+
     name: str = Field(description="配置名（endpoints/ 下的目录名）")
     base_url: str = Field(description="端点地址")
     model: str = Field(description="模型名")
@@ -336,6 +340,8 @@ class Problem(BaseModel):
 
 class WorkdirInfo(BaseModel):
     """工作目录注册表条目——GET /api/workdirs 列表与详情的响应体。"""
+
+    model_config = ConfigDict(from_attributes=True)
 
     id: str = Field(description="wid 短 ID（注册表主键，搬迁后不变）")
     path: str = Field(description="工作目录的规范绝对路径")

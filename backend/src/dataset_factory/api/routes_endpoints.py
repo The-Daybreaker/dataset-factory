@@ -190,16 +190,8 @@ def _params_view(data: dict[str, object], name: str) -> EndpointRequestParams:
 
 
 def _to_summary(info: EndpointConfigInfo) -> EndpointConfigSummary:
-    """存储概要 → 响应模型（形状一致，显式搬运以守住响应契约）。"""
-    return EndpointConfigSummary(
-        name=info.name,
-        base_url=info.base_url,
-        model=info.model,
-        api_format=info.api_format,
-        has_api_key=info.has_api_key,
-        is_active=info.is_active,
-        request_params=EndpointRequestParams.model_validate(info.request_params),
-    )
+    """存储概要 → 响应模型：字段同名，交给 pydantic 按属性取值（含嵌套的 request_params）。"""
+    return EndpointConfigSummary.model_validate(info)
 
 
 def _summary_of(name: str) -> EndpointConfigSummary:
