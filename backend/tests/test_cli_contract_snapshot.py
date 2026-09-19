@@ -35,7 +35,9 @@ GOLDEN_DIR = Path(__file__).parent / "cli-golden"
 _UPDATE = os.environ.get("DSF_UPDATE_CLI_SNAPSHOTS") == "1"
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 _RUNNER = CliRunner()
-_SNAPSHOT_WIDTH = 80
+# 采集宽度取 120 列：80 列下 rich 会把过长的说明裁成「…」，那样文案改了快照也看不见（独立审计
+# 实测注入一处 help 改动，65 份快照全绿）。120 列实测零截断，由 test_no_truncated_golden 钉住。
+_SNAPSHOT_WIDTH = 120
 # 面板边框字形归一：圆角还是直角由终端的 Unicode 能力决定（Windows 传统控制台画不出圆角，
 # rich 自动降级），不是 CLI 对外的承诺；比的是命令名、参数、文案、列宽与退出码。
 _BOX_GLYPHS = str.maketrans("╭╮╰╯", "┌┐└┘")
@@ -138,7 +140,7 @@ def pinned_rich_rendering() -> Iterator[None]:
 
     typer 一见 ``GITHUB_ACTIONS`` / ``FORCE_COLOR`` 就把控制台切进「终端模式」：面板边框从
     ``┌┐└┘`` 换成 ``╭╮╰╯``，宽度也从固定值换成实时探测值——同一份代码在本地和 CI 上会渲染
-    出两套字节。固定成「非终端 + 80 列」后，两平台采集结果一致。
+    出两套字节。固定成「非终端 + 120 列」后，两平台采集结果一致。
 
     Yields:
         渲染参数被钉住期间让出控制权，退出时自动还原。
@@ -166,6 +168,18 @@ def test_command_help_snapshot(cli: TyperGroup, path: tuple[str, ...]) -> None:
     """每条命令的 ``--help`` 全文要与黄金一致（参数名、默认值、说明文案都在里面）。"""
     result = _invoke(cli, [*list(path), "--help"])
     _check(f"help-{'.'.join(path)}.txt", _normalize(_render(result), Path.cwd()))
+
+
+def test_no_truncated_golden() -> None:
+    """黄金文件里不许出现省略号：出现即说明采集宽度不够、有文案被裁掉，快照就没了牙齿。"""
+    clipped = [
+        path.name
+        for path in sorted(GOLDEN_DIR.glob("*.txt"))
+        if "…" in path.read_text(encoding="utf-8")
+    ]
+    assert not clipped, (
+        f"这些快照存在被裁断的文案：{clipped}——调宽 _SNAPSHOT_WIDTH 后重采"
+    )
 
 
 def test_readonly_commands_output_snapshot(

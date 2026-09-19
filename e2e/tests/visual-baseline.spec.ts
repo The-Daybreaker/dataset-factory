@@ -148,11 +148,14 @@ async function probe(page: Page): Promise<string> {
 }
 
 test.describe("视觉与请求基线", () => {
-  /** 起一屏：设视口、装路由桩、打开首页并等字体就绪。 */
-  async function boot(page: Page): Promise<string[]> {
+  /** 起一屏：设视口、装路由桩（overrides 按用例替换个别端点）、打开首页并等字体就绪。 */
+  async function boot(
+    page: Page,
+    overrides: Record<string, unknown> = {},
+  ): Promise<string[]> {
     const sink: string[] = [];
     await page.setViewportSize({ width: 1440, height: 900 });
-    await stubApi(page, sink);
+    await stubApi(page, sink, overrides);
     await page.goto("/");
     await page.waitForFunction(() => document.fonts.status === "loaded");
     return sink;
@@ -255,5 +258,35 @@ test.describe("视觉与请求基线", () => {
     await openLabeling(page);
     await page.getByRole("button", { name: "快照", exact: true }).click();
     await snap(page, sink, "12-labeling-snapshot");
+  });
+
+  // 13 / 14 两屏补的是「单测里删掉的实现细节断言该由谁负责」这一层：折叠态的高度与损坏
+  // Skill 的错误色都是纯视觉口径，jsdom 量不到（探针按盒尺寸与计算样式取值，正好量得到）。
+  test("13 打标-素材折叠为小图", async ({ page }) => {
+    const sink = await boot(page);
+    await openLabeling(page);
+    await page.getByRole("button", { name: "alpha.png", exact: true }).click();
+    await settle(page, sink);
+    await page.getByRole("button", { name: "折叠为小图" }).click();
+    await snap(page, sink, "13-labeling-tile-folded");
+  });
+
+  test("14 设置-Skill 含损坏项", async ({ page }) => {
+    const sink = await boot(page, {
+      "GET /api/skills": [
+        { name: "caption-style", description: "风格约束", enabled: true, body_chars: 1234 },
+        {
+          name: "broken",
+          description:
+            "文件损坏：SKILL.md 的 frontmatter 未闭合（开头有 ---，但找不到结束的 ---）。",
+          enabled: true,
+          body_chars: 0,
+        },
+      ],
+    });
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    await settle(page, sink);
+    await page.getByRole("button", { name: "技能", exact: true }).click();
+    await snap(page, sink, "14-settings-skill-corrupt");
   });
 });

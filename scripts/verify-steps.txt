@@ -5,7 +5,8 @@
 # Windows（verify.ps1）与 *nix / Git Bash（verify.sh）读同一份，步骤不会两边漂移。
 #
 # 格式：组 | 步骤名 | 档位 | 命令（组名即工作目录，命令在该目录下用系统 shell 执行）
-#   档位 fast = 每次提交前都该跑；slow = 耗时长（起浏览器），收口时跑。
+#   档位 fast = 每次提交前都该跑（含 L4 视觉与请求基线——「页面没变」这条红线不能只靠记得跑
+#              --all 才保得住）；slow = 更耗时的全量功能 E2E 与只报不卡的度量，收口时跑。
 # 顺序即执行顺序；任一步非 0 退出即整体失败（快速失败，不吞红灯）。
 
 backend | ruff check | fast | uv run ruff check .
@@ -34,4 +35,5 @@ repo | 度量：入站引用死代码报告 | fast | python scripts/deadcode_rep
 frontend | 度量：knip + depcheck（只报不卡） | slow | npx knip --no-progress || true
 backend | 度量：vulture + deptry（只报不卡） | slow | uv run vulture src --min-confidence 80 || true
 
-e2e | Playwright 全量（含视觉与请求基线） | slow | npx playwright test
+e2e | 视觉与请求基线（L4 门） | fast | npx playwright test tests/visual-baseline.spec.ts
+e2e | Playwright 功能全量 | slow | npx playwright test --grep-invert "视觉与请求基线"

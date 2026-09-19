@@ -25,10 +25,14 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/test-setup.ts"],
     // 每个测试文件建一个 jsdom 要 ~218ms（26 个文件 ≈ 5.7s，是墙钟的三分之一）。
-    // vmThreads + 不隔离 = 同一 worker 内复用环境；跨文件全局状态本来就由
-    // test-setup 的 afterEach cleanup 与逐文件 vi.mock 管住，改完连跑结果一致（见
-    // process/review-refactor.md G5 节）。纯逻辑的四个文件另走 node 环境（省 jsdom）。
+    // vmThreads + 不隔离 = 同一 worker 内复用环境；跨文件全局状态由 test-setup 的 afterEach
+    // cleanup 与逐文件 vi.mock 管住（连跑稳定性与残留超时风险见 process/review-refactor.md
+    // G5 节与「审计与返工」节）。纯逻辑的四个文件另走 node 环境（省 jsdom）。
     pool: "vmThreads",
     isolate: false,
+    // userEvent 的重交互用例在默认 5s 下本来就紧（本机实测：即使退回 --pool=forks 的旧配置，
+    // 3 次里仍有 2 次超时，超时点是 NewBatchForm / DeleteWorkdirDialog / App 外壳这类
+    // 「6 次点击 + 异步取数」的用例）。放宽到 15s 只动计时器，不动任何断言对象与强度。
+    testTimeout: 15_000,
   },
 });
