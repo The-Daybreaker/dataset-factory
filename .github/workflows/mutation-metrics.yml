@@ -114,3 +114,17 @@ jobs:
           score
           echo "--- uncleared mutants ($(wc -l < uncleared-mutants.txt)) ---"
           cat uncleared-mutants.txt
+
+      # 逐条差异才是能动手的信息：只有名字看不出「哪个常量没被断言」。这一步把未击杀变异体
+      # 的 diff 全量打进日志（约 200 条 × 十几行），下一轮照它补用例时不必再猜改了什么。
+      # continue-on-error：这是取数附赠品，它失败不该把整个度量作业标红。
+      - name: Dump uncleared mutant diffs
+        if: always()
+        continue-on-error: true
+        run: |
+          sed 's/: [a-z ]*$//' uncleared-mutants.txt | sort | head -240 > uncleared-names.txt
+          echo "取到 $(wc -l < uncleared-names.txt) 个未击杀变异体的差异"
+          while read -r name; do
+            echo "===== ${name}"
+            uv run --with mutmut mutmut show "${name}" 2>&1 | sed -n '1,30p'
+          done < uncleared-names.txt
