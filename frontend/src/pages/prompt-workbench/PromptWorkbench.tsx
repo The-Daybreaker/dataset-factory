@@ -37,6 +37,7 @@ import {
   TooltipTrigger,
 } from "../../components/ui/tooltip";
 import type { Feedback } from "../../lib/feedback";
+import { formatBytes } from "../../lib/format";
 import { BodyEditor } from "./BodyEditor";
 import { EndpointSwitcher } from "./EndpointSwitcher";
 import { InputArea } from "./InputArea";
@@ -471,7 +472,7 @@ export function PromptWorkbench({
   const byteOver = bodyBytes > PROMPT_BYTE_BUDGET;
   const controlsBusy = sending || endpointBusy || strategyBusy || promptBusy;
   const canSend = !controlsBusy && (instruction.trim() !== "" || media !== null);
-  const bodyKiB = (bodyBytes / 1024).toFixed(1);
+  const bodySize = formatBytes(bodyBytes, "KiB", 1);
   const promptDirty =
     draftName !== savedPrompt.name ||
     draftDescription !== savedPrompt.description ||
@@ -656,7 +657,7 @@ export function PromptWorkbench({
                   <span
                     className={`text-t-xs tabular-nums ${byteOver ? "text-bad-ink" : "text-text-4"}`}
                   >
-                    {bodyKiB} KiB / 32 KiB
+                    {bodySize} / 32 KiB
                   </span>
                 </div>
                 <BodyEditor

@@ -10,6 +10,7 @@ import { ApiError, api, errorMessage, type TaskView } from "../../api";
 import type { components } from "../../api-types.gen";
 import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
+import { formatBytes } from "../../lib/format";
 
 type Plan = components["schemas"]["ExportPlanView"];
 type Row = components["schemas"]["ExportPlanRow"];
@@ -414,8 +415,7 @@ export function ExportPanel({ wid, batch, refreshKey, onImport }: Props) {
         <h3 className="text-t-md font-medium">打包与导出</h3>
         {plan && (
           <span className="ml-auto text-t-xs text-text-4 tabular-nums">
-            {plan.included.length} 条 · {(plan.total_bytes / 1024 / 1024).toFixed(2)}{" "}
-            MiB
+            {plan.included.length} 条 · {formatBytes(plan.total_bytes, "MiB", 2)}
           </span>
         )}
       </div>

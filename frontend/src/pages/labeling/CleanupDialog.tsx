@@ -10,6 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../components/ui/dialog";
+import { formatBytes } from "../../lib/format";
 
 type Entry = { name: string; size: number; batch?: number; modified_at?: number };
 
@@ -186,7 +187,7 @@ export function CleanupDialog({
                         </span>
                       )}
                       <span className="shrink-0 text-text-4 tabular-nums">
-                        {(entry.size / 1024).toFixed(1)} KiB
+                        {formatBytes(entry.size, "KiB", 1)}
                         {entry.batch !== undefined ? ` · s${entry.batch}` : ""}
                       </span>
                       {entry.modified_at !== undefined && (
@@ -199,7 +200,7 @@ export function CleanupDialog({
                 </div>
               </fieldset>
               <p className="text-t-sm text-text-3">
-                已选 {selected.size} 项 · {(bytes / 1024).toFixed(1)} KiB
+                已选 {selected.size} 项 · {formatBytes(bytes, "KiB", 1)}
               </p>
               {confirming && (
                 <p className="text-t-sm text-warn-ink">

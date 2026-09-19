@@ -8,6 +8,7 @@ import {
 import { useEffect, useId, useRef, useState } from "react";
 import { ApiError, api, errorMessage } from "../api";
 import type { components } from "../api-types.gen";
+import { formatBytes } from "../lib/format";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
@@ -340,9 +341,7 @@ export function DirectoryPicker({
                   </>
                 )}
                 <span className="ml-auto text-t-sm text-text-3 tabular-nums">
-                  {entry.size === null
-                    ? ""
-                    : `${(entry.size / 1024).toFixed(1)} KiB · `}
+                  {entry.size === null ? "" : `${formatBytes(entry.size, "KiB", 1)} · `}
                   {new Date(entry.modified_at).toLocaleString()}
                 </span>
               </div>

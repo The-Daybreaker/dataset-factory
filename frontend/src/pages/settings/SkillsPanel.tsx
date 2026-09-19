@@ -35,6 +35,7 @@ import {
   TooltipTrigger,
 } from "../../components/ui/tooltip";
 import type { Feedback } from "../../lib/feedback";
+import { formatBytes } from "../../lib/format";
 import { cn } from "../../lib/utils";
 import { readSkillDrop } from "./skill-drop";
 
@@ -219,10 +220,10 @@ export function SkillsPanel(): ReactElement {
   };
 
   const applyImportResult = (result: SkillImportResponse): void => {
-    const sizeKb = (result.total_bytes / 1024).toFixed(1);
+    const sizeText = formatBytes(result.total_bytes, "KiB", 1);
     setFeedback({
       kind: "success",
-      text: `已导入「${result.name}」（${sizeKb} KiB——skill 全文将注入打标请求，体积偏大时留意 token 消耗）`,
+      text: `已导入「${result.name}」（${sizeText}——skill 全文将注入打标请求，体积偏大时留意 token 消耗）`,
     });
     setSelected(result.name);
   };

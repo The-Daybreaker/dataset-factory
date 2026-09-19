@@ -28,8 +28,10 @@ BACKEND_TESTS = REPO / "backend" / "tests"
 FRONTEND_SRC = REPO / "frontend" / "src"
 DIST = REPO / "frontend" / "dist"
 
-#: (分组, 指标名, 扫描根, 正则, 说明) —— 每行都是一个「越少越好」的可数指标。
-PATTERNS: tuple[tuple[str, str, Path, str, str], ...] = (
+#: (分组, 指标名, 扫描根, 正则, 说明[, 排除 *.test.*]) —— 每行都是一个「越少越好」的可数指标。
+PATTERNS: tuple[
+    tuple[str, str, Path, str, str] | tuple[str, str, Path, str, str, bool], ...
+] = (
     (
         "G2 重复实现",
         "api 手写异常处理器闭包",
@@ -195,6 +197,17 @@ PATTERNS: tuple[tuple[str, str, Path, str, str], ...] = (
         "测试伸手拿模块私名的位点（改动模块上要求归零）",
     ),
     (
+        "G2 重复实现",
+        "前端手工字节格式化",
+        FRONTEND_SRC,
+        r"/ ?1024",
+        (
+            "页面里现写「除以 1024 再 toFixed」的显示换算处数（收成 lib/format.ts 后应为 0）；"
+            "测试里为对照而保留的旧式抄本不算份数"
+        ),
+        True,
+    ),
+    (
         "G3 测试质量",
         "后端 patch 打在模块全局名",
         BACKEND_TESTS,
@@ -239,8 +252,17 @@ PATTERNS: tuple[tuple[str, str, Path, str, str], ...] = (
 )
 
 
-def iter_files(root: Path, suffixes: tuple[str, ...]) -> list[Path]:
-    """按后缀收集源码文件，跳过缓存与虚拟环境目录。"""
+def iter_files(
+    root: Path, suffixes: tuple[str, ...], *, skip_tests: bool = False
+) -> list[Path]:
+    """按后缀收集源码文件，跳过缓存与虚拟环境目录。
+
+    Args:
+        root: 扫描根。
+        suffixes: 认的后缀。
+        skip_tests: 是否排除 `*.test.*`。有的指标要连测试一起看（例如「测试里重抄的 mock」），
+            有的只看产码（例如「页面里现写的显示换算」——测试为对照而保留的抄本不该算份数）。
+    """
     skip = {
         "__pycache__",
         ".venv",
@@ -255,18 +277,20 @@ def iter_files(root: Path, suffixes: tuple[str, ...]) -> list[Path]:
             continue
         if skip & set(path.parts):
             continue
+        if skip_tests and ".test." in path.name:
+            continue
         out.append(path)
     return out
 
 
 def count_matches(
-    root: Path, pattern: str, suffixes: tuple[str, ...]
+    root: Path, pattern: str, suffixes: tuple[str, ...], *, skip_tests: bool = False
 ) -> tuple[int, list[str]]:
     """统计正则在一片源码里的命中行数，并回传命中位置（file:line）便于复核口径。"""
     rx = re.compile(pattern)
     total = 0
     hits: list[str] = []
-    for path in iter_files(root, suffixes):
+    for path in iter_files(root, suffixes, skip_tests=skip_tests):
         try:
             lines = path.read_text(encoding="utf-8").splitlines()
         except (UnicodeDecodeError, OSError):
@@ -401,7 +425,9 @@ def collect() -> dict[str, object]:
     metrics["dist"] = dist_metrics()
     metrics["ui_surface"] = ui_export_surface()
     dup: dict[str, object] = {}
-    for _group, name, root, pattern, _note in PATTERNS:
+    for row in PATTERNS:
+        _group, name, root, pattern, _note = row[:5]
+        skip_tests = bool(row[5]) if len(row) > 5 else False
         if not root.exists():
             continue
         suffixes = (
@@ -412,7 +438,7 @@ def collect() -> dict[str, object]:
                 ".tsx",
             )
         )
-        count, hits = count_matches(root, pattern, suffixes)
+        count, hits = count_matches(root, pattern, suffixes, skip_tests=skip_tests)
         dup[name] = {"数量": count, "位置": hits[:40]}
     metrics["重复与死代码计数"] = dup
     return metrics

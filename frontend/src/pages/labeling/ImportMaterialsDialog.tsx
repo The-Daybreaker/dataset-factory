@@ -18,6 +18,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "../../components/ui/tooltip";
+import { formatBytesAuto } from "../../lib/format";
 import {
   type ImportReport,
   parseImportReport,
@@ -35,12 +36,7 @@ interface Props {
 }
 
 function ContentFingerprint({ size, hash }: { size: number; hash: string }) {
-  const amount =
-    size < 1024
-      ? `${size} B`
-      : size < 1024 ** 2
-        ? `${(size / 1024).toFixed(1)} KiB`
-        : `${(size / 1024 ** 2).toFixed(1)} MiB`;
+  const amount = formatBytesAuto(size);
   return (
     <Tooltip>
       <TooltipTrigger asChild>

@@ -22,6 +22,7 @@ import {
 } from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
 import { Tip } from "../../components/ui/tooltip";
+import { formatBytes } from "../../lib/format";
 import { BatchConfiguration } from "./BatchConfiguration";
 import { CleanupDialog } from "./CleanupDialog";
 import { DeleteWorkdirDialog } from "./DeleteWorkdirDialog";
@@ -361,7 +362,7 @@ export function WorkdirSettings({
                 {batches.filter((batch) => !batch.active).length}）
                 {stats && ` · 素材 ${stats.asset_count}`} · 产物{" "}
                 {batches.reduce((total, batch) => total + batch.product_count, 0)}
-                {stats && ` · ${(stats.asset_bytes / 1024 / 1024).toFixed(2)} MiB`}
+                {stats && ` · ${formatBytes(stats.asset_bytes, "MiB", 2)}`}
               </span>
             </div>
             {statsError && (
@@ -397,7 +398,7 @@ export function WorkdirSettings({
                 <span className="text-text-3">
                   {cleanupSummary.products.products.length} 个 txt（
                   {cleanupBatches.size} 套策略，含 {hiddenCleanupBatches} 套已隐藏）·{" "}
-                  {(cleanupSummary.products.total_bytes / 1024).toFixed(1)} KiB
+                  {formatBytes(cleanupSummary.products.total_bytes, "KiB", 1)}
                 </span>
               )}
               <Button
@@ -414,13 +415,11 @@ export function WorkdirSettings({
               {cleanupSummary && (
                 <span className="text-text-3">
                   {cleanupSummary.runs.length} 份 ·{" "}
-                  {(
-                    cleanupSummary.runs.reduce(
-                      (total, entry) => total + entry.size,
-                      0,
-                    ) / 1024
-                  ).toFixed(1)}{" "}
-                  KiB
+                  {formatBytes(
+                    cleanupSummary.runs.reduce((total, entry) => total + entry.size, 0),
+                    "KiB",
+                    1,
+                  )}
                   {runDateRange && ` · ${runDateRange}`}
                 </span>
               )}
