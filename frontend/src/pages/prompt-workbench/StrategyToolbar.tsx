@@ -166,6 +166,9 @@ export function StrategyToolbar({
       references.endpoint !== selected.endpoint ||
       references.prompt !== selected.prompt ||
       JSON.stringify(references.skills) !== JSON.stringify(selected.skills));
+  // 有东西可保存 = 已选策略有改动，或正在编辑一份尚未落库的新策略（新建流程不能被「无改动」禁用）。
+  const actionable =
+    dirty || (selected === null && (name !== "" || description !== ""));
   const switchLocked =
     locked ||
     busy ||
@@ -329,15 +332,22 @@ export function StrategyToolbar({
           value={description}
           disabled={busy}
           onChange={(event) => setDescription(event.currentTarget.value)}
-          className="min-w-0 basis-full rounded-md border border-transparent bg-transparent px-2 py-1 text-t-md text-text-3 hover:border-border hover:bg-card focus:border-input sm:flex-1 sm:basis-auto"
+          className="min-w-24 max-w-full field-sizing-content rounded-md border border-transparent bg-transparent px-2 py-1 text-t-md text-text-3 hover:border-border hover:bg-card focus:border-input"
         />
-        {dirty && <span className="text-t-xs text-warn-ink">未保存</span>}
+        <span className="hidden flex-1 sm:block" />
         <Button
           size="sm"
+          variant={actionable ? "default" : "ghost"}
           aria-label="保存策略"
           disabled={
-            busy || locked || !name.trim() || !references.prompt || !references.endpoint
+            busy ||
+            locked ||
+            !actionable ||
+            !name.trim() ||
+            !references.prompt ||
+            !references.endpoint
           }
+          title={actionable ? undefined : "没有未保存的修改"}
           onClick={save}
         >
           保存

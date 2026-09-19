@@ -52,7 +52,8 @@ test("打标页长名称下顶栏与条目列保持原型尺寸和对齐", async
   expect(searchBox.height).toBe(26);
   expect(selectorBox.x + selectorBox.width).toBeLessThan(createBox.x);
   const context = page.getByRole("region", { name: "策略配置" });
-  const endpoint = context.getByTitle("Example · caption-model", { exact: true });
+  // 端点章 title = 「端点 · 模型 · 健康信息」（C1 探测点），健康段随探测结果变化，按前缀匹配。
+  const endpoint = context.getByTitle(/Example · caption-model/);
   await expect(endpoint).toBeVisible();
   await expect(endpoint).toHaveCSS("height", "26px");
   await expect(endpoint).toHaveCSS("border-radius", "12px");

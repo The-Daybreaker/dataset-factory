@@ -30,6 +30,13 @@ vi.mock("./api", () => {
       listPrompts: vi.fn().mockResolvedValue([]),
       listSkills: vi.fn().mockResolvedValue([]),
       listEndpoints: vi.fn().mockResolvedValue([]),
+      getService: vi.fn().mockResolvedValue({
+        version: "v0.1.0",
+        host: "127.0.0.1",
+        port: 8000,
+        started_at: "2026-09-19T00:00:00Z",
+        log_file: "x",
+      }),
       latestSession: vi
         .fn()
         .mockRejectedValue(

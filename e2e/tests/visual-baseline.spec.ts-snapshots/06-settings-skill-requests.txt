@@ -1,3 +1,4 @@
+GET /api/service
 GET /api/prompts
 GET /api/skills
 GET /api/endpoints

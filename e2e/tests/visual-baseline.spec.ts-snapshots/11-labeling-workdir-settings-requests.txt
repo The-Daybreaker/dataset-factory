@@ -1,3 +1,4 @@
+GET /api/service
 GET /api/prompts
 GET /api/skills
 GET /api/endpoints
@@ -11,6 +12,7 @@ GET /api/workdirs/probe/batches/s1/runs/latest
 GET /api/workdirs/probe/export/plan
 GET /api/workdirs/probe/batches/s1/items
 GET /api/workdirs/probe/batches/s1/runs/latest
+POST /api/endpoints/test
 GET /api/workdirs/probe/batches/s1/runs/latest
 GET /api/workdirs/probe/export/plan
 GET /api/workdirs/probe/cleanup-preview

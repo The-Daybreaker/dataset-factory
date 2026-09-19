@@ -537,13 +537,13 @@ export function PromptWorkbench({
             <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-border bg-card px-6 py-4">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <span className="text-t-sm text-text-3">提示词</span>
-                <div className="relative flex min-w-0 max-w-full flex-1 items-center">
+                <div className="relative flex min-w-0 max-w-full items-center">
                   <input
                     id="prompt-name"
                     aria-label="名称"
                     value={draftName}
                     placeholder="新建提示词"
-                    className="min-w-0 w-full rounded-md border border-transparent bg-transparent py-1 pr-7 pl-1 text-t-xl font-medium hover:border-input focus:border-n-400"
+                    className="min-w-24 max-w-full field-sizing-content rounded-md border border-transparent bg-transparent py-1 pr-7 pl-1 text-t-xl font-medium hover:border-input focus:border-n-400"
                     onInput={(event) => {
                       interactionRef.current += 1;
                       setDraftName(event.currentTarget.value);
@@ -628,11 +628,13 @@ export function PromptWorkbench({
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
-                {promptDirty && <span className="text-t-xs text-warn-ink">未保存</span>}
+                <span className="flex-1" />
                 <Button
                   type="button"
                   size="sm"
-                  disabled={byteOver}
+                  variant={promptDirty ? "default" : "ghost"}
+                  disabled={byteOver || !promptDirty}
+                  title={promptDirty ? undefined : "没有未保存的修改"}
                   onClick={() => void saveDraft()}
                 >
                   保存

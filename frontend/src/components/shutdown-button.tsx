@@ -37,6 +37,8 @@ export function ShutdownButton({
     try {
       await api.shutdownService();
       setOpen(false);
+      // 侧栏脚注的服务状态点监听此事件：关闭成功后立即重查，点随即转红。
+      window.dispatchEvent(new Event("df:service-changed"));
     } catch (err) {
       setError(errorMessage(err));
     } finally {

@@ -15,7 +15,8 @@ import {
   TagsIcon,
 } from "lucide-react";
 import type { ReactElement } from "react";
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { api } from "./api";
 import { ShutdownButton } from "./components/shutdown-button";
 import { ThemeToggle } from "./components/theme-toggle";
 import { Dialog, DialogContent, DialogTitle } from "./components/ui/dialog";
@@ -78,6 +79,57 @@ const NAV_GROUPS: readonly NavGroup[] = [
 
 /** 产品版本号（侧栏脚注）；与 package.json / 后端 app version 同步维护。 */
 const APP_VERSION = "v0.1.0";
+
+/** 侧栏脚注的服务状态点（§5.14「状态点 + 版本号」组合口径）：数据 = GET /api/service，不为点编造状态。 */
+function ServiceDot(): ReactElement {
+  const [state, setState] = useState<"probing" | "ok" | "bad">("probing");
+  const refresh = useCallback(() => {
+    void api.getService().then(
+      () => setState("ok"),
+      () => setState("bad"),
+    );
+  }, []);
+  useEffect(() => {
+    refresh();
+    const onFocus = (): void => refresh();
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("df:service-changed", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("df:service-changed", onFocus);
+    };
+  }, [refresh]);
+  const cls =
+    state === "ok"
+      ? "bg-ok-dot"
+      : state === "bad"
+        ? "bg-bad-dot"
+        : "bg-info-dot animate-pulse";
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          role="img"
+          aria-label={
+            state === "ok"
+              ? "服务运行中"
+              : state === "bad"
+                ? "服务不可用"
+                : "正在检测服务"
+          }
+          className={`inline-block size-1.5 rounded-full ${cls}`}
+        />
+      </TooltipTrigger>
+      <TooltipContent>
+        {state === "ok"
+          ? "服务运行中"
+          : state === "bad"
+            ? "服务不可用"
+            : "正在检测服务"}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 /** 可折叠侧栏、全局操作与独立滚动的工作画布。 */
 export function App(): ReactElement {
@@ -275,7 +327,12 @@ export function App(): ReactElement {
           </TooltipTrigger>
           <TooltipContent>设置</TooltipContent>
         </Tooltip>
-        {!collapsed && <span className="ml-auto tabular-nums">{APP_VERSION}</span>}
+        {!collapsed && (
+          <span className="ml-auto flex items-center gap-1.5">
+            <ServiceDot />
+            <span className="tabular-nums">{APP_VERSION}</span>
+          </span>
+        )}
       </div>
     </aside>
   );

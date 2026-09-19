@@ -11,6 +11,9 @@ vi.mock("../../api", () => ({
     listBatches: vi.fn(),
     listItems: vi.fn(),
     readCaption: vi.fn().mockResolvedValue("caption"),
+    testEndpoint: vi
+      .fn()
+      .mockResolvedValue({ ok: true, message: "连通", latency_ms: 1 }),
     addRetryItems: vi.fn(),
     removeRetryItem: vi.fn(),
     clearRetryItems: vi.fn(),
