@@ -17,6 +17,13 @@ import { stubApi } from "./fixtures/api-stubs";
 
 const TOTAL = 3000;
 const ITEMS_KEY = "GET /api/workdirs/probe/batches/s1/items";
+/**
+ * 「量到了东西」这条前提的等待预算：默认 5s 在全新构建的预览服务 + 机器负载高时不够——
+ * 首轮要把 3000 个按钮建出来，实测同一份 dist 单跑必过、跟在整条门禁后面偶发超时（2026-09-19
+ * 连续两次 in-suite 失败 / standalone 两次通过，失败点都在这一条之前）。放宽到 30s 只影响
+ * 「等多久算准备就绪」，不影响断言本身；用例总时限 180s 仍远在其上。
+ */
+const SEED_TIMEOUT = 30_000;
 
 function doneItems(count: number) {
   const out = [];
@@ -54,9 +61,9 @@ test("3000 条清单下搜索输入的长任务数", async ({ page }, testInfo) 
   await page.goto("/");
   await page.getByRole("button", { name: "打标", exact: true }).click();
   const search = page.getByRole("textbox", { name: "搜索素材" });
-  await expect(search).toBeVisible();
+  await expect(search).toBeVisible({ timeout: SEED_TIMEOUT });
   const listItems = page.getByRole("button", { name: /^sample-/ });
-  await expect(listItems.first()).toBeVisible();
+  await expect(listItems.first()).toBeVisible({ timeout: SEED_TIMEOUT });
   const domBefore = await listItems.count();
 
   const seen = await page.evaluateHandle(() => {
