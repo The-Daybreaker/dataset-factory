@@ -67,6 +67,7 @@ from ..workdir.relocation import (
 )
 from ..workdir.stats import scan_workdir_stats
 from .deps import workdir_root
+from .problems import problem, problem_schema_responses
 from .schemas import (
     ImportAccepted,
     ImportRecord,
@@ -110,10 +111,7 @@ class WorkdirDeleteRequest(BaseModel):
 @router.get(
     "/{wid}/delete-preview",
     response_model=DeletionPreview,
-    responses={
-        code: {"model": Problem, "content": {"application/problem+json": {}}}
-        for code in (400, 404, 409)
-    },
+    responses={code: problem() for code in (400, 404, 409)},
 )
 def get_deletion_preview(wid: str) -> DeletionPreview:
     """删除前展示实际文件范围与原始素材警告。"""
@@ -123,10 +121,7 @@ def get_deletion_preview(wid: str) -> DeletionPreview:
 @router.delete(
     "/{wid}",
     response_model=DeletionResult,
-    responses={
-        code: {"model": Problem, "content": {"application/problem+json": {}}}
-        for code in (400, 404, 409)
-    },
+    responses={code: problem() for code in (400, 404, 409)},
 )
 def delete_registered_workdir(wid: str, body: WorkdirDeleteRequest) -> DeletionResult:
     """确认路径后删除整个目录，失败返回残留位置并保留登记。"""
@@ -136,14 +131,7 @@ def delete_registered_workdir(wid: str, body: WorkdirDeleteRequest) -> DeletionR
 @router.post(
     "/{wid}/cleanup",
     response_model=CleanupResult,
-    responses={
-        code: {
-            "content": {
-                "application/problem+json": {"schema": Problem.model_json_schema()}
-            }
-        }
-        for code in (400, 404, 409)
-    },
+    responses=problem_schema_responses((400, 404, 409)),
 )
 def clean_selected_products(wid: str, body: CleanupRequest) -> CleanupResult:
     """确认后清理选中的孤立产物，删除失败时返回暂存位置。"""
@@ -153,10 +141,7 @@ def clean_selected_products(wid: str, body: CleanupRequest) -> CleanupResult:
 @router.post(
     "/{wid}/unimported/remove",
     response_model=CleanupResult,
-    responses={
-        code: {"model": Problem, "content": {"application/problem+json": {}}}
-        for code in (400, 404, 409)
-    },
+    responses={code: problem() for code in (400, 404, 409)},
 )
 def remove_selected_unimported(wid: str, body: CleanupRequest) -> CleanupResult:
     """确认后移出仍未登记的文件，并返回保留原始字节的恢复目录。"""
@@ -166,14 +151,7 @@ def remove_selected_unimported(wid: str, body: CleanupRequest) -> CleanupResult:
 @router.get(
     "/{wid}/cleanup-runs-preview",
     response_model=list[RunCleanupEntry],
-    responses={
-        code: {
-            "content": {
-                "application/problem+json": {"schema": Problem.model_json_schema()}
-            }
-        }
-        for code in (400, 404)
-    },
+    responses=problem_schema_responses((400, 404)),
 )
 def get_run_cleanup_preview(wid: str) -> list[RunCleanupEntry]:
     """清理运行记录前列出每份名称、体积和时间。"""
@@ -183,14 +161,7 @@ def get_run_cleanup_preview(wid: str) -> list[RunCleanupEntry]:
 @router.post(
     "/{wid}/cleanup-runs",
     response_model=CleanupResult,
-    responses={
-        code: {
-            "content": {
-                "application/problem+json": {"schema": Problem.model_json_schema()}
-            }
-        }
-        for code in (400, 404, 409)
-    },
+    responses=problem_schema_responses((400, 404, 409)),
 )
 def clean_selected_runs(wid: str, body: CleanupRequest) -> CleanupResult:
     """确认后清理所选运行记录，素材、产物与快照不受影响。"""
@@ -200,14 +171,7 @@ def clean_selected_runs(wid: str, body: CleanupRequest) -> CleanupResult:
 @router.get(
     "/{wid}/cleanup-preview",
     response_model=CleanupPreview,
-    responses={
-        code: {
-            "content": {
-                "application/problem+json": {"schema": Problem.model_json_schema()}
-            }
-        }
-        for code in (400, 404)
-    },
+    responses=problem_schema_responses((400, 404)),
 )
 def get_cleanup_preview(wid: str) -> CleanupPreview:
     """列出工作目录里已无素材配对的产物，不执行清理。"""
@@ -222,9 +186,9 @@ def get_cleanup_preview(wid: str) -> CleanupPreview:
     status_code=202,
     response_model=WorkdirRelocateAccepted,
     responses={
-        400: {"model": Problem, "content": {"application/problem+json": {}}},
-        404: {"model": Problem, "content": {"application/problem+json": {}}},
-        409: {"model": Problem, "content": {"application/problem+json": {}}},
+        400: problem(),
+        404: problem(),
+        409: problem(),
     },
 )
 async def start_relocation(
@@ -271,14 +235,7 @@ async def start_relocation(
 @router.post(
     "/{wid}/relocate/cleanup",
     response_model=WorkdirCleanupRetryResult,
-    responses={
-        code: {
-            "content": {
-                "application/problem+json": {"schema": Problem.model_json_schema()}
-            }
-        }
-        for code in (400, 404, 409)
-    },
+    responses=problem_schema_responses((400, 404, 409)),
 )
 def retry_relocation_cleanup_path(
     wid: str, body: WorkdirCleanupRetryRequest
@@ -291,10 +248,7 @@ def retry_relocation_cleanup_path(
 @router.get(
     "/{wid}/relocate/status",
     response_model=list[WorkdirRelocationStatus],
-    responses={
-        code: {"model": Problem, "content": {"application/problem+json": {}}}
-        for code in (400, 404)
-    },
+    responses={code: problem() for code in (400, 404)},
 )
 def get_relocation_status(wid: str) -> list[WorkdirRelocationStatus]:
     """发现服务重启后仍需处置的副本与旧位置。"""
@@ -456,16 +410,12 @@ def list_all() -> list[WorkdirInfo]:
     status_code=202,
     response_model=WorkdirCreateAccepted,
     responses={
-        400: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "工作目录或来源目录路径不合法（problem+json: workdir-path-invalid）",
-        },
-        422: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "来源目录与工作目录相同或互为嵌套（problem+json: import-source-conflict）",
-        },
+        400: problem(
+            "工作目录或来源目录路径不合法（problem+json: workdir-path-invalid）"
+        ),
+        422: problem(
+            "来源目录与工作目录相同或互为嵌套（problem+json: import-source-conflict）"
+        ),
     },
 )
 async def create_workdir(body: WorkdirCreateRequest, request: Request) -> JSONResponse:
@@ -493,11 +443,7 @@ async def create_workdir(body: WorkdirCreateRequest, request: Request) -> JSONRe
     "/{wid}",
     response_model=WorkdirInfo,
     responses={
-        404: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "wid 不在注册表（problem+json: workdir-not-found）",
-        },
+        404: problem("wid 不在注册表（problem+json: workdir-not-found）"),
     },
 )
 def get_one(wid: str) -> WorkdirInfo:
@@ -509,11 +455,7 @@ def get_one(wid: str) -> WorkdirInfo:
     "/{wid}/imports",
     response_model=list[ImportRecord],
     responses={
-        404: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "wid 不在注册表（problem+json: workdir-not-found）",
-        },
+        404: problem("wid 不在注册表（problem+json: workdir-not-found）"),
     },
 )
 def list_imports(wid: str) -> list[ImportRecord]:
@@ -526,10 +468,7 @@ def list_imports(wid: str) -> list[ImportRecord]:
 @router.get(
     "/{wid}/stats",
     response_model=WorkdirStatsView,
-    responses={
-        code: {"model": Problem, "content": {"application/problem+json": {}}}
-        for code in (400, 404, 409)
-    },
+    responses={code: problem() for code in (400, 404, 409)},
 )
 def get_workdir_stats(wid: str) -> WorkdirStatsView:
     """当前在盘素材数量与字节数，含尚未登记的素材。"""
@@ -544,21 +483,11 @@ def get_workdir_stats(wid: str) -> WorkdirStatsView:
     status_code=202,
     response_model=ImportAccepted,
     responses={
-        400: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "来源目录路径不合法（problem+json: workdir-path-invalid）",
-        },
-        404: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "wid 不在注册表（problem+json: workdir-not-found）",
-        },
-        422: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "来源目录与工作目录相同或互为嵌套（problem+json: import-source-conflict）",
-        },
+        400: problem("来源目录路径不合法（problem+json: workdir-path-invalid）"),
+        404: problem("wid 不在注册表（problem+json: workdir-not-found）"),
+        422: problem(
+            "来源目录与工作目录相同或互为嵌套（problem+json: import-source-conflict）"
+        ),
     },
 )
 async def create_import(
@@ -642,11 +571,7 @@ class _AssetResponse(FileResponse):
             "description": "素材原件（Content-Type 按扩展名；带 accept-ranges: bytes，"
             "支持 Range 请求，视频可拖动进度条）",
         },
-        400: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "条目名不合法，或解析后越出工作目录（asset-path-invalid）",
-        },
+        400: problem("条目名不合法，或解析后越出工作目录（asset-path-invalid）"),
         404: {
             "model": Problem,
             "content": {"application/problem+json": {}},

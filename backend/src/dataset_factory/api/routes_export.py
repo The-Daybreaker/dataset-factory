@@ -23,17 +23,14 @@ from ..workdir import AssetNotFoundError, WorkdirStore
 from ..workdir.assets import confine_to_workdir
 from ..workdir.locks import RunLock, import_guard
 from .deps import workdir_root
-from .schemas import ExportAccepted, ExportPlanView, ExportStartRequest, Problem
+from .problems import problem
+from .schemas import ExportAccepted, ExportPlanView, ExportStartRequest
 
 router = APIRouter(
     prefix="/api/workdirs/{wid}/export",
     tags=["导出"],
     responses={
-        code: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": description,
-        }
+        code: problem(description)
         for code, description in (
             (400, "导出参数或文件路径不合法"),
             (404, "工作目录、批次或交付文件不存在"),

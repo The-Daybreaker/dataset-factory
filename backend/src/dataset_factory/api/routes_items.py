@@ -24,6 +24,7 @@ from ..runs import ItemRow, build_item_view
 from ..strategies import get_batch, parse_seq
 from ..workdir import ProductNotFoundError, product_path
 from .deps import workdir_root
+from .problems import problem
 from .schemas import ItemListView, ItemRowView, Problem
 
 router = APIRouter(prefix="/api/workdirs/{wid}/batches/{sN}/items", tags=["条目"])
@@ -38,11 +39,7 @@ def _to_row(row: ItemRow) -> ItemRowView:
     "",
     response_model=ItemListView,
     responses={
-        404: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "wid 或批次不存在（workdir-not-found / batch-not-found）",
-        },
+        404: problem("wid 或批次不存在（workdir-not-found / batch-not-found）"),
         500: {
             "model": Problem,
             "content": {"application/problem+json": {}},
@@ -83,11 +80,7 @@ def list_items(
             "content": {"text/plain": {"schema": {"type": "string"}}},
             "description": "产物正文（只含 caption 本身，无任何标记或元数据）",
         },
-        400: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "条目名不合法或解析后越出工作目录（asset-path-invalid）",
-        },
+        400: problem("条目名不合法或解析后越出工作目录（asset-path-invalid）"),
         404: {
             "model": Problem,
             "content": {"application/problem+json": {}},

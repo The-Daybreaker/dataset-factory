@@ -49,6 +49,7 @@ from ..strategies import get_batch, parse_seq, read_snapshot
 from ..tasks import RETRY_AFTER_SECONDS
 from ..workdir import RunOccupiedError
 from .deps import workdir_root
+from .problems import problem
 from .schemas import (
     Problem,
     RetryListRequest,
@@ -167,11 +168,7 @@ def _require_active(runner: BatchRunner) -> BatchRunner:
     status_code=202,
     response_model=RunAccepted,
     responses={
-        404: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "wid / 批次 / 快照不存在（problem+json）",
-        },
+        404: problem("wid / 批次 / 快照不存在（problem+json）"),
         409: {
             "model": Problem,
             "content": {"application/problem+json": {}},
@@ -249,11 +246,7 @@ def start_run(
     "/current",
     response_model=RunStatusView,
     responses={
-        404: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "该批次当前没有进行中的跑批（problem+json: run-not-active）",
-        },
+        404: problem("该批次当前没有进行中的跑批（problem+json: run-not-active）"),
     },
 )
 def current_run(wid: str, sN: str, request: Request) -> RunStatusView:
@@ -277,11 +270,7 @@ def current_run(wid: str, sN: str, request: Request) -> RunStatusView:
     "/stop",
     status_code=204,
     responses={
-        404: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "该批次当前没有进行中的跑批（problem+json: run-not-active）",
-        },
+        404: problem("该批次当前没有进行中的跑批（problem+json: run-not-active）"),
     },
 )
 def stop_run(wid: str, sN: str, request: Request) -> Response:
@@ -303,11 +292,7 @@ def stop_run(wid: str, sN: str, request: Request) -> Response:
 @router.get(
     "/stream",
     responses={
-        404: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "该批次当前没有进行中的跑批（problem+json: run-not-active）",
-        },
+        404: problem("该批次当前没有进行中的跑批（problem+json: run-not-active）"),
     },
 )
 def stream_run(wid: str, sN: str, request: Request) -> StreamingResponse:
@@ -363,11 +348,7 @@ retry_router = APIRouter(
 )
 
 _PROBLEM_404_BATCH: dict[int | str, dict[str, Any]] = {
-    404: {
-        "model": Problem,
-        "content": {"application/problem+json": {}},
-        "description": "wid 或批次不存在（workdir-not-found / batch-not-found）",
-    },
+    404: problem("wid 或批次不存在（workdir-not-found / batch-not-found）"),
 }
 
 _PROBLEM_422_NOT_ELIGIBLE: dict[int | str, dict[str, Any]] = {

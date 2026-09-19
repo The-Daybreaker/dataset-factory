@@ -26,8 +26,8 @@ from ..workdir.locks import (
     require_directory_identity,
 )
 from ..workdir.relocation import relocate_workdir
-from .problems import problem_response
-from .schemas import Problem, WorkdirRelocateAccepted
+from .problems import problem, problem_response
+from .schemas import WorkdirRelocateAccepted
 
 
 class RenameDirectoryRequest(BaseModel):
@@ -249,9 +249,9 @@ def list_directory(
     status_code=202,
     response_model=WorkdirRelocateAccepted,
     responses={
-        400: {"model": Problem, "content": {"application/problem+json": {}}},
-        404: {"model": Problem, "content": {"application/problem+json": {}}},
-        409: {"model": Problem, "content": {"application/problem+json": {}}},
+        400: problem(),
+        404: problem(),
+        409: problem(),
     },
 )
 async def rename_directory(body: RenameDirectoryRequest, request: Request) -> Response:

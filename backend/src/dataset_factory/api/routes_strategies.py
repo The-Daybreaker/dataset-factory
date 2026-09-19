@@ -50,6 +50,7 @@ from ..strategies.batches import read_snapshot_with_hash
 from ..strategies.errors import StrategyNotFoundError
 from ..workdir import WorkdirStore
 from .deps import workdir_root
+from .problems import problem
 from .schemas import (
     BatchCreateRequest,
     BatchSnapshotView,
@@ -134,11 +135,9 @@ def list_library() -> list[StrategyView]:
     status_code=201,
     response_model=StrategyView,
     responses={
-        400: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "名字为空 / 引用不存在（strategy-name-invalid / strategy-refs-invalid）",
-        },
+        400: problem(
+            "名字为空 / 引用不存在（strategy-name-invalid / strategy-refs-invalid）"
+        ),
     },
 )
 def create_library_entry(body: StrategySaveRequest) -> StrategyView:
@@ -157,11 +156,7 @@ def create_library_entry(body: StrategySaveRequest) -> StrategyView:
     "/{strategy_id}",
     response_model=StrategyView,
     responses={
-        404: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "库策略不存在（problem+json: strategy-not-found）",
-        },
+        404: problem("库策略不存在（problem+json: strategy-not-found）"),
     },
 )
 def get_library_entry(strategy_id: str) -> StrategyView:
@@ -173,11 +168,7 @@ def get_library_entry(strategy_id: str) -> StrategyView:
     "/{strategy_id}/references",
     response_model=list[StrategyReferenceView],
     responses={
-        404: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "库策略不存在（problem+json: strategy-not-found）",
-        },
+        404: problem("库策略不存在（problem+json: strategy-not-found）"),
     },
 )
 def list_strategy_references(strategy_id: str) -> list[StrategyReferenceView]:
@@ -198,16 +189,10 @@ def list_strategy_references(strategy_id: str) -> list[StrategyReferenceView]:
     "/{strategy_id}",
     response_model=StrategyView,
     responses={
-        400: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "名字为空 / 引用不存在（strategy-name-invalid / strategy-refs-invalid）",
-        },
-        404: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "库策略不存在（problem+json: strategy-not-found）",
-        },
+        400: problem(
+            "名字为空 / 引用不存在（strategy-name-invalid / strategy-refs-invalid）"
+        ),
+        404: problem("库策略不存在（problem+json: strategy-not-found）"),
     },
 )
 def update_library_entry(strategy_id: str, body: StrategySaveRequest) -> StrategyView:
@@ -227,11 +212,7 @@ def update_library_entry(strategy_id: str, body: StrategySaveRequest) -> Strateg
     "/{strategy_id}",
     status_code=204,
     responses={
-        404: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "库策略不存在（problem+json: strategy-not-found）",
-        },
+        404: problem("库策略不存在（problem+json: strategy-not-found）"),
     },
 )
 def delete_library_entry(strategy_id: str) -> Response:
@@ -245,11 +226,7 @@ def delete_library_entry(strategy_id: str) -> Response:
     status_code=201,
     response_model=StrategyView,
     responses={
-        404: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "库策略不存在（problem+json: strategy-not-found）",
-        },
+        404: problem("库策略不存在（problem+json: strategy-not-found）"),
     },
 )
 def copy_library_entry(strategy_id: str) -> StrategyView:
@@ -261,16 +238,8 @@ def copy_library_entry(strategy_id: str) -> StrategyView:
     "/{strategy_id}/rebind",
     response_model=StrategyView,
     responses={
-        400: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "新引用不存在（problem+json: strategy-refs-invalid）",
-        },
-        404: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "库策略不存在（problem+json: strategy-not-found）",
-        },
+        400: problem("新引用不存在（problem+json: strategy-refs-invalid）"),
+        404: problem("库策略不存在（problem+json: strategy-not-found）"),
     },
 )
 def rebind_library_entry(strategy_id: str, body: StrategyRebindRequest) -> StrategyView:
@@ -304,21 +273,9 @@ def list_workdir_batches(wid: str) -> list[BatchView]:
     status_code=201,
     response_model=BatchView,
     responses={
-        400: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "引用不存在（problem+json: strategy-refs-invalid）",
-        },
-        404: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "wid 或库策略不存在（workdir-not-found / strategy-not-found）",
-        },
-        422: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "请求体按 type 缺必填字段（FastAPI 校验）",
-        },
+        400: problem("引用不存在（problem+json: strategy-refs-invalid）"),
+        404: problem("wid 或库策略不存在（workdir-not-found / strategy-not-found）"),
+        422: problem("请求体按 type 缺必填字段（FastAPI 校验）"),
     },
 )
 def create_workdir_batch(wid: str, body: BatchCreateRequest) -> Response:
@@ -358,11 +315,7 @@ def create_workdir_batch(wid: str, body: BatchCreateRequest) -> Response:
     "/{sN}",
     response_model=BatchView,
     responses={
-        404: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "wid 或批次不存在（workdir-not-found / batch-not-found）",
-        },
+        404: problem("wid 或批次不存在（workdir-not-found / batch-not-found）"),
     },
 )
 def get_batch_detail(wid: str, sN: str) -> BatchView:
@@ -406,16 +359,8 @@ def get_batch_snapshot(wid: str, sN: str) -> BatchSnapshotView:
     "/{sN}",
     response_model=BatchView,
     responses={
-        404: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "wid 或批次不存在（workdir-not-found / batch-not-found）",
-        },
-        422: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "请求体含未声明字段（组合不可改，extra=forbid）",
-        },
+        404: problem("wid 或批次不存在（workdir-not-found / batch-not-found）"),
+        422: problem("请求体含未声明字段（组合不可改，extra=forbid）"),
     },
 )
 def patch_batch(wid: str, sN: str, body: BatchUpdateRequest) -> BatchView:
@@ -439,11 +384,7 @@ def patch_batch(wid: str, sN: str, body: BatchUpdateRequest) -> BatchView:
     "/{sN}/hide",
     response_model=BatchView,
     responses={
-        404: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "wid 或批次不存在（workdir-not-found / batch-not-found）",
-        },
+        404: problem("wid 或批次不存在（workdir-not-found / batch-not-found）"),
     },
 )
 def hide_batch(wid: str, sN: str, request: Request) -> BatchView:
@@ -463,11 +404,7 @@ def hide_batch(wid: str, sN: str, request: Request) -> BatchView:
     "/{sN}/unhide",
     response_model=BatchView,
     responses={
-        404: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "wid 或批次不存在（workdir-not-found / batch-not-found）",
-        },
+        404: problem("wid 或批次不存在（workdir-not-found / batch-not-found）"),
     },
 )
 def unhide_batch(wid: str, sN: str) -> BatchView:
@@ -480,11 +417,7 @@ def unhide_batch(wid: str, sN: str) -> BatchView:
     "/{sN}",
     status_code=204,
     responses={
-        404: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "wid 或批次不存在（workdir-not-found / batch-not-found）",
-        },
+        404: problem("wid 或批次不存在（workdir-not-found / batch-not-found）"),
     },
 )
 def delete_workdir_batch(wid: str, sN: str) -> Response:
@@ -503,11 +436,7 @@ def delete_workdir_batch(wid: str, sN: str) -> Response:
     "/{sN}/exclusions",
     response_model=ExclusionsView,
     responses={
-        404: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "wid 或批次不存在（workdir-not-found / batch-not-found）",
-        },
+        404: problem("wid 或批次不存在（workdir-not-found / batch-not-found）"),
     },
 )
 def add_batch_exclusions(wid: str, sN: str, body: ExclusionsRequest) -> ExclusionsView:
@@ -524,11 +453,7 @@ def add_batch_exclusions(wid: str, sN: str, body: ExclusionsRequest) -> Exclusio
     "/{sN}/exclusions",
     response_model=ExclusionsView,
     responses={
-        404: {
-            "model": Problem,
-            "content": {"application/problem+json": {}},
-            "description": "wid 或批次不存在（workdir-not-found / batch-not-found）",
-        },
+        404: problem("wid 或批次不存在（workdir-not-found / batch-not-found）"),
     },
 )
 def remove_batch_exclusions(
