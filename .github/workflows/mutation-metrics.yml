@@ -81,12 +81,12 @@ jobs:
             score
             echo '```'
             echo
-            echo "`no_tests` = 没有任何用例会跑到的变异体数（覆盖空洞），不计入击杀率分子。"
+            echo '`no_tests` = 没有任何用例会跑到的变异体数（覆盖空洞），不计入击杀率分子。'
             echo
             echo "### 变异体逐条结果（前 200 行）"
             echo
             echo '```'
-            uv run --with mutmut mutmut results --all 2>&1 | head -200
+            uv run --with mutmut mutmut results --all 2>&1 | head -200 | tee /dev/stderr
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           score
