@@ -145,17 +145,44 @@ venv = ".venv"
 
 # --- mutmut：L5 定向变异度量的目标范围（非门禁，只在 .github/workflows/mutation-metrics.yml
 #     手工触发时用到；mutmut 不在项目依赖里，工作流用 uv --with 临时装）---
-# 只变异本轮重构真正改动过的模块：变异一个模块要把它的可达测试重跑一遍，全仓跑的成本不可控
-# （goal L5 定的口径就是「只对改动模块跑，不全仓跑」）。后续批次改到别的模块时往这里补。
+# 两份清单分工不同，缺一个就跑不起来（mutmut 3.8 的 copy_src_dir 只按 source_paths 往
+# mutants/ 沙箱拷文件）：
+#   source_paths —— 沙箱里要**能 import 整个包**，测试收集阶段才不报 ModuleNotFoundError，
+#                   所以给整包 src/；
+#   only_mutate  —— 真正的变异范围＝本轮重构改动过的模块（goal L5 口径「只对改动模块跑」，
+#                   全仓跑的成本不可控）。后续批次改到别的模块时往这里补。
 [tool.mutmut]
-source_paths = [
-    "src/dataset_factory/_fs.py",
+source_paths = ["src/"]
+only_mutate = [
     "src/dataset_factory/_clock.py",
+    "src/dataset_factory/_fs.py",
     "src/dataset_factory/api/app.py",
-    "src/dataset_factory/api/problems.py",
     "src/dataset_factory/api/deps.py",
+    "src/dataset_factory/api/problems.py",
+    "src/dataset_factory/api/routes_export.py",
+    "src/dataset_factory/api/routes_filesystem.py",
+    "src/dataset_factory/api/routes_items.py",
+    "src/dataset_factory/api/routes_runs.py",
+    "src/dataset_factory/api/routes_strategies.py",
+    "src/dataset_factory/api/routes_workdir.py",
+    "src/dataset_factory/cli/batch.py",
+    "src/dataset_factory/cli/main.py",
     "src/dataset_factory/cli/operations.py",
+    "src/dataset_factory/cli/workdir.py",
+    "src/dataset_factory/export/packing.py",
+    "src/dataset_factory/runs/runner.py",
+    "src/dataset_factory/sessions/store.py",
+    "src/dataset_factory/strategies/batches.py",
+    "src/dataset_factory/strategies/snapshot.py",
+    "src/dataset_factory/strategies/store.py",
+    "src/dataset_factory/tasks/__init__.py",
+    "src/dataset_factory/workdir/deletion.py",
+    "src/dataset_factory/workdir/importer.py",
+    "src/dataset_factory/workdir/integrity.py",
+    "src/dataset_factory/workdir/relocation.py",
 ]
+pytest_add_cli_args_test_selection = ["tests/"]
 # 首跑在统计采集阶段抛 BadTestExecutionCommandsException（pytest 非 0 退出），但 mutmut 默认不打印
 # pytest 的报错正文；开 debug 让下一次手工 dispatch 能把真实原因写进日志（度量件专用，不影响门禁）。
+# 取到击杀率后关掉。
 debug = true
