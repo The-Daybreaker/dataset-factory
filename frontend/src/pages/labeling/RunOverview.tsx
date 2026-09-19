@@ -1,3 +1,4 @@
+import { CopyIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ApiError, api, errorMessage } from "../../api";
 import type { components } from "../../api-types.gen";
@@ -10,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../components/ui/dialog";
+import { Tip } from "../../components/ui/tooltip";
 
 type History = components["schemas"]["RunHistoryView"];
 type RunLogTab = "run.log" | "items.jsonl";
@@ -241,6 +243,16 @@ function RunLogDialog({
             </table>
           </div>
         )}
+        {copyState === "ok" && (
+          <p role="status" className="text-t-sm text-text-3">
+            已复制
+          </p>
+        )}
+        {copyState === "fail" && (
+          <p role="status" className="text-bad-ink text-t-sm">
+            复制失败
+          </p>
+        )}
         <div className="flex items-center gap-2">
           {tab === "run.log" && (
             <span className="text-t-sm text-text-3">
@@ -248,26 +260,20 @@ function RunLogDialog({
             </span>
           )}
           <div className="ml-auto flex gap-2">
-            <Button variant="ghost" size="sm" onClick={() => void copy()}>
-              {copyState === "ok"
-                ? "已复制"
-                : copyState === "fail"
-                  ? "复制失败"
-                  : "复制"}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setRevision((value) => value + 1)}
-            >
+            <Tip label="复制">
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="复制"
+                onClick={() => void copy()}
+              >
+                <CopyIcon />
+              </Button>
+            </Tip>
+            <Button variant="ghost" onClick={() => setRevision((value) => value + 1)}>
               刷新
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-text-1"
-              onClick={() => onClose()}
-            >
+            <Button variant="ghost" className="text-text-1" onClick={() => onClose()}>
               关闭
             </Button>
           </div>

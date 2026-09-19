@@ -520,7 +520,6 @@ export function DirectoryPicker({
           )}
           <Button
             variant={browseOnly ? "outline" : "ghost"}
-            size="sm"
             disabled={renamingBusy}
             onClick={onClose}
           >
@@ -528,7 +527,6 @@ export function DirectoryPicker({
           </Button>
           {!browseOnly && (
             <Button
-              size="sm"
               disabled={
                 loading || renamingBusy || !!renaming || creating || !chosen || !!error
               }

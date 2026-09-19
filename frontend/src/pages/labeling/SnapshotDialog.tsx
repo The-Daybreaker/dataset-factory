@@ -156,7 +156,7 @@ export function SnapshotDialog({
               <CopyIcon />
             </Button>
           </Tip>
-          <Button variant="outline" size="sm" onClick={onClose}>
+          <Button variant="outline" onClick={onClose}>
             关闭
           </Button>
         </DialogFooter>

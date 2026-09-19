@@ -289,17 +289,17 @@ export function NewStrategyDialog({
           {!catalog && error && (
             <Button
               variant="ghost"
-              size="sm"
+              size="icon"
               aria-label="重试读取配置"
               onClick={() => setRevision((value) => value + 1)}
             >
               <RefreshCwIcon />
             </Button>
           )}
-          <Button variant="ghost" size="sm" disabled={busy} onClick={onClose}>
+          <Button variant="ghost" disabled={busy} onClick={onClose}>
             取消
           </Button>
-          <Button size="sm" disabled={!valid || busy} onClick={() => void create()}>
+          <Button disabled={!valid || busy} onClick={() => void create()}>
             {busy ? "正在创建" : "创建策略"}
           </Button>
         </DialogFooter>
