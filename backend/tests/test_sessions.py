@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime, tzinfo
 from pathlib import Path
 from typing import cast
@@ -393,6 +394,52 @@ def test_attachment_path_rejects_traversal(temp_data_root: Path) -> None:
 
     with pytest.raises(SessionError, match="非法"):
         attachment_path(session_id, "../events.jsonl")
+
+
+#: 收成 `_fs` 助手之前 sessions 自己那串禁字符，逐字搬来作对照（两份抄本一旦漂移，
+#: 下面这条用例就会指出是哪一个输入上开始不一致）。
+_LEGACY_FORBIDDEN = re.compile(r'[/\\<>:"|?*\x00-\x1f\x7f]')
+
+#: 附件名样例：合法名 + 每一类非法形态各一条（空、两种分隔符、绝对路径、Windows 禁字符、
+#: 控制字符、纯点号、点开头、末尾分隔符）。
+ATTACHMENT_NAME_CASES: list[str] = [
+    "shot.png",
+    "描述 001.jpg",
+    "",
+    ".",
+    "..",
+    "a/b",
+    "a" + chr(92) + "b",
+    "/abs",
+    "C:" + chr(92) + "x",
+    'quote".png',
+    "pipe|tag.png",
+    "a" + chr(0) + "b",
+    "tail" + chr(7),
+    "a/",
+]
+
+
+@pytest.mark.parametrize("name", ATTACHMENT_NAME_CASES)
+def test_attachment_name_acceptance_matches_legacy_expression(
+    temp_data_root: Path, name: str
+) -> None:
+    """附件名的接受集与收进助手前逐位一致（收紧或放松都算回归）。
+
+    非法名走 SessionError；合法名此刻文件还不存在，只能是 SessionNotFoundError——
+    两种异常正是「被名字校验拦下」与「通过名字校验」的可观察分界。
+    """
+    session_id = create_session()
+    legacy_rejects = (
+        not name or bool(_LEGACY_FORBIDDEN.search(name)) or Path(name).name != name
+    )
+
+    if legacy_rejects:
+        with pytest.raises(SessionError, match="非法"):
+            attachment_path(session_id, name)
+    else:
+        with pytest.raises(SessionNotFoundError, match="未找到"):
+            attachment_path(session_id, name)
 
 
 @pytest.mark.parametrize(

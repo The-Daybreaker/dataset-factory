@@ -90,8 +90,18 @@ PATTERNS: tuple[tuple[str, str, Path, str, str], ...] = (
         "G2 重复实现",
         "安全路径段校验实现",
         BACKEND_SRC,
+        r"Path\(\s*\w+\s*\)\.name|isidentifier\(",
+        "「这个字符串必须是单个安全路径段」的各自实现——按判定形状数（比对 Path(x).name 或 isidentifier）",
+    ),
+    (
+        "G2 重复实现",
+        "安全路径段候选行（粗筛对照）",
+        BACKEND_SRC,
         r"\.name != |isidentifier\(|\"/\" in |os\.sep",
-        "「这个字符串必须是单个安全路径段」的各自实现（非法字符集互不相同）",
+        (
+            "上一口径的粗筛：任何含 `.name !=` / `os.sep` 的行都算，会把「同名比对」「目录前缀包含」"
+            "这类不是路径段校验的行也算进来（留作对照，不拿它当终态判据）"
+        ),
     ),
     (
         "G2 重复实现",

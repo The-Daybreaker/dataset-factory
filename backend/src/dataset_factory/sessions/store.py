@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .._clock import now_iso
-from .._fs import data_root
+from .._fs import data_root, is_single_path_segment
 from .errors import (
     SessionError,
     SessionEventError,
@@ -88,13 +88,21 @@ def _validate_id(session_id: str) -> None:
 def _validate_attachment_name(name: str) -> None:
     """校验附件名；不合法即 SessionError（挡住路径穿越，只允许单段文件名）。
 
+    单段底线（不含分隔符 / NUL、不改变 ``Path(...).name``）用 ``_fs`` 的全项目共用判定，
+    本域再叠自己的禁字符集（Windows 禁的 ``<>:"|?*`` 与控制字符）——两层合起来的拒绝集合
+    与收成助手之前的写法逐字相同，有对照用例钉着。
+
     Args:
         name: 附件在 attachments/ 下的文件名。
 
     Raises:
         SessionError: 名为空 / 含非法字符 / 含目录部分（不是单段文件名）。
     """
-    if not name or _FORBIDDEN_PATH_CHARS.search(name) or Path(name).name != name:
+    if (
+        not name
+        or not is_single_path_segment(name)
+        or _FORBIDDEN_PATH_CHARS.search(name)
+    ):
         raise SessionError(f"附件名 {name!r} 非法；只能是单段安全文件名。")
 
 
