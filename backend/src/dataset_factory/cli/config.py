@@ -42,6 +42,7 @@ from ..llm import (
     validated_request_params,
 )
 from .errors import handle_domain_errors
+from .operations import confirm_or_abort
 
 app = typer.Typer(
     help="端点配置管理（base_url / 模型名 / API 密钥，支持多套配置）",
@@ -161,8 +162,7 @@ def config_remove(
     yes: Annotated[bool, typer.Option("--yes", "-y", help="跳过删除确认")] = False,
 ) -> None:
     """删除一套端点配置（连同其密钥；当前使用中的配置需先切换再删）。"""
-    if not yes and not typer.confirm(f"确认删除端点配置 {name!r}（含其密钥文件）？"):
-        raise typer.Abort()
+    confirm_or_abort(f"确认删除端点配置 {name!r}（含其密钥文件）？", yes)
     delete_config(name)
     typer.secho(f"已删除端点配置 {name!r}", fg=typer.colors.GREEN)
 

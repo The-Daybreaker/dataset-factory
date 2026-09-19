@@ -16,6 +16,7 @@ from ..skills import (
     set_enabled,
 )
 from .errors import handle_domain_errors
+from .operations import confirm_or_abort
 
 app = typer.Typer(help="Skill 包管理（agentskills.io 标准）", no_args_is_help=True)
 
@@ -103,9 +104,6 @@ def skill_rm(
     yes: Annotated[bool, typer.Option("--yes", "-y", help="跳过删除确认")] = False,
 ) -> None:
     """删除 skill（整目录移除；只想临时收起请用 disable）。"""
-    if not yes and not typer.confirm(
-        f"确认删除 skill {name!r}？（整目录移除，无法从库内恢复）"
-    ):
-        raise typer.Abort()
+    confirm_or_abort(f"确认删除 skill {name!r}？（整目录移除，无法从库内恢复）", yes)
     delete_skill(name)
     typer.secho(f"已删除 skill {name!r}", fg=typer.colors.GREEN)

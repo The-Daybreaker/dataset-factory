@@ -21,6 +21,7 @@ from ..prompts import (
     seed_builtin_presets,
 )
 from .errors import handle_domain_errors
+from .operations import confirm_or_abort
 
 app = typer.Typer(help="提示词库管理（增删改查）", no_args_is_help=True)
 
@@ -114,7 +115,6 @@ def prompt_rm(
     yes: Annotated[bool, typer.Option("--yes", "-y", help="跳过删除确认")] = False,
 ) -> None:
     """删除提示词（需确认；_history 里的历史版本不受影响）。"""
-    if not yes and not typer.confirm(f"确认删除提示词 {name!r}？"):
-        raise typer.Abort()
+    confirm_or_abort(f"确认删除提示词 {name!r}？", yes)
     delete_prompt(name)
     typer.secho(f"已删除提示词 {name!r}", fg=typer.colors.GREEN)

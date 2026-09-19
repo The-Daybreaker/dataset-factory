@@ -541,6 +541,31 @@ def test_prompt_rm_aborts_without_confirm(temp_data_root: Path) -> None:
     assert "h3" in listing.output
 
 
+def test_config_rm_aborts_without_confirm(temp_data_root: Path) -> None:
+    """config rm 不确认：中止（退出码非 0、配置仍在列表里）。"""
+    added = runner.invoke(
+        app,
+        ["config", "add", "alpha", "--base-url", "https://a/v1", "--model", "m-a"],
+        input="\n",
+    )
+    assert added.exit_code == 0
+
+    result = runner.invoke(app, ["config", "rm", "alpha"], input="n\n")
+
+    assert result.exit_code != 0
+    assert "alpha" in runner.invoke(app, ["config", "list"]).output
+
+
+def test_skill_rm_aborts_without_confirm(temp_data_root: Path) -> None:
+    """skill rm 不确认：中止（退出码非 0、skill 仍在库里）。"""
+    assert runner.invoke(app, ["skill", "import", str(_SKILL_PACK)]).exit_code == 0
+
+    result = runner.invoke(app, ["skill", "rm", "example-caption-skill"], input="n\n")
+
+    assert result.exit_code != 0
+    assert "example-caption-skill" in runner.invoke(app, ["skill", "list"]).output
+
+
 def test_skill_lifecycle(temp_data_root: Path) -> None:
     """skill import / list / disable / enable / rm 全生命周期。"""
     imported = runner.invoke(app, ["skill", "import", str(_SKILL_PACK)])

@@ -41,6 +41,18 @@ def confirm_action(message: str, yes: bool) -> None:
     typer.confirm(message, abort=True, err=True)
 
 
+def confirm_or_abort(message: str, yes: bool) -> None:
+    """删除类命令的确认：拒绝、或非交互下无法确认 → 取消（退出码 1）。
+
+    与 `confirm_action` 是两套对外口径（提示写 stdout、非交互按取消算而不是用法错误），
+    这是各命令现状的差别，收敛时保持原样，只把三处逐字相同的两行写法并到一处。
+    """
+    if yes:
+        return
+    if not typer.confirm(message):
+        raise typer.Abort()
+
+
 def print_result(value: object) -> None:
     """结构化结果只写 stdout，路径转字符串。"""
     typer.echo(json.dumps(value, ensure_ascii=False, default=str))
