@@ -106,22 +106,29 @@ MISSING_FRONTEND = Path("__no_such_frontend_dir__")
 
 
 def _build(
-    exc_type: type[Exception], message: str, extras_from: str | None
+    exc_type: type[Exception],
+    message: str,
+    extras_from: str | None,
+    *,
+    with_extras: bool = True,
 ) -> Exception:
-    """按契约造一个异常实例；带扩展字段的两条走各自的具名参数。
+    """按契约造一个异常实例；扩展字段一律走构造参数，不在实例上事后赋值。
 
     Args:
         exc_type: 异常类。
         message: 进 detail 的可操作消息。
         extras_from: 扩展字段名；None = 该条规则不带扩展字段。
+        with_extras: False = 造「扩展字段为空」的那一条（残留信息损坏 / 无逐条原因）。
 
     Returns:
-        异常实例（扩展字段留空，由调用方按需补上）。
+        异常实例。
     """
     if exc_type is RunOccupiedError:
-        return RunOccupiedError(message)
+        return RunOccupiedError(message, occupier=OCCUPIER if with_extras else None)
     if exc_type is RetryItemNotEligibleError:
-        return RetryItemNotEligibleError(message, rejections=REJECTIONS)
+        return RetryItemNotEligibleError(
+            message, rejections=REJECTIONS if with_extras else {}
+        )
     return exc_type(message)
 
 
@@ -158,8 +165,6 @@ def test_problem_response_matches_contract(
     """每条规则的状态码、媒体类型与 problem+json 四字段都要按契约出。"""
     message = "可操作的中文消息：下一步该做什么。"
     exc = _build(exc_type, message, extras_from)
-    if extras_from == "occupier":
-        exc.occupier = OCCUPIER  # type: ignore[attr-defined]
     expected_body: dict[str, Any] = {
         "type": slug,
         "title": title,
@@ -188,11 +193,7 @@ def test_empty_extension_member_is_omitted(
     exc_type: type[Exception], extras_from: str
 ) -> None:
     """扩展字段为空（跨进程残留信息损坏 / 无逐条原因）时不多出一个空键。"""
-    empty = _build(exc_type, "笼统文案", extras_from)
-    if extras_from == "occupier":
-        empty.occupier = None  # type: ignore[attr-defined]
-    if extras_from == "rejections":
-        empty.rejections = {}  # type: ignore[attr-defined]
+    empty = _build(exc_type, "笼统文案", extras_from, with_extras=False)
     body: dict[str, Any] = _client_raising(empty).get("/probe-error").json()
 
     assert extras_from not in body
