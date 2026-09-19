@@ -27,7 +27,12 @@ test("工作目录搬迁经界面确认后保留素材与快照并更新登记",
   await page.getByRole("button", { name: "选择工作目录与批次" }).click();
   await page.getByRole("button", { name: "工作目录设置 搬迁验证", exact: true }).click();
   await expect(page.getByRole("region", { name: "工作目录设置", exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "基本信息" })).toContainText("素材 1 · 产物 0");
+  // 「素材 N · 产物 M」这一段来自 stats 异步请求：弹窗一打开只有路径，CI 冷启动首访
+  // 实测 5 秒默认预算内还没到（run 35433472710 报错正文：Locator 解析到了 section、
+  // 14 次重试都只读到「基本信息路径…」）。与同文件搬迁状态断言同口径放宽到 30 秒，断言内容一字未改。
+  await expect(page.getByRole("region", { name: "基本信息" })).toContainText("素材 1 · 产物 0", {
+    timeout: 30_000,
+  });
   expect(await (await request.get(`/api/workdirs/${wid}/stats`)).json()).toEqual({ asset_count: 1, asset_bytes: bytes.length });
   await expect(page.getByText("产物 0 / 1", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "改名策略 搬迁验证", exact: true }).click();
