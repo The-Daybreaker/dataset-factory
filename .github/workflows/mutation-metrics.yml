@@ -42,6 +42,13 @@ jobs:
         run: uv sync --frozen
 
       # mutmut 只在度量时用，不进项目依赖（本轮「依赖只减不增」）：--with 装进临时环境。
+      # 先把 CLI 与配置读取结果打进日志：目标范围写在 backend/pyproject.toml [tool.mutmut]，
+      # 键名对不对看这一步就知道（本地 Windows 跑不了 mutmut，只能在这里验）。
+      - name: Show mutmut CLI (diagnostics)
+        run: |
+          uv run --with mutmut mutmut --version
+          uv run --with mutmut mutmut run --help
+
       - name: Run mutation (targeted modules only)
         run: uv run --with mutmut mutmut run
 

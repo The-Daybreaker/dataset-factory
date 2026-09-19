@@ -142,3 +142,17 @@ include = ["src", "tests"]
 pythonVersion = "3.12"
 venvPath = "."
 venv = ".venv"
+
+# --- mutmut：L5 定向变异度量的目标范围（非门禁，只在 .github/workflows/mutation-metrics.yml
+#     手工触发时用到；mutmut 不在项目依赖里，工作流用 uv --with 临时装）---
+# 只变异本轮重构真正改动过的模块：变异一个模块要把它的可达测试重跑一遍，全仓跑的成本不可控
+# （goal L5 定的口径就是「只对改动模块跑，不全仓跑」）。后续批次改到别的模块时往这里补。
+[tool.mutmut]
+source_paths = [
+    "src/dataset_factory/_fs.py",
+    "src/dataset_factory/_clock.py",
+    "src/dataset_factory/api/app.py",
+    "src/dataset_factory/api/problems.py",
+    "src/dataset_factory/api/deps.py",
+    "src/dataset_factory/cli/operations.py",
+]
