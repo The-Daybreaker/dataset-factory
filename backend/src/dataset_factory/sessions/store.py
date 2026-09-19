@@ -247,7 +247,11 @@ def _parse_events(raw: str, session_id: str) -> list[SessionEvent]:
 
 
 def append_message(
-    session_id: str, role: str, text: str, attachment: str | None = None
+    session_id: str,
+    role: str,
+    text: str,
+    attachment: str | None = None,
+    reasoning: str | None = None,
 ) -> None:
     """往会话追加一条消息事件（append-only，写后 fsync 确保落盘再返回）。
 
@@ -256,6 +260,7 @@ def append_message(
         role: 消息角色（system / user / assistant）；sessions 只当字符串忠实存、不校验语义。
         text: 消息文本。
         attachment: 可选，已存进本会话 attachments/ 的图片文件名。
+        reasoning: 可选，助手消息的思考过程全文（流式打标落盘；只供界面回看）。
 
     Raises:
         SessionIdError: id 非法。
@@ -264,7 +269,10 @@ def append_message(
     """
     ts = now_iso()
     _append_event(
-        session_id, MessageEvent(ts=ts, role=role, text=text, attachment=attachment)
+        session_id,
+        MessageEvent(
+            ts=ts, role=role, text=text, attachment=attachment, reasoning=reasoning
+        ),
     )
 
 

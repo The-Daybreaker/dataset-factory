@@ -93,6 +93,32 @@ def test_library_crud_roundtrip(client: TestClient, assets: None) -> None:
     assert client.get("/api/strategies").json() == []
 
 
+def test_library_body_chars_sums_prompt_and_enabled_skills(
+    client: TestClient, assets: None
+) -> None:
+    """body_chars = 提示词正文 + 引用的启用 Skill 注入全文；停用 / 缺失按 0 计。"""
+    created = client.post("/api/strategies", json=_strategy_payload())
+    assert created.status_code == 201
+    entry = created.json()
+    prompt_chars = len("你是打标器")
+    skill_chars = next(
+        item["body_chars"]
+        for item in client.get("/api/skills").json()
+        if item["name"] == _SKILL_NAME
+    )
+    assert entry["body_chars"] == prompt_chars + skill_chars
+
+    # 停用引用的 Skill：注入量里这部分归 0，只剩提示词正文
+    client.post(f"/api/skills/{_SKILL_NAME}/disable")
+    assert client.get("/api/strategies").json()[0]["body_chars"] == prompt_chars
+
+    # 提示词被删除（引用缺失）：字数归 0，缺失由 available / missing_refs 表达
+    delete_prompt("详细描述")
+    listing = client.get("/api/strategies").json()[0]
+    assert listing["body_chars"] == 0
+    assert listing["available"] is False
+
+
 def test_library_copy_and_rebind(client: TestClient, assets: None) -> None:
     """copy 派生新 ID 内容原样；rebind 只动提供的引用位。"""
     source = client.post("/api/strategies", json=_strategy_payload()).json()

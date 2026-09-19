@@ -42,12 +42,15 @@ class MessageEvent:
             不校验语义（角色含义是 llm / 编排层的领域知识）。
         text: 消息文本内容。
         attachment: 可选，会话 attachments/ 下的图片文件名；无图时为 None。
+        reasoning: 可选，本条助手消息的思考过程全文（流式打标落盘；只供界面回看，
+            不参与下一轮请求装配——回放历史仍只取 text）。
     """
 
     ts: str
     role: str
     text: str
     attachment: str | None
+    reasoning: str | None = None
 
 
 @dataclass(frozen=True)
@@ -100,6 +103,8 @@ def dump_event(event: SessionEvent) -> str:
         }
         if event.attachment is not None:
             obj["attachment"] = event.attachment
+        if event.reasoning is not None:
+            obj["reasoning"] = event.reasoning
     elif isinstance(event, EnvelopeEvent):
         obj = {
             "type": _TYPE_ENVELOPE,
@@ -146,17 +151,22 @@ def parse_event(obj: object) -> SessionEvent:
 
 
 def _parse_message(data: dict[str, object], ts: str) -> MessageEvent:
-    """从映射里取 message 事件的字段并校验；缺 role / text 或 attachment 非串即报错。"""
+    """从映射里取 message 事件的字段并校验；缺 role / text 或 attachment / reasoning 非串即报错。"""
     role = data.get("role")
     text = data.get("text")
     attachment = data.get("attachment")
+    reasoning = data.get("reasoning")
     if not isinstance(role, str):
         raise SessionEventError("message 事件缺少合法的 role（字符串）字段。")
     if not isinstance(text, str):
         raise SessionEventError("message 事件缺少合法的 text（字符串）字段。")
     if attachment is not None and not isinstance(attachment, str):
         raise SessionEventError("message 事件的 attachment 字段应是字符串或不出现。")
-    return MessageEvent(ts=ts, role=role, text=text, attachment=attachment)
+    if reasoning is not None and not isinstance(reasoning, str):
+        raise SessionEventError("message 事件的 reasoning 字段应是字符串或不出现。")
+    return MessageEvent(
+        ts=ts, role=role, text=text, attachment=attachment, reasoning=reasoning
+    )
 
 
 def _parse_envelope(data: dict[str, object], ts: str) -> EnvelopeEvent:

@@ -1,4 +1,4 @@
-"""Skill 库端点：GET /api/skills、POST /api/skills/import、POST /api/skills/import-upload、enable/disable、DELETE。
+"""Skill 库端点：GET /api/skills、POST /api/skills/import、POST /api/skills/import-upload、enable/disable/rename、DELETE。
 
 skill 是本地目录包（agentskills.io 标准）。导入有三条路线：CLI / 脚本与 Web「路径导入」走本地
 路径（/api/skills/import，目录整包或单个 SKILL.md 文件），浏览器走「文件夹选择器」上传文件集
@@ -19,6 +19,7 @@ from ..skills import (
     list_skill_files,
     list_skills,
     read_skill_file,
+    rename_skill,
     set_enabled,
 )
 from ..skills.store import save_skill_file
@@ -31,6 +32,7 @@ from .schemas import (
     SkillImportRequest,
     SkillImportResponse,
     SkillInfo,
+    SkillRenameRequest,
 )
 
 router = APIRouter(prefix="/api/skills", tags=["Skill 库"])
@@ -232,6 +234,20 @@ def enable(name: str) -> Response:
 def disable(name: str) -> Response:
     """停用 skill（保留在库中，打标不注入）。"""
     set_enabled(name, False)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/{name}/rename",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        404: {"model": ErrorDetail, "description": "skill 不存在"},
+        409: {"model": ErrorDetail, "description": "新名称已被占用"},
+    },
+)
+def rename(name: str, request: SkillRenameRequest) -> Response:
+    """重命名 skill：目录改名，SKILL.md frontmatter 的 name 同步改写。"""
+    rename_skill(name, request.new_name)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

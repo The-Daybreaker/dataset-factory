@@ -221,6 +221,55 @@ def test_label_stream_yields_events_and_persists(
     assert snapshot.messages[-1].text == "打标结果"
 
 
+def test_label_stream_persists_reasoning_with_caption(
+    temp_data_root: Path,
+) -> None:
+    """流式打标：思考增量随终稿一起落盘、恢复会话可回看；下一轮装配不含思考文本。"""
+
+    class _ThinkingCompleter:
+        """按脚本产出思考与正文增量的假 Completer（记录收到的消息供装配断言）。"""
+
+        def __init__(self) -> None:
+            self.calls: list[list[Message]] = []
+
+        def stream(self, messages: Sequence[Message]) -> Iterator[StreamDelta]:
+            self.calls.append(list(messages))
+            yield StreamDelta(kind="reasoning", text="用户要一段描述。")
+            yield StreamDelta(kind="reasoning", text="按基础提示词组织。")
+            yield StreamDelta(kind="content", text="一只白")
+            yield StreamDelta(kind="content", text="瓷茶杯。")
+
+    completer = _ThinkingCompleter()
+    _save_prompt("h3", "你是打标助手。")
+    engine = LabelingEngine(completer, _MODEL)
+
+    events = list(engine.label_stream(prompt_name="h3", instruction="描述它"))
+
+    finished = events[-1]
+    assert isinstance(finished, StreamFinished)
+    snapshot = engine.restore(finished.result.session_id)
+    assistant = snapshot.messages[-1]
+    assert (assistant.role, assistant.text) == ("assistant", "一只白瓷茶杯。")
+    assert assistant.reasoning == "用户要一段描述。按基础提示词组织。"
+
+    list(
+        engine.label_stream(
+            session_id=finished.result.session_id,
+            prompt_name="h3",
+            instruction="再改改",
+        )
+    )
+    replayed = [
+        part.text
+        for message in completer.calls[1]
+        if message.role == "assistant"
+        for part in message.parts
+        if isinstance(part, TextPart)
+    ]
+    assert "一只白瓷茶杯。" in "".join(replayed)
+    assert "按基础提示词组织" not in "".join(replayed)
+
+
 def test_events_recorded_in_order(
     temp_data_root: Path, tmp_path: Path, fake_completer: FakeCompleter
 ) -> None:

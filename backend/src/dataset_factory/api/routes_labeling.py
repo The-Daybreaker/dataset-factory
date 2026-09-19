@@ -209,7 +209,10 @@ def _snapshot_response(snapshot: SessionSnapshot) -> SessionSnapshotResponse:
         ),
         messages=[
             HistoryMessageView(
-                role=item.role, text=item.text, attachment=item.attachment
+                role=item.role,
+                text=item.text,
+                attachment=item.attachment,
+                reasoning=item.reasoning,
             )
             for item in snapshot.messages
         ],

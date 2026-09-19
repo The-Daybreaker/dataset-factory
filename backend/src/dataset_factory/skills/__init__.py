@@ -2,7 +2,7 @@
 
 对外接口：
 - 模型：Skill（name / description / enabled）+ SkillImport（导入结果：skill + 体积）
-- 操作：import_skill / list_skills / read_skill / set_enabled / delete_skill
+- 操作：import_skill / list_skills / read_skill / set_enabled / rename_skill / delete_skill
 - 解析：parse_skill_frontmatter（读 SKILL.md 的 name + description）
 - 异常：SkillError 基类 + SkillNameError / SkillNotFoundError / SkillExistsError /
   SkillFormatError / SkillSourceError
@@ -33,6 +33,7 @@ from .store import (
     list_skills,
     read_skill,
     read_skill_file,
+    rename_skill,
     set_enabled,
 )
 
@@ -57,5 +58,6 @@ __all__ = [
     "parse_skill_frontmatter",
     "read_skill",
     "read_skill_file",
+    "rename_skill",
     "set_enabled",
 ]

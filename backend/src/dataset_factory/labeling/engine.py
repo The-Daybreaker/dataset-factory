@@ -97,11 +97,13 @@ class HistoryMessage:
         role: 消息角色（``user`` / ``assistant``）。
         text: 消息文本。
         attachment: 附件在会话 attachments/ 下的文件名；无图为 None。
+        reasoning: 助手消息的思考过程全文（落盘的会话才有；只供界面回看）。
     """
 
     role: str
     text: str
     attachment: str | None
+    reasoning: str | None = None
 
 
 @dataclass(frozen=True)
@@ -294,9 +296,9 @@ class LabelingEngine:
         """流式跑一轮打标：先落信封 → 逐段产出增量 → 终稿落盘，事件序列返回给调用方。
 
         与 label() 共用同一套准备（校验 / 事件落盘 / 组装），区别只在模型调用方式：
-        stream 逐段产出、结束才把 caption 终稿落盘（思考过程不落盘——「存终稿」口径）。
-        事件顺序 = StreamStarted（信封已落盘）→ StreamDelta…（思考 / 正文增量）→
-        StreamFinished（终稿）。模型调用失败在流中途抛 LLMError——调用方此时可能已把
+        stream 逐段产出、结束把 caption 终稿与思考过程全文一并落盘（非流式路径无
+        思考内容可存）。事件顺序 = StreamStarted（信封已落盘）→ StreamDelta…（思考 /
+        正文增量）→ StreamFinished（终稿）。模型调用失败在流中途抛 LLMError——调用方此时可能已把
         部分增量发给界面，由入口层决定如何呈现「生成中断」。
 
         Args / Raises: 同 label()（同一套准备与素材互斥规则）。
@@ -343,12 +345,18 @@ class LabelingEngine:
         yield StreamStarted(session_id=session_id)
 
         content_parts: list[str] = []
+        reasoning_parts: list[str] = []
         for delta in self._completer.stream(messages):
             if delta.kind == "content":
                 content_parts.append(delta.text)
+            else:
+                reasoning_parts.append(delta.text)
             yield delta
         caption = "".join(content_parts)
-        append_message(session_id, "assistant", caption)
+        # 思考过程随终稿一起落盘（2026-09-20 用户定夺）：恢复会话可回看；
+        # 回放下一轮请求装配仍只取正文，思考不进请求（见 _replay_history）。
+        reasoning = "".join(reasoning_parts)
+        append_message(session_id, "assistant", caption, reasoning=reasoning or None)
         logger.info(
             "一轮流式打标完成：合计 %.0fms（会话 %s）", ms_since(start), session_id
         )
@@ -454,7 +462,10 @@ class LabelingEngine:
         events = read_events(session_id)
         messages = tuple(
             HistoryMessage(
-                role=event.role, text=event.text, attachment=event.attachment
+                role=event.role,
+                text=event.text,
+                attachment=event.attachment,
+                reasoning=event.reasoning,
             )
             for event in events
             if isinstance(event, MessageEvent) and event.role in ("user", "assistant")

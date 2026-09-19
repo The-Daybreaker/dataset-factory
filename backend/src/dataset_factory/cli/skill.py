@@ -1,4 +1,4 @@
-"""Skill 库命令：``dsf skill import / list / files / read / enable / disable / rm``——直连 skills 数据域。"""
+"""Skill 库命令：``dsf skill import / list / files / read / enable / disable / rename / rm``——直连 skills 数据域。"""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from ..skills import (
     list_skill_files,
     list_skills,
     read_skill_file,
+    rename_skill,
     set_enabled,
 )
 from .errors import handle_domain_errors
@@ -95,6 +96,17 @@ def skill_disable(
         f"已停用 skill {name!r}（包保留在库中，dsf skill enable 随时启用）",
         fg=typer.colors.GREEN,
     )
+
+
+@app.command("rename")
+@handle_domain_errors
+def skill_rename(
+    old_name: Annotated[str, typer.Argument(help="现有 skill 名称")],
+    new_name: Annotated[str, typer.Argument(help="目标名称（目录名即名称）")],
+) -> None:
+    """重命名 skill：改目录名，SKILL.md frontmatter 的 name 同步改写。"""
+    rename_skill(old_name, new_name)
+    typer.secho(f"已把 {old_name!r} 改名为 {new_name!r}", fg=typer.colors.GREEN)
 
 
 @app.command("rm")

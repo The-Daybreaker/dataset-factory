@@ -335,6 +335,33 @@ def test_skills_list_degrades_corrupt_package(
     assert items["example-caption-skill"]["body_chars"] > 0
 
 
+def test_skill_rename_roundtrip_and_conflict(client: TestClient) -> None:
+    """改名：204 + 列表出现新名（frontmatter 同步）；撞名 409、旧名 404。"""
+    client.post("/api/skills/import", json={"path": str(_SKILL_PACK)})
+
+    renamed = client.post(
+        "/api/skills/example-caption-skill/rename", json={"new_name": "renamed-skill"}
+    )
+    assert renamed.status_code == 204
+    names = {item["name"] for item in client.get("/api/skills").json()}
+    assert names == {"renamed-skill"}
+
+    conflict = client.post(
+        "/api/skills/renamed-skill/rename", json={"new_name": "renamed-skill"}
+    )
+    assert conflict.status_code == 204  # 同名 = 无操作，不算错误
+
+    client.post("/api/skills/import", json={"path": str(_SKILL_PACK)})
+    dup = client.post(
+        "/api/skills/renamed-skill/rename",
+        json={"new_name": "example-caption-skill"},
+    )
+    assert dup.status_code == 409
+
+    missing = client.post("/api/skills/ghost/rename", json={"new_name": "whatever"})
+    assert missing.status_code == 404
+
+
 def test_skills_import_conflict_is_409(client: TestClient) -> None:
     """重复导入同名 skill：409（重名不合并）。"""
     client.post("/api/skills/import", json={"path": str(_SKILL_PACK)})

@@ -46,6 +46,9 @@ _SKILLS_DIRNAME = "skills"
 _SKILL_MD = "SKILL.md"
 _REFERENCES_DIRNAME = "references"
 _STATE_FILENAME = "_state.json"
+_LF = "\n"
+_CRLF = "\r\n"
+_CR = "\r"
 
 # 名称含路径分隔符、控制字符或 Windows 不允许的字符即非法：名称只能是单段安全目录名。
 _FORBIDDEN_NAME_CHARS = re.compile(r'[/\\<>:"|?*\x00-\x1f\x7f]')
@@ -488,6 +491,107 @@ def delete_skill(name: str) -> None:
             if name in disabled:
                 disabled.discard(name)
                 _write_disabled(disabled)
+
+
+def _replace_frontmatter_name(text: str, new_name: str) -> str:
+    """把 SKILL.md frontmatter 里的 name 字段改写成新值，其余内容原样保留。
+
+    与 save_skill_file 的描述改写同一技术：yaml compose 拿到标量的精确字节位置，
+    只替换该标量本身——frontmatter 其余字段、注释与正文一个字都不动。入参先按
+    parse 的同一套归一化处理 BOM 与 CRLF，因此回写会把 CRLF 包归一成 LF。
+
+    Args:
+        text: SKILL.md 全文。
+        new_name: 要写入的 name 值（调用方已校验为单段安全目录名，可作 YAML 纯量）。
+
+    Returns:
+        改写后的 SKILL.md 全文。
+
+    Raises:
+        SkillFormatError: 缺 frontmatter / 未闭合 / 顶层非映射 / name 字段不唯一。
+    """
+    normalized = text.lstrip(chr(0xFEFF)).replace(_CRLF, _LF).replace(_CR, _LF)
+    lines = normalized.splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        raise SkillFormatError("SKILL.md 缺少 YAML frontmatter，无法改名。")
+    end = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)
+    if end is None:
+        raise SkillFormatError("SKILL.md 的 frontmatter 未闭合，无法改名。")
+    front = "".join(lines[1:end])
+    node = cast(
+        object,
+        yaml.compose(front, Loader=yaml.SafeLoader),  # pyright: ignore[reportUnknownMemberType]
+    )
+    if not isinstance(node, yaml.MappingNode):
+        raise SkillFormatError("SKILL.md 的 frontmatter 顶层应是映射。")
+    values = [value for key, value in node.value if key.value == "name"]
+    if len(values) != 1:
+        raise SkillFormatError("SKILL.md 必须包含唯一的 name 字段。")
+    value = values[0]
+    replacement = json.dumps(new_name, ensure_ascii=False)
+    suffix = front[value.end_mark.index :]
+    if not suffix.startswith((_LF, _CR, " ", "\t")):
+        replacement += _LF
+    front = front[: value.start_mark.index] + replacement + suffix
+    return "---" + _LF + front + "---" + _LF + "".join(lines[end + 1 :])
+
+
+def rename_skill(old_name: str, new_name: str) -> None:
+    """重命名 skill：目录改名 + SKILL.md frontmatter 的 name 同步改写 + 启用状态跟随。
+
+    与提示词改名同口径：名字即目录名。顺序是「先原子改目录名、再改写 frontmatter」，
+    改写失败即把目录名滚回（防止出现「目录新名、frontmatter 旧名」的身份劈叉——列表
+    以 frontmatter 的 name 为准、单条读取以目录名为准，两者必须一致）。启用状态清单
+    里的旧名同步换成新名；停用状态原样保留。
+
+    Args:
+        old_name: 现有 skill 名称。
+        new_name: 目标名称（校验规则与导入相同；不得与现有 skill 重名）。
+
+    Raises:
+        SkillNameError: 任一名称非法。
+        SkillNotFoundError: 旧名称 skill 不存在。
+        SkillExistsError: 新名称已被占用，或技能库正被其他写者占用。
+        SkillFormatError: SKILL.md 缺 frontmatter / name 字段不唯一 / 非 UTF-8。
+        SkillError: 目录改名或状态清单写入失败。
+    """
+    _validate_name(old_name)
+    _validate_name(new_name)
+    if old_name == new_name:
+        return
+    with _mutation_lock(_skills_dir() / f".{old_name}.edit.lock"):
+        source = _require_skill_dir(old_name)
+        with _mutation_lock(_skills_dir() / f".{new_name}.edit.lock"):
+            target = _skills_dir() / new_name
+            with _mutation_lock(_skills_dir() / ".state.lock"):
+                if target.exists():
+                    raise SkillExistsError(
+                        f"skill {new_name!r} 已存在；请先删除它或换一个名字。"
+                    )
+                try:
+                    source.rename(target)
+                except OSError as exc:
+                    raise SkillError(
+                        f"无法改名 skill {old_name!r}：{exc.strerror or exc}"
+                    ) from exc
+                try:
+                    text = _read_text(target / _SKILL_MD)
+                    atomic_write_text(
+                        target / _SKILL_MD, _replace_frontmatter_name(text, new_name)
+                    )
+                except OSError as exc:
+                    target.rename(source)
+                    raise SkillError(
+                        f"无法改写 SKILL.md 的 name 字段：{exc.strerror or exc}"
+                    ) from exc
+                except SkillError:
+                    target.rename(source)
+                    raise
+                disabled = _read_disabled()
+                if old_name in disabled:
+                    disabled.discard(old_name)
+                    disabled.add(new_name)
+                    _write_disabled(disabled)
 
 
 def _require_skill_dir(name: str) -> Path:

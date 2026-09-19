@@ -180,6 +180,32 @@ def test_append_message_with_attachment_round_trips(temp_data_root: Path) -> Non
     assert event.attachment == "cat.jpg"
 
 
+def test_append_message_with_reasoning_round_trips(temp_data_root: Path) -> None:
+    """带思考过程的消息回放：reasoning 原样保留（思考落盘、界面可回看）。"""
+    session_id = create_session()
+
+    append_message(
+        session_id, "assistant", "一只白瓷茶杯。", reasoning="用户要一段描述。"
+    )
+    event = read_events(session_id)[0]
+
+    assert isinstance(event, MessageEvent)
+    assert event.reasoning == "用户要一段描述。"
+
+
+def test_append_message_without_reasoning_omits_field(temp_data_root: Path) -> None:
+    """无思考的消息落盘不带 reasoning 键：旧事件与新增量同格式、不浪费磁盘。"""
+    session_id = create_session()
+
+    append_message(session_id, "assistant", "一只白瓷茶杯。")
+    event = read_events(session_id)[0]
+
+    assert isinstance(event, MessageEvent)
+    assert event.reasoning is None
+    raw_line = _events_file(temp_data_root, session_id).read_text(encoding="utf-8")
+    assert "reasoning" not in raw_line
+
+
 def test_append_envelope_round_trips(temp_data_root: Path) -> None:
     """追加请求信封后回放：request 结构原样取回（sessions 忠实存、不解析其内部）。"""
     session_id = create_session()

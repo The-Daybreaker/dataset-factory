@@ -88,6 +88,10 @@ class HistoryMessageView(BaseModel):
     role: str
     text: str
     attachment: str | None
+    reasoning: str | None = Field(
+        default=None,
+        description="助手消息的思考过程全文（流式打标落盘；无思考为 null）",
+    )
 
 
 class ServiceStatus(BaseModel):
@@ -178,6 +182,12 @@ class SkillInfo(BaseModel):
     body_chars: int = Field(
         description="注入正文字符数（SKILL.md + references/ 全部文件，即打标请求的注入量）"
     )
+
+
+class SkillRenameRequest(BaseModel):
+    """POST /api/skills/{name}/rename 的请求体。"""
+
+    new_name: str = Field(description="目标名称（目录名即名称，校验规则与导入相同）")
 
 
 class SkillFileInfo(BaseModel):
@@ -483,6 +493,10 @@ class StrategyView(BaseModel):
     skills: list[str] = Field(description="启用 Skill 名引用清单（有序）")
     available: bool = Field(description="引用健康度：全部引用现存在才可用")
     missing_refs: list[str] = Field(description="缺失引用的可读描述（健康时为空）")
+    body_chars: int = Field(
+        description="注入正文字符数（基础提示词正文 + 引用的启用 Skill 注入全文；"
+        "引用缺失或停用按 0 计），供列表展示字数"
+    )
     created_at: str = Field(description="创建时刻（UTC ISO 8601）")
     updated_at: str = Field(description="最近更新时刻（UTC ISO 8601）")
 

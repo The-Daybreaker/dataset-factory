@@ -31,6 +31,7 @@ from dataset_factory.skills import (
     parse_skill_frontmatter,
     read_skill,
     read_skill_file,
+    rename_skill,
     set_enabled,
 )
 from dataset_factory.skills import store as skill_store
@@ -629,6 +630,61 @@ def test_delete_missing_raises(temp_data_root: Path) -> None:
     """删除不存在的 skill → SkillNotFoundError。"""
     with pytest.raises(SkillNotFoundError, match="未找到"):
         delete_skill("nope")
+
+
+def test_rename_moves_dir_and_rewrites_frontmatter(temp_data_root: Path) -> None:
+    """改名：目录换名 + SKILL.md frontmatter 的 name 同步改写，描述与正文原样保留。"""
+    import_skill(_FIXTURE_PACK)
+
+    rename_skill(_FIXTURE_NAME, "renamed-skill")
+
+    assert not (_skills_dir(temp_data_root) / _FIXTURE_NAME).exists()
+    text = (_skills_dir(temp_data_root) / "renamed-skill" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    name, description = parse_skill_frontmatter(text)
+    assert name == "renamed-skill"
+    assert description.startswith("示例 skill")
+    assert "# Example Caption Skill" in text
+    listing = list_skills()
+    assert [skill.name for skill in listing] == ["renamed-skill"]
+    assert listing[0].body_chars > 0
+
+
+def test_rename_carries_disabled_state(temp_data_root: Path) -> None:
+    """停用中的 skill 改名后仍是停用（启用状态清单同步换名）。"""
+    import_skill(_FIXTURE_PACK)
+    set_enabled(_FIXTURE_NAME, False)
+
+    rename_skill(_FIXTURE_NAME, "renamed-skill")
+
+    listing = list_skills()
+    assert [skill.name for skill in listing] == ["renamed-skill"]
+    assert listing[0].enabled is False
+
+
+def test_rename_conflict_raises(temp_data_root: Path) -> None:
+    """目标名称已被占用 → SkillExistsError（重名不覆盖）。"""
+    import_skill(_FIXTURE_PACK)
+    other_md = "---\nname: other\ndescription: x\n---\nbody"
+    import_skill_files({"SKILL.md": other_md.encode()})
+
+    with pytest.raises(SkillExistsError, match="已存在"):
+        rename_skill(_FIXTURE_NAME, "other")
+
+
+def test_rename_missing_raises(temp_data_root: Path) -> None:
+    """改名不存在的 skill → SkillNotFoundError。"""
+    with pytest.raises(SkillNotFoundError, match="未找到"):
+        rename_skill("nope", "renamed")
+
+
+def test_rename_invalid_name_raises(temp_data_root: Path) -> None:
+    """目标名称含路径分隔符 → SkillNameError（穿越防御）。"""
+    import_skill(_FIXTURE_PACK)
+
+    with pytest.raises(SkillNameError, match="非法字符"):
+        rename_skill(_FIXTURE_NAME, "../escape")
 
 
 def test_read_skill_non_utf8_raises(temp_data_root: Path) -> None:

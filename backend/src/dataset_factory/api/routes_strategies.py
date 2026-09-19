@@ -14,6 +14,7 @@ problem+json（404 strategy/batch/workdir 不存在、400 名字 / 引用不合�
 
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
 from typing import cast
@@ -21,9 +22,11 @@ from typing import cast
 from fastapi import APIRouter, Request, Response
 from pydantic import ValidationError
 
+from ..prompts import PromptError, read_prompt
 from ..runs import BatchRunner
 from ..runs.journal import load_latest_run
 from ..runs.runner import remove_batch
+from ..skills import list_skills
 from ..strategies import (
     BatchEntry,
     LibraryStrategy,
@@ -72,11 +75,39 @@ batches_router = APIRouter(
 )
 
 
-def _to_strategy_view(entry: LibraryStrategy) -> StrategyView:
-    """库策略 → 响应模型（健康度现查）。"""
+def _skill_chars_map() -> dict[str, int]:
+    """启用 Skill 的「名称 → 注入全文字符数」对照表（字数展示共用一份现查结果）。"""
+    return {skill.name: skill.body_chars for skill in list_skills() if skill.enabled}
+
+
+def _strategy_body_chars(
+    entry: LibraryStrategy, skill_chars: dict[str, int] | None
+) -> int:
+    """策略的注入正文字符数：基础提示词正文 + 引用的启用 Skill 注入全文。
+
+    引用缺失（提示词不存在 / Skill 不在启用清单）的部分按 0 计——字数只是列表展示
+    的辅助信息，缺失本身由 available / missing_refs 承载，不在这里重复报错。
+    """
+    chars = 0
+    with suppress(PromptError):
+        chars += len(read_prompt(entry.prompt).body)
+    skills = skill_chars if skill_chars is not None else _skill_chars_map()
+    chars += sum(skills.get(name, 0) for name in entry.skills)
+    return chars
+
+
+def _to_strategy_view(
+    entry: LibraryStrategy, skill_chars: dict[str, int] | None = None
+) -> StrategyView:
+    """库策略 → 响应模型（健康度与注入字数现查）。"""
     problems = missing_refs(entry)
     return StrategyView.model_validate(
-        asdict(entry) | {"available": not problems, "missing_refs": problems}
+        asdict(entry)
+        | {
+            "available": not problems,
+            "missing_refs": problems,
+            "body_chars": _strategy_body_chars(entry, skill_chars),
+        }
     )
 
 
@@ -117,7 +148,8 @@ def _stop_registry_runner(request: Request, workdir: Path, seq: int) -> None:
 @library_router.get("", response_model=list[StrategyView])
 def list_library() -> list[StrategyView]:
     """列出全部库策略（按显示名排序），健康度现查。"""
-    return [_to_strategy_view(entry) for entry in list_strategies()]
+    skill_chars = _skill_chars_map()
+    return [_to_strategy_view(entry, skill_chars) for entry in list_strategies()]
 
 
 @library_router.post(
