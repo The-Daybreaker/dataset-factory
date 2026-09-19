@@ -100,7 +100,21 @@ test("停止保留产物，选择重试可覆盖旧产物，运行中隐藏需�
         `/api/workdirs/${accepted.workdir.id}/batches/s1/runs/latest`,
       )
     ).json();
-    expect(latest.record.counters.succeeded).toBe(1);
+    // 给「被中断那条的计数」补等待预算：整轮连跑时这里读到过终态已落、计数仍为 0
+    // （本机实测：全量连跑 3 次红 2 次，单跑与抽三个文件各跑 3 次全绿）。断言对象与
+    // 强度不变——原来就是断 succeeded === 1，只是改成 poll 等它到位（同 bb1118f 的口径）。
+    await expect
+      .poll(async () => {
+        const record = (
+          await (
+            await request.get(
+              `/api/workdirs/${accepted.workdir.id}/batches/s1/runs/latest`,
+            )
+          ).json()
+        ).record;
+        return record?.counters.succeeded;
+      })
+      .toBe(1);
     expect(
       await readFile(path.join(destination, "s1__sample.txt"), "utf8"),
     ).toContain("E2E 假模型的打标结果");
