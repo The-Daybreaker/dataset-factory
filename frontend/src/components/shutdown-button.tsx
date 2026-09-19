@@ -8,7 +8,8 @@ import { PowerIcon } from "lucide-react";
 import type { ReactElement } from "react";
 import { useState } from "react";
 
-import { api, errorMessage } from "../api";
+import { api } from "../api";
+import { reportError } from "../lib/feedback";
 import { FormError } from "./form-error";
 import { Button } from "./ui/button";
 import {
@@ -37,10 +38,12 @@ export function ShutdownButton({
     try {
       await api.shutdownService();
       setOpen(false);
-      // 侧栏脚注的服务状态点监听此事件：关闭成功后立即重查，点随即转红。
-      window.dispatchEvent(new Event("df:service-changed"));
+      // 停机被受理 = 服务开始排入手头请求。侧栏的状态点监听此事件转「正在停止」，
+      // 并在确认期里逐秒重查，探到不通就定在红点（与脚本直接杀进程的表现收敛到同一处）。
+      window.dispatchEvent(new Event("df:service-stopping"));
     } catch (err) {
-      setError(errorMessage(err));
+      const text = reportError(err);
+      if (text !== null) setError(text);
     } finally {
       setBusy(false);
     }

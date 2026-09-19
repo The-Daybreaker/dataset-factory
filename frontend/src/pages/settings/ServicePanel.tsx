@@ -2,9 +2,10 @@
 import type { ReactElement } from "react";
 import { useCallback, useEffect, useState } from "react";
 import type { ServiceLogs, ServiceStatus } from "../../api";
-import { api, errorMessage } from "../../api";
+import { api } from "../../api";
 import { ShutdownButton } from "../../components/shutdown-button";
 import { Button } from "../../components/ui/button";
+import { reportError } from "../../lib/feedback";
 
 export function ServicePanel(): ReactElement {
   const [status, setStatus] = useState<ServiceStatus | null>(null);
@@ -23,7 +24,9 @@ export function ServicePanel(): ReactElement {
       setLogs(nextLogs);
       setError(null);
     } catch (err) {
-      setError(errorMessage(err));
+      // 连不上后端时这里要报的是**状态**（服务不可用），不是把那句长提示焊在卡上——
+      // 长提示已经由浮层给过一次性提醒了。
+      setError(reportError(err) ?? "服务不可用");
     } finally {
       setLoading(false);
     }

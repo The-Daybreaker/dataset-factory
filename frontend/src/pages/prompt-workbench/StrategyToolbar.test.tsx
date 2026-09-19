@@ -21,10 +21,10 @@ const mocks = vi.hoisted(() => ({
   deleteStrategy: vi.fn(),
   rebindStrategy: vi.fn(),
 }));
-vi.mock("../../api", () => ({
+// 部分 mock：只替掉 api 对象，ApiError / errorMessage 用真货——错误分档要靠真类的 kind 字段判。
+vi.mock("../../api", async (original) => ({
+  ...(await original<typeof import("../../api")>()),
   api: mocks,
-  errorMessage: (error: unknown) =>
-    error instanceof Error ? error.message : String(error),
 }));
 const strategy: components["schemas"]["StrategyView"] = {
   id: "a1",
@@ -33,6 +33,7 @@ const strategy: components["schemas"]["StrategyView"] = {
   endpoint: "default",
   prompt: "caption",
   skills: [],
+  body_chars: 12_400,
   available: true,
   missing_refs: [],
   created_at: "2026-09-01T00:00:00Z",
@@ -156,4 +157,19 @@ it("失效策略进入重新指定，不应用缺失引用；删除需要二次�
     within(screen.getByRole("dialog")).getByRole("button", { name: "删除" }),
   );
   await waitFor(() => expect(mocks.deleteStrategy).toHaveBeenCalledWith("a1"));
+});
+it("下拉行给出注入字数，悬停可见出身三参数", async () => {
+  mount();
+  await userEvent.click(screen.getByRole("button", { name: "切换策略" }));
+  const row = await screen.findByRole("button", { name: /^详细描述/ });
+
+  expect(row).toHaveTextContent("1.2 万字");
+
+  await userEvent.hover(row);
+  const tip = await screen.findByRole("tooltip");
+  expect(tip).toHaveTextContent("端点");
+  expect(tip).toHaveTextContent("default");
+  expect(tip).toHaveTextContent("提示词");
+  expect(tip).toHaveTextContent("caption");
+  expect(tip).toHaveTextContent("Skill");
 });

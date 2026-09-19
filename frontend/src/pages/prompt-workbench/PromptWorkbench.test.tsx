@@ -8,7 +8,12 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { EndpointConfigSummary, PromptInfo, SkillInfo } from "../../api";
+import {
+  ApiError,
+  type EndpointConfigSummary,
+  type PromptInfo,
+  type SkillInfo,
+} from "../../api";
 import { PromptWorkbench } from "./PromptWorkbench";
 
 // 工作台测试只关心「交互 → 调了哪个 API → 界面状态对不对」，api 层整体 mock 掉。
@@ -26,25 +31,11 @@ const apiMock = vi.hoisted(() => ({
   listStrategies: vi.fn(),
 }));
 
-vi.mock("../../api", () => {
-  class ApiError extends Error {
-    status: number | null;
-    kind: string;
-    requestId: string | null;
-    constructor(
-      kind: string,
-      message: string,
-      status: number | null,
-      requestId: string | null,
-    ) {
-      super(message);
-      this.kind = kind;
-      this.status = status;
-      this.requestId = requestId;
-    }
-  }
-  return { api: apiMock, errorMessage: (error: unknown) => String(error), ApiError };
-});
+// 部分 mock：只替掉 api 对象，ApiError / errorMessage 用真货——错误分档要靠真类的 kind 字段判。
+vi.mock("../../api", async (original) => ({
+  ...(await original<typeof import("../../api")>()),
+  api: apiMock,
+}));
 
 const PROMPTS: PromptInfo[] = [
   { name: "h3-video", description: "视频打标" },
@@ -88,10 +79,9 @@ beforeEach(() => {
   apiMock.listPrompts.mockResolvedValue(PROMPTS);
   apiMock.listSkills.mockResolvedValue(SKILLS);
   apiMock.listEndpoints.mockResolvedValue(ENDPOINTS);
+  // 「还没有会话」是 404，走真 ApiError（界面按 status 判它是首次使用的正常空态）。
   apiMock.latestSession.mockRejectedValue(
-    new (class MockNotFound extends Error {
-      status = 404;
-    })("no session"),
+    new ApiError("http", "还没有任何会话；发第一轮打标即自动创建。", 404, null),
   );
   apiMock.getPrompt.mockResolvedValue(FULL_PROMPT);
   apiMock.labelStream.mockImplementation(async (_payload, handlers) => {
@@ -191,6 +181,28 @@ describe("PromptWorkbench", () => {
     expect(apiMock.getPrompt).not.toHaveBeenCalledWith("simple");
   });
 
+  it("历史恢复的助手消息带思考过程：折叠区跟着回来", async () => {
+    apiMock.latestSession.mockResolvedValueOnce({
+      session_id: "s-old",
+      settings: { prompt_name: "h3-video", skill_names: ["h3-skill"] },
+      messages: [
+        { role: "user", text: "给这张图打个标", attachment: null },
+        {
+          role: "assistant",
+          text: "一个穿红外套的人在雪地里",
+          attachment: null,
+          reasoning: "先确认主体与服装，再补构图。",
+        },
+      ],
+    });
+
+    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+
+    expect(await screen.findByText("一个穿红外套的人在雪地里")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("思考过程"));
+    expect(screen.getByText("先确认主体与服装，再补构图。")).toBeInTheDocument();
+  });
+
   it("开始输入指令后迟到的会话错误不打断当前对话", async () => {
     let rejectSession!: (error: Error) => void;
     apiMock.latestSession.mockReturnValueOnce(
@@ -215,6 +227,7 @@ describe("PromptWorkbench", () => {
     prompt: "simple",
     endpoint: "backup",
     skills: ["h3-skill"],
+    body_chars: 1200,
     available: true,
     missing_refs: [],
     created_at: "",
@@ -241,7 +254,7 @@ describe("PromptWorkbench", () => {
       body: "简短",
     });
     await userEvent.click(screen.getByRole("button", { name: "切换策略" }));
-    await userEvent.click(screen.getByRole("button", { name: "备用策略" }));
+    await userEvent.click(screen.getByRole("button", { name: /^备用策略/ }));
 
     await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("simple"));
     expect(screen.getByText("backup · model-b")).toBeInTheDocument();
@@ -262,7 +275,7 @@ describe("PromptWorkbench", () => {
     });
 
     await userEvent.click(screen.getByRole("button", { name: "切换策略" }));
-    await userEvent.click(screen.getByRole("button", { name: "备用策略" }));
+    await userEvent.click(screen.getByRole("button", { name: /^备用策略/ }));
 
     expect(await screen.findByText(/端点不可用/)).toBeInTheDocument();
     expect(screen.getByLabelText("名称")).toHaveValue("h3-video");

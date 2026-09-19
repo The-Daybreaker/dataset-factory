@@ -18,6 +18,7 @@ const apiMock = vi.hoisted(() => ({
   importSkillFiles: vi.fn(),
   importSkillFile: vi.fn(),
   setSkillEnabled: vi.fn(),
+  renameSkill: vi.fn(),
   deleteSkill: vi.fn(),
   listSkillFiles: vi.fn(),
   readSkillFile: vi.fn(),
@@ -25,9 +26,10 @@ const apiMock = vi.hoisted(() => ({
   listDirectory: vi.fn(),
 }));
 
-vi.mock("../../api", () => ({
+// 部分 mock：只替掉 api 对象，ApiError / errorMessage 用真货——错误分档要靠真类的 kind 字段判。
+vi.mock("../../api", async (original) => ({
+  ...(await original<typeof import("../../api")>()),
   api: apiMock,
-  errorMessage: (error: unknown) => String(error),
 }));
 
 const ENDPOINTS: EndpointConfigSummary[] = [
@@ -65,15 +67,15 @@ const SKILL_FILES = {
   ],
 };
 
+/** SKILL.md 的正文（读写两侧共用一份，断言里不必再抄一遍带转义的字符串）。 */
+const SKILL_MD = "# Example\n按格式输出 caption。";
+
 beforeEach(() => {
   vi.clearAllMocks();
   apiMock.listEndpoints.mockResolvedValue(ENDPOINTS);
   apiMock.listSkills.mockResolvedValue(SKILLS);
   apiMock.listSkillFiles.mockResolvedValue(SKILL_FILES);
-  apiMock.readSkillFile.mockResolvedValue({
-    path: "SKILL.md",
-    content: "# Example\n按格式输出 caption。",
-  });
+  apiMock.readSkillFile.mockResolvedValue({ path: "SKILL.md", content: SKILL_MD });
 });
 
 describe("SettingsPage · 连接·端点配置", () => {
@@ -572,6 +574,49 @@ describe("SettingsPage · 能力·技能", () => {
     await userEvent.click(screen.getByRole("button", { name: "保存更改" }));
     await waitFor(() => expect(editor).toHaveValue("保存后的正文"));
     expect(screen.getByRole("button", { name: "保存更改" })).toBeDisabled();
+  });
+
+  it("改名称：先按原名存正文、再改名，选中项与列表跟到新名", async () => {
+    const renamed: SkillInfo[] = SKILLS.map((item) =>
+      item.name === "h3-skill" ? { ...item, name: "h3-caption" } : item,
+    );
+    apiMock.listSkills.mockResolvedValueOnce(SKILLS).mockResolvedValue(renamed);
+    apiMock.renameSkill.mockResolvedValue(undefined);
+    apiMock.saveSkillFile.mockResolvedValue({ path: "SKILL.md", content: "新的正文" });
+    await openSkills();
+
+    const nameField = await screen.findByLabelText("技能名称");
+    expect(screen.getByRole("button", { name: "保存更改" })).toBeDisabled();
+    fireEvent.change(nameField, { target: { value: "h3-caption" } });
+    await userEvent.click(screen.getByRole("button", { name: "保存更改" }));
+
+    // 改名必须排在存内容之后：改名会重写 frontmatter，先改名就让刚读的基线失效（PUT 400）。
+    expect(apiMock.saveSkillFile).toHaveBeenCalledWith("h3-skill", "SKILL.md", {
+      content: SKILL_MD,
+      original_content: SKILL_MD,
+    });
+    await waitFor(() =>
+      expect(apiMock.renameSkill).toHaveBeenCalledWith("h3-skill", {
+        new_name: "h3-caption",
+      }),
+    );
+    expect(screen.getByLabelText("技能名称")).toHaveValue("h3-caption");
+    expect(screen.getByText("已保存并改名为「h3-caption」")).toBeInTheDocument();
+    expect(screen.getByLabelText("启用 h3-caption")).toBeInTheDocument();
+  });
+
+  it("改名撞上已有技能：保留输入与草稿，就地给出后端的原因", async () => {
+    apiMock.renameSkill.mockRejectedValue(new Error("已有同名 skill：old-skill"));
+    await openSkills();
+
+    fireEvent.change(await screen.findByLabelText("技能名称"), {
+      target: { value: "old-skill" },
+    });
+    await userEvent.click(screen.getByRole("button", { name: "保存更改" }));
+
+    expect(await screen.findByText(/已有同名 skill/)).toBeInTheDocument();
+    expect(screen.getByLabelText("技能名称")).toHaveValue("old-skill");
+    expect(screen.getByLabelText("启用 h3-skill")).toBeInTheDocument();
   });
 
   it("放弃技能草稿恢复内容并解锁文件切换", async () => {

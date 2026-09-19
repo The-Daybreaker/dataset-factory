@@ -18,6 +18,7 @@ export type PromptSaveRequest = components["schemas"]["PromptSaveRequest"];
 export type PromptRenameRequest = components["schemas"]["PromptRenameRequest"];
 export type SkillInfo = components["schemas"]["SkillInfo"];
 export type SkillImportResponse = components["schemas"]["SkillImportResponse"];
+export type SkillRenameRequest = components["schemas"]["SkillRenameRequest"];
 export type ConfigResponse = components["schemas"]["ConfigResponse"];
 export type ConfigUpdateRequest = components["schemas"]["ConfigUpdateRequest"];
 export type EndpointConfigSummary = components["schemas"]["EndpointConfigSummary"];
@@ -578,6 +579,10 @@ export const api = {
     return request<SkillImportResponse>("POST", "/api/skills/import-upload", form);
   },
 
+  /** 重命名 skill（目录改名，SKILL.md 的 name 同步改写；重名报 409）。 */
+  renameSkill: (name: string, payload: SkillRenameRequest) =>
+    request<void>("POST", `/api/skills/${encodeURIComponent(name)}/rename`, payload),
+
   /** 启用 / 停用 skill（停用不删除）。 */
   setSkillEnabled: (name: string, enabled: boolean) =>
     request<void>(
@@ -702,7 +707,17 @@ export const api = {
     const decoder = new TextDecoder();
     let buffer = "";
     for (;;) {
-      const { done, value } = await reader.read();
+      // 读流中途断掉 = 服务在生成途中退了（外部脚本杀进程最常见）。归入连接类失败，让界面
+      // 按「连不上后端」统一提示，而不是把 `Failed to fetch` 这种原话丢给用户。
+      const chunk = await reader.read().catch((): never => {
+        throw new ApiError(
+          "network",
+          "与后端的连接中断，本轮没有完成——请确认服务在运行后重发",
+          null,
+          null,
+        );
+      });
+      const { done, value } = chunk;
       if (done) {
         break;
       }

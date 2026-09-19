@@ -14,6 +14,32 @@ function isVideoAttachment(name: string): boolean {
   return VIDEO_EXTENSIONS.some((extension) => lowered.endsWith(extension));
 }
 
+/**
+ * 思考过程折叠区（历史消息与本轮流式面板共用一种形态）。
+ *
+ * 两处数据来源不同：本轮的在页面内存里逐段累加，历史恢复的随消息一起从落盘快照取回——
+ * 都汇到 `reasoning` 这一个字段，所以这里只问「有没有」。
+ */
+function Thinking({
+  reasoning,
+}: {
+  reasoning: string | null | undefined;
+}): ReactElement | null {
+  if (reasoning === null || reasoning === undefined || reasoning === "") {
+    return null;
+  }
+  return (
+    <details className="mb-2 max-w-full overflow-hidden rounded-lg border border-border bg-muted/40">
+      <summary className="cursor-pointer px-3 py-2 text-t-sm text-text-3">
+        思考过程
+      </summary>
+      <p className="px-3 pb-3 text-t-md leading-(--lh-loose) text-text-3 wrap-anywhere whitespace-pre-wrap">
+        {reasoning}
+      </p>
+    </details>
+  );
+}
+
 export function MessageList({
   messages,
   streaming,
@@ -75,17 +101,7 @@ export function MessageList({
               <img src={logo} className="size-5 object-contain" alt="" />
             </span>
             <div className="min-w-0 flex-1">
-              {/* 生成结束后的思考过程保留可回看（本轮内存态，不落盘；历史恢复的消息没有）。 */}
-              {message.reasoning !== undefined && message.reasoning !== "" && (
-                <details className="mb-2 max-w-full overflow-hidden rounded-lg border border-border bg-muted/40">
-                  <summary className="cursor-pointer px-3 py-2 text-t-sm text-text-3">
-                    思考过程
-                  </summary>
-                  <p className="px-3 pb-3 text-t-md leading-(--lh-loose) text-text-3 wrap-anywhere whitespace-pre-wrap">
-                    {message.reasoning}
-                  </p>
-                </details>
-              )}
+              <Thinking reasoning={message.reasoning} />
               <div className="inline-block max-w-full rounded-xl rounded-bl-sm border border-input bg-muted/55 px-4 py-3 text-t-md wrap-anywhere whitespace-pre-wrap">
                 {message.text}
               </div>
@@ -135,16 +151,7 @@ export function MessageList({
             <img src={logo} className="size-5 object-contain" alt="" />
           </span>
           <div className="min-w-0 flex-1">
-            {streaming.reasoning !== "" && (
-              <details className="mb-2 max-w-full overflow-hidden rounded-lg border border-border bg-muted/40">
-                <summary className="cursor-pointer px-3 py-2 text-t-sm text-text-3">
-                  思考过程
-                </summary>
-                <p className="px-3 pb-3 text-t-md leading-(--lh-loose) text-text-3 wrap-anywhere whitespace-pre-wrap">
-                  {streaming.reasoning}
-                </p>
-              </details>
-            )}
+            <Thinking reasoning={streaming.reasoning} />
             <div className="inline-block max-w-full rounded-xl rounded-bl-sm border border-input bg-muted/55 px-4 py-3 text-t-md wrap-anywhere whitespace-pre-wrap">
               {streaming.content}
               <span

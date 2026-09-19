@@ -26,3 +26,19 @@ export function formatBytesAuto(bytes: number): string {
   }
   return formatBytes(bytes, "MiB", 1);
 }
+
+/**
+ * 注入正文字符数 → 字数文案（技能列表与策略库下拉共用一份口径）。
+ *
+ * 千位以上折算成「万字 / k 字」，百位以下给精确值：一屏七位数会把视线占满，而用户在这里
+ * 要的是「这一条要注入多少东西」的量级感；字数本身是精确算出来的，所以不加「约」。
+ */
+export function formatChars(count: number): string {
+  if (count >= 10_000) {
+    return `${(count / 10_000).toFixed(1)} 万字`;
+  }
+  if (count >= 1_000) {
+    return `${(count / 1_000).toFixed(1)}k 字`;
+  }
+  return `${count} 字`;
+}

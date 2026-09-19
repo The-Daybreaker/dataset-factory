@@ -1,61 +1,54 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
-
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import { ApiError } from "./api";
 
 // App 渲染外壳并默认进提示词页（旧组件过渡期会拉列表与恢复会话）。这里把 API 层整体
 // 换掉，让测试只关心「外壳与导航渲染得对不对」，不碰网络（页面级交互测试随后续页面重构补）。
-vi.mock("./api", () => {
-  // 过渡期嵌入的 ChatTab 依赖 ApiError（按 status 404 判定「还没有会话」的正常空态）。
-  class ApiError extends Error {
-    status: number | null;
-    kind: string;
-    requestId: string | null;
-    constructor(
-      kind: string,
-      message: string,
-      status: number | null,
-      requestId: string | null,
-    ) {
-      super(message);
-      this.kind = kind;
-      this.status = status;
-      this.requestId = requestId;
-    }
-  }
-  return {
-    api: {
-      listStrategies: vi.fn().mockResolvedValue([]),
-      listPrompts: vi.fn().mockResolvedValue([]),
-      listSkills: vi.fn().mockResolvedValue([]),
-      listEndpoints: vi.fn().mockResolvedValue([]),
-      getService: vi.fn().mockResolvedValue({
-        version: "v0.1.0",
-        host: "127.0.0.1",
-        port: 8000,
-        started_at: "2026-09-19T00:00:00Z",
-        log_file: "x",
-      }),
-      latestSession: vi
-        .fn()
-        .mockRejectedValue(
-          new ApiError("http", "还没有任何会话；发第一轮打标即自动创建。", 404, null),
-        ),
-      getConfig: vi.fn().mockResolvedValue({
-        name: null,
-        base_url: null,
-        model: null,
-        api_key_configured: false,
-        key_source: null,
-      }),
-    },
-    errorMessage: (error: unknown) => String(error),
-    ApiError,
-  };
-});
+// 部分 mock：只换 api 对象，ApiError / errorMessage 用真货（错误分档要靠真类的 kind 字段判）。
+const apiMock = vi.hoisted(() => ({
+  listStrategies: vi.fn(),
+  listPrompts: vi.fn(),
+  listSkills: vi.fn(),
+  listEndpoints: vi.fn(),
+  getService: vi.fn(),
+  latestSession: vi.fn(),
+  getConfig: vi.fn(),
+}));
+
+vi.mock("./api", async (original) => ({
+  ...(await original<typeof import("./api")>()),
+  api: apiMock,
+}));
+
+/** 服务在线的默认应答（状态点的数据来源）；逐条用例改它之前都从这里起步。 */
+const SERVICE_UP = {
+  version: "v0.1.0",
+  host: "127.0.0.1",
+  port: 8000,
+  started_at: "2026-09-19T00:00:00Z",
+  log_file: "x",
+};
 
 describe("App 外壳", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    apiMock.listStrategies.mockResolvedValue([]);
+    apiMock.listPrompts.mockResolvedValue([]);
+    apiMock.listSkills.mockResolvedValue([]);
+    apiMock.listEndpoints.mockResolvedValue([]);
+    apiMock.getService.mockResolvedValue(SERVICE_UP);
+    apiMock.latestSession.mockRejectedValue(new Error("还没有任何会话"));
+    apiMock.getConfig.mockResolvedValue({
+      name: null,
+      base_url: null,
+      model: null,
+      api_key_configured: false,
+      key_source: null,
+    });
+  });
+
   it("设置侧栏切换子页并返回进入前的工作页", async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -116,5 +109,47 @@ describe("App 外壳", () => {
     expect(
       within(screen.getByTestId("sidebar")).getByText("Dataset Factory"),
     ).toBeInTheDocument();
+  });
+
+  it("关闭受理后状态点先转「正在停止」，逐秒重查探到不通即变红", async () => {
+    render(<App />);
+    expect(await screen.findByRole("img", { name: "服务运行中" })).toBeInTheDocument();
+
+    apiMock.getService.mockRejectedValue(new ApiError("network", "连不上", null, null));
+    window.dispatchEvent(new Event("df:service-stopping"));
+
+    // 优雅停机要等手头请求做完，这段时间如实标「正在停止」；探到不通才定在红点上。
+    await waitFor(
+      () => expect(screen.getByRole("img", { name: "服务不可用" })).toBeInTheDocument(),
+      { timeout: 3_000 },
+    );
+  });
+
+  it("服务被脚本杀掉：一次失败请求就让状态点转红，报错不占界面位置", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    expect(await screen.findByRole("img", { name: "服务运行中" })).toBeInTheDocument();
+    const down = new ApiError(
+      "network",
+      "无法连接后端服务——请确认 dsf serve 已启动、端口没有填错",
+      null,
+      null,
+    );
+    apiMock.getService.mockRejectedValue(down);
+    apiMock.listStrategies.mockRejectedValue(down);
+
+    await user.click(screen.getByRole("button", { name: "切换策略" }));
+
+    // 浮层给一次性提醒（不铺红色提示条）。
+    expect(await screen.findByText(/无法连接后端服务/)).toBeInTheDocument();
+    // 关掉菜单再查点：Radix 弹层打开时会把页面其余部分标成 aria-hidden，按角色查不到。
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.getByRole("img", { name: "服务不可用" })).toBeInTheDocument(),
+    );
+    // 原来这里会出现一条带「刷新策略库」的常驻报错条——现在不占界面位置了。
+    expect(
+      screen.queryByRole("button", { name: "刷新策略库" }),
+    ).not.toBeInTheDocument();
   });
 });

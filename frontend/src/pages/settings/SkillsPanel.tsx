@@ -13,7 +13,7 @@ import {
 import type { ReactElement } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SkillFileInfo, SkillImportResponse, SkillInfo } from "../../api";
-import { api, errorMessage } from "../../api";
+import { api } from "../../api";
 import { DirectoryPicker } from "../../components/DirectoryPicker";
 import { Alert, AlertDescription } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
@@ -34,21 +34,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "../../components/ui/tooltip";
-import type { Feedback } from "../../lib/feedback";
-import { formatBytes } from "../../lib/format";
+import { type Feedback, reportError } from "../../lib/feedback";
+import { formatBytes, formatChars } from "../../lib/format";
 import { cn } from "../../lib/utils";
 import { readSkillDrop } from "./skill-drop";
-
-/** 注入正文字符数（SKILL.md + references）→ 列表徽标文案（即打标请求的实际注入量）。 */
-function formatChars(count: number): string {
-  if (count >= 10_000) {
-    return `${(count / 10_000).toFixed(1)} 万字`;
-  }
-  if (count >= 1000) {
-    return `${(count / 1000).toFixed(1)}k 字`;
-  }
-  return `${count} 字`;
-}
 
 function SkillFileChip({
   entry,
@@ -106,13 +95,18 @@ export function SkillsPanel(): ReactElement {
   const [previewContent, setPreviewContent] = useState("");
   const [originalContent, setOriginalContent] = useState("");
   const [descriptionDraft, setDescriptionDraft] = useState<string | null>(null);
+  /** 名称草稿：null = 未改动。改名走独立接口（`POST /api/skills/{name}/rename`），不混在存文件里。 */
+  const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const previewGeneration = useRef(0);
   const savePending = useRef(false);
   const togglePending = useRef(false);
   const [toggling, setToggling] = useState(false);
-  const dirty = previewContent !== originalContent || descriptionDraft !== null;
+  const dirty =
+    previewContent !== originalContent ||
+    descriptionDraft !== null ||
+    nameDraft !== null;
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -124,6 +118,12 @@ export function SkillsPanel(): ReactElement {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mdInputRef = useRef<HTMLInputElement>(null);
 
+  /** 失败分流：连接类失败改弹浮层（不占界面位置），后端返回的业务错误仍就地展示。 */
+  const fail = useCallback((err: unknown): void => {
+    const text = reportError(err);
+    if (text !== null) setFeedback({ kind: "error", text });
+  }, []);
+
   const reload = useCallback(async (): Promise<void> => {
     try {
       const list = await api.listSkills();
@@ -133,16 +133,18 @@ export function SkillsPanel(): ReactElement {
         current === "" && list.length > 0 ? (list[0]?.name ?? "") : current,
       );
     } catch (err) {
-      setFeedback({ kind: "error", text: errorMessage(err) });
+      fail(err);
     }
-  }, []);
+  }, [fail]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
 
-  // 选中变化 → 拉包文件清单；默认预览 SKILL.md（注入源）。
+  // 选中变化 → 拉包文件清单；默认预览 SKILL.md（注入源）。改名后也走这里：包还在、路径没变，
+  // 但 frontmatter 被重写过，重读一次才拿得到磁盘上的真基线。
   useEffect(() => {
+    setNameDraft(null);
     const generation = ++previewGeneration.current;
     setPreviewPath("");
     setPreviewContent("");
@@ -174,7 +176,7 @@ export function SkillsPanel(): ReactElement {
         }
       } catch (err) {
         if (!cancelled) {
-          setFeedback({ kind: "error", text: errorMessage(err) });
+          fail(err);
         }
       } finally {
         if (!cancelled && generation === previewGeneration.current)
@@ -185,7 +187,7 @@ export function SkillsPanel(): ReactElement {
       cancelled = true;
       previewGeneration.current += 1;
     };
-  }, [selected]);
+  }, [selected, fail]);
 
   const current = skills.find((item) => item.name === selected);
   const keyword = search.trim().toLowerCase();
@@ -212,7 +214,7 @@ export function SkillsPanel(): ReactElement {
       await api.setSkillEnabled(skill.name, !skill.enabled);
       await reload();
     } catch (err) {
-      setFeedback({ kind: "error", text: errorMessage(err) });
+      fail(err);
     } finally {
       togglePending.current = false;
       setToggling(false);
@@ -234,7 +236,7 @@ export function SkillsPanel(): ReactElement {
       applyImportResult(await api.importSkillFiles(picked));
       await reload();
     } catch (err) {
-      setFeedback({ kind: "error", text: errorMessage(err) });
+      fail(err);
     } finally {
       setImporting(false);
     }
@@ -249,7 +251,7 @@ export function SkillsPanel(): ReactElement {
       applyImportResult(await api.importSkillFile(picked));
       await reload();
     } catch (err) {
-      setFeedback({ kind: "error", text: errorMessage(err) });
+      fail(err);
     } finally {
       setImporting(false);
     }
@@ -266,7 +268,7 @@ export function SkillsPanel(): ReactElement {
       setPathValue("");
       await reload();
     } catch (err) {
-      setFeedback({ kind: "error", text: errorMessage(err) });
+      fail(err);
     } finally {
       setImporting(false);
     }
@@ -285,7 +287,7 @@ export function SkillsPanel(): ReactElement {
         await doImport(picked);
       }
     } catch (err) {
-      setFeedback({ kind: "error", text: errorMessage(err) });
+      fail(err);
     } finally {
       dropPending.current = false;
       setReadingDrop(false);
@@ -304,7 +306,7 @@ export function SkillsPanel(): ReactElement {
       await reload();
     } catch (err) {
       setDeleteDialogOpen(false);
-      setFeedback({ kind: "error", text: errorMessage(err) });
+      fail(err);
     }
   };
 
@@ -322,8 +324,7 @@ export function SkillsPanel(): ReactElement {
       setOriginalContent(content.content);
       setDescriptionDraft(null);
     } catch (err) {
-      if (generation === previewGeneration.current)
-        setFeedback({ kind: "error", text: errorMessage(err) });
+      if (generation === previewGeneration.current) fail(err);
     } finally {
       if (generation === previewGeneration.current) setLoadingPreview(false);
     }
@@ -331,6 +332,12 @@ export function SkillsPanel(): ReactElement {
 
   const save = async (): Promise<void> => {
     if (savePending.current || loadingPreview || !dirty) return;
+    const nextName = (nameDraft ?? selected).trim();
+    if (nextName === "") {
+      setFeedback({ kind: "error", text: "名称不能为空；请填写技能名称。" });
+      return;
+    }
+    const renamed = nextName !== selected;
     savePending.current = true;
     setSaving(true);
     const generation = previewGeneration.current;
@@ -344,11 +351,20 @@ export function SkillsPanel(): ReactElement {
       setPreviewContent(result.content);
       setOriginalContent(result.content);
       setDescriptionDraft(null);
-      setFeedback({ kind: "success", text: "已保存" });
+      if (renamed) {
+        // 改名排在存内容之后：改名会重写 SKILL.md 的 frontmatter（name 与目录名一起换），
+        // 先改名就让刚读到的并发基线失效了（实测 PUT 当场 400）。换完名由选中项变化触发
+        // 重读，编辑器里看到的是磁盘上带新名的正文，下一次保存的基线也就对了。
+        await api.renameSkill(selected, { new_name: nextName });
+        setSelected(nextName);
+      }
+      setFeedback({
+        kind: "success",
+        text: renamed ? `已保存并改名为「${nextName}」` : "已保存",
+      });
       await reload();
     } catch (err) {
-      if (generation === previewGeneration.current)
-        setFeedback({ kind: "error", text: errorMessage(err) });
+      if (generation === previewGeneration.current) fail(err);
     } finally {
       savePending.current = false;
       setSaving(false);
@@ -586,9 +602,19 @@ export function SkillsPanel(): ReactElement {
         {current !== undefined ? (
           <div className="flex min-h-0 flex-1 flex-col gap-3">
             <div className="flex items-center gap-2">
-              <h3 className="min-w-0 flex-1 truncate text-t-xl font-medium">
-                {current.name}
-              </h3>
+              <input
+                aria-label="技能名称"
+                value={nameDraft ?? current.name}
+                disabled={saving || loadingPreview}
+                onChange={(event) =>
+                  setNameDraft(
+                    event.currentTarget.value === current.name
+                      ? null
+                      : event.currentTarget.value,
+                  )
+                }
+                className="min-w-15 max-w-105 field-sizing-content rounded-md border border-transparent bg-transparent px-1 py-0.5 text-t-xl font-medium hover:border-border hover:bg-card focus:border-input"
+              />
               <Badge variant={current.enabled ? "success" : "muted"}>
                 {current.enabled ? "已启用" : "已停用"}
               </Badge>
@@ -669,12 +695,15 @@ export function SkillsPanel(): ReactElement {
                 onClick={() => {
                   setPreviewContent(originalContent);
                   setDescriptionDraft(null);
+                  setNameDraft(null);
                 }}
               >
                 <Undo2Icon />
                 放弃更改
               </Button>
               <Button
+                variant={dirty ? "default" : "ghost"}
+                title={dirty ? undefined : "没有未保存的修改"}
                 disabled={!dirty || saving || loadingPreview}
                 onClick={() => void save()}
               >

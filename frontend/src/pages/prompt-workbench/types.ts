@@ -19,8 +19,6 @@ export interface ChatMessage extends HistoryMessageView {
   model?: string;
   durationSeconds?: number;
   createdAt?: Date;
-  /** 本轮思考过程（仅本轮打标产生、只存页面内存不落盘——历史恢复的消息没有它）。 */
-  reasoning?: string;
   /** 本轮发送的附件字节（data URL，仅当轮消息有；历史恢复只有文件名、渲染图标占位）。 */
   attachmentDataUrl?: string;
 }

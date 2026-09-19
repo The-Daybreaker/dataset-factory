@@ -54,6 +54,7 @@ it("从库应用提交库 ID，读取失败后可以重试", async () => {
       endpoint: "model",
       prompt: "caption",
       skills: [],
+      body_chars: 12_400,
       available: true,
       missing_refs: [],
       created_at: "",

@@ -3,7 +3,6 @@ import { type ReactElement, useEffect, useRef, useState } from "react";
 import {
   api,
   type EndpointConfigSummary,
-  errorMessage,
   type PromptInfo,
   type SkillInfo,
 } from "../../api";
@@ -23,10 +22,33 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "../../components/ui/dropdown-menu";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
+import {
+  Tip,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "../../components/ui/tooltip";
+import { reportError } from "../../lib/feedback";
+import { formatChars } from "../../lib/format";
 
 type Strategy = components["schemas"]["StrategyView"];
 type References = Pick<Strategy, "endpoint" | "prompt" | "skills">;
+
+/** 悬停气泡里的出身三参数（§5.7 键值行：键用弱字、值用次字，键列全站统一 84px）。 */
+function StrategyRefs({ endpoint, prompt, skills }: References): ReactElement {
+  return (
+    <span className="grid grid-cols-[84px_minmax(0,1fr)] gap-x-2 gap-y-1 text-left">
+      <span className="text-text-4">端点</span>
+      <span className="min-w-0 wrap-anywhere text-text-2">{endpoint}</span>
+      <span className="text-text-4">提示词</span>
+      <span className="min-w-0 wrap-anywhere text-text-2">{prompt}</span>
+      <span className="text-text-4">Skill</span>
+      <span className="min-w-0 wrap-anywhere text-text-2">
+        {skills.length === 0 ? "无" : skills.join("、")}
+      </span>
+    </span>
+  );
+}
 
 export function StrategyToolbar({
   references,
@@ -83,7 +105,7 @@ export function StrategyToolbar({
       .catch((err: unknown) => {
         if (!cancelled) {
           setEntries([]);
-          setError(errorMessage(err));
+          setError(reportError(err) ?? "");
         }
       })
       .finally(() => {
@@ -109,7 +131,7 @@ export function StrategyToolbar({
     try {
       await operation();
     } catch (err) {
-      if (mounted.current) setError(errorMessage(err));
+      if (mounted.current) setError(reportError(err) ?? "");
     } finally {
       pending.current = false;
       if (mounted.current) setBusy(false);
@@ -228,22 +250,39 @@ export function StrategyToolbar({
                     key={entry.id}
                     className={`group flex items-center gap-1 rounded-md p-2 ${selected?.id === entry.id ? "bg-primary/10" : "hover:bg-accent"}`}
                   >
-                    <button
-                      type="button"
-                      disabled={busy || loading || locked}
-                      className={`min-w-0 flex-1 text-left ${entry.available ? "text-text-2" : "text-text-4"}`}
-                      onClick={() => void choose(entry)}
+                    <Tip
+                      label={
+                        <StrategyRefs
+                          endpoint={entry.endpoint}
+                          prompt={entry.prompt}
+                          skills={entry.skills}
+                        />
+                      }
                     >
-                      <span className="block truncate text-t-md font-medium">
-                        {entry.name}
+                      <span className="min-w-0 flex-1">
+                        <button
+                          type="button"
+                          disabled={busy || loading || locked}
+                          className={`w-full min-w-0 text-left ${entry.available ? "text-text-2" : "text-text-4"}`}
+                          onClick={() => void choose(entry)}
+                        >
+                          <span className="flex items-baseline gap-2">
+                            <span className="block min-w-0 truncate text-t-md font-medium">
+                              {entry.name}
+                            </span>
+                            <span className="shrink-0 text-t-xs text-n-500">
+                              {formatChars(entry.body_chars)}
+                            </span>
+                          </span>
+                          <span className="block truncate text-t-xs text-n-500">
+                            {entry.description}
+                          </span>
+                          {!entry.available && (
+                            <span className="text-t-xs text-bad-ink">引用缺失</span>
+                          )}
+                        </button>
                       </span>
-                      <span className="block truncate text-t-xs text-n-500">
-                        {entry.description}
-                      </span>
-                      {!entry.available && (
-                        <span className="text-t-xs text-bad-ink">引用缺失</span>
-                      )}
-                    </button>
+                    </Tip>
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button

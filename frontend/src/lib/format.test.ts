@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatBytes, formatBytesAuto } from "./format";
+import { formatBytes, formatBytesAuto, formatChars } from "./format";
 
 /** 收成助手之前各调用点写的原式（照搬过来作对照，不是再实现一遍给人读）。 */
 function legacyKiB(bytes: number): string {
@@ -52,5 +52,26 @@ describe("字节显示格式化", () => {
       formatBytes(1_048_576, "MiB", 1),
       formatBytes(1_048_576, "MiB", 2),
     ]).toEqual(["1024.0 KiB", "1.0 MiB", "1.00 MiB"]);
+  });
+});
+describe("注入字数格式化", () => {
+  it("万位与千位各折一档，百位以下给精确值", () => {
+    expect([
+      formatChars(0),
+      formatChars(820),
+      formatChars(1_000),
+      formatChars(3_600),
+      formatChars(9_999),
+      formatChars(10_000),
+      formatChars(12_400),
+    ]).toEqual([
+      "0 字",
+      "820 字",
+      "1.0k 字",
+      "3.6k 字",
+      "10.0k 字",
+      "1.0 万字",
+      "1.2 万字",
+    ]);
   });
 });

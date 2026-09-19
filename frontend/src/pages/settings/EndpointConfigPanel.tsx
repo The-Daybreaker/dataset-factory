@@ -25,7 +25,7 @@ import {
   SelectValue,
 } from "../../components/ui/select";
 import { Textarea } from "../../components/ui/textarea";
-import type { Feedback } from "../../lib/feedback";
+import { type Feedback, reportError } from "../../lib/feedback";
 import { cn } from "../../lib/utils";
 import {
   type AdvJsonState,
@@ -78,16 +78,22 @@ export function EndpointConfigPanel(): ReactElement {
     text: "已同步",
   });
 
+  /** 失败分流：连接类失败改弹浮层（不占界面位置），后端返回的业务错误仍就地展示。 */
+  const failFeedback = useCallback((err: unknown): void => {
+    const text = reportError(err);
+    if (text !== null) setFeedback({ kind: "error", text });
+  }, []);
+
   const reload = useCallback(async (): Promise<EndpointConfigSummary[]> => {
     try {
       const list = await api.listEndpoints();
       setEndpoints(list);
       return list;
     } catch (err) {
-      setFeedback({ kind: "error", text: errorMessage(err) });
+      failFeedback(err);
       return [];
     }
-  }, []);
+  }, [failFeedback]);
 
   useEffect(() => {
     void reload().then((list) => {
@@ -242,7 +248,7 @@ export function EndpointConfigPanel(): ReactElement {
       setDraftKey("");
       await reload();
     } catch (err) {
-      setFeedback({ kind: "error", text: errorMessage(err) });
+      failFeedback(err);
     }
   };
 
@@ -255,7 +261,7 @@ export function EndpointConfigPanel(): ReactElement {
         text: `已切换当前使用的配置为「${selected}」，对新请求立即生效`,
       });
     } catch (err) {
-      setFeedback({ kind: "error", text: errorMessage(err) });
+      failFeedback(err);
     }
   };
 
@@ -268,7 +274,7 @@ export function EndpointConfigPanel(): ReactElement {
       await reload();
     } catch (err) {
       setDeleteDialogOpen(false);
-      setFeedback({ kind: "error", text: errorMessage(err) });
+      failFeedback(err);
     }
   };
 

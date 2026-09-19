@@ -10,7 +10,7 @@ import {
   useState,
 } from "react";
 import type { EndpointConfigSummary, PromptInfo, SkillInfo } from "../../api";
-import { ApiError, api, errorMessage } from "../../api";
+import { ApiError, api } from "../../api";
 import { Alert, AlertDescription } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import {
@@ -37,6 +37,7 @@ import {
   TooltipTrigger,
 } from "../../components/ui/tooltip";
 import type { Feedback } from "../../lib/feedback";
+import { reportError } from "../../lib/feedback";
 import { formatBytes } from "../../lib/format";
 import { BodyEditor } from "./BodyEditor";
 import { EndpointSwitcher } from "./EndpointSwitcher";
@@ -100,32 +101,41 @@ export function PromptWorkbench({
   const sendingRef = useRef(false);
   const mediaRequestRef = useRef(0);
 
-  const selectPrompt = useCallback(async (name: string): Promise<void> => {
-    const request = ++promptRequestRef.current;
-    const interaction = interactionRef.current;
-    try {
-      const full = await api.getPrompt(name);
-      if (
-        request !== promptRequestRef.current ||
-        interaction !== interactionRef.current
-      )
-        return;
-      setSelectedName(full.name);
-      setDraftName(full.name);
-      setDraftDescription(full.description);
-      setDraftBody(full.body);
-      setSavedPrompt(full);
-      setIsNewDraft(false);
-      setEditorFeedback(null);
-    } catch (err) {
-      if (
-        request !== promptRequestRef.current ||
-        interaction !== interactionRef.current
-      )
-        return;
-      setEditorFeedback({ kind: "error", text: errorMessage(err) });
-    }
+  /** 失败分流：连接类失败改弹浮层（不占界面位置），后端返回的业务错误仍就地展示。 */
+  const failEditor = useCallback((err: unknown): void => {
+    const text = reportError(err);
+    if (text !== null) setEditorFeedback({ kind: "error", text });
   }, []);
+
+  const selectPrompt = useCallback(
+    async (name: string): Promise<void> => {
+      const request = ++promptRequestRef.current;
+      const interaction = interactionRef.current;
+      try {
+        const full = await api.getPrompt(name);
+        if (
+          request !== promptRequestRef.current ||
+          interaction !== interactionRef.current
+        )
+          return;
+        setSelectedName(full.name);
+        setDraftName(full.name);
+        setDraftDescription(full.description);
+        setDraftBody(full.body);
+        setSavedPrompt(full);
+        setIsNewDraft(false);
+        setEditorFeedback(null);
+      } catch (err) {
+        if (
+          request !== promptRequestRef.current ||
+          interaction !== interactionRef.current
+        )
+          return;
+        failEditor(err);
+      }
+    },
+    [failEditor],
+  );
 
   useEffect(
     () => () => {
@@ -163,14 +173,14 @@ export function PromptWorkbench({
         }
       } catch (err) {
         if (!cancelled) {
-          setEditorFeedback({ kind: "error", text: errorMessage(err) });
+          failEditor(err);
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [selectPrompt]);
+  }, [selectPrompt, failEditor]);
 
   // 恢复最近一次会话（「还没有会话」404 是首次使用的正常情况，不当错误展示）。
   useEffect(() => {
@@ -192,7 +202,7 @@ export function PromptWorkbench({
       } catch (err) {
         const noSessionYet = err instanceof ApiError && err.status === 404;
         if (!cancelled && interaction === interactionRef.current && !noSessionYet) {
-          setChatError(errorMessage(err));
+          setChatError(reportError(err) ?? "");
         }
       }
     })();
@@ -219,9 +229,9 @@ export function PromptWorkbench({
     try {
       setPrompts(await api.listPrompts());
     } catch (err) {
-      setEditorFeedback({ kind: "error", text: errorMessage(err) });
+      failEditor(err);
     }
-  }, []);
+  }, [failEditor]);
 
   const startNewDraft = (): void => {
     interactionRef.current += 1;
@@ -263,7 +273,7 @@ export function PromptWorkbench({
       setEditorFeedback({ kind: "success", text: `已保存提示词「${name}」` });
       await reloadPrompts();
     } catch (err) {
-      setEditorFeedback({ kind: "error", text: errorMessage(err) });
+      failEditor(err);
     } finally {
       savingPromptRef.current = false;
       setPromptBusy(false);
@@ -283,7 +293,7 @@ export function PromptWorkbench({
       setDeleteDialogOpen(false);
       await reloadPrompts();
     } catch (err) {
-      setEditorFeedback({ kind: "error", text: errorMessage(err) });
+      failEditor(err);
     } finally {
       savingPromptRef.current = false;
       setPromptBusy(false);
@@ -303,7 +313,7 @@ export function PromptWorkbench({
       );
       setActiveModel(endpoints.find((item) => item.name === name)?.model ?? "");
     } catch (err) {
-      setChatError(errorMessage(err));
+      setChatError(reportError(err) ?? "");
     } finally {
       activatingEndpointRef.current = false;
       setEndpointBusy(false);
@@ -433,7 +443,7 @@ export function PromptWorkbench({
         },
       );
     } catch (err) {
-      setChatError(errorMessage(err));
+      setChatError(reportError(err) ?? "");
     } finally {
       sendingRef.current = false;
       setSending(false);
