@@ -54,7 +54,7 @@ jobs:
 
       - name: Export stats
         if: always()
-        run: uv run --with mutmut mutmut export_cicd_stats
+        run: uv run --with mutmut mutmut export-cicd-stats
 
       - name: Write summary to step output
         if: always()
