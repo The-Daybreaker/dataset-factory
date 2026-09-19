@@ -1,0 +1,57 @@
+# 变异度量（非门禁，手工触发）——goal L5「测试到底有没有用」的量化件。
+#
+# 为什么单开一个 workflow、且不挂进 CI：
+#   - mutmut 官方要求 Windows 走 WSL（本机没有发行版，实测见 process/review-refactor.md 第三节），
+#     只能在 Linux runner 上跑；
+#   - 变异测试是**度量**不是**门禁**：它慢（按 mutants 数逐个重跑测试），且存活变异体需要人
+#     逐条判读，把它挂成红/绿闸门只会逼人删断言或加豁免——正是要避免的那种「变绿的省事手段」。
+# 跑法：Actions → 变异度量 → Run workflow，或 `gh workflow run mutation-metrics.yml`。
+# 结果不进徽章，只写进步骤摘要（process/review-refactor.md 的 B6 行抄这个数）。
+
+name: 变异度量（非门禁）
+
+on:
+  workflow_dispatch:        # 只手工触发：这是度量件，不参与 push / PR 的红绿判定
+
+permissions:
+  contents: read            # 只读代码与测试，不写回仓库
+
+env:
+  PYTHONUTF8: 1
+
+jobs:
+  backend-mutation:
+    name: "backend mutation (mutmut)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45         # 成本控制：超时就停下，已有结果仍会写进摘要
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install uv (+ Python 3.12)
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      # mutmut 只在度量时用，不进项目依赖（本轮「依赖只减不增」）：--with 装进临时环境。
+      - name: Run mutation (targeted modules only)
+        run: uv run --with mutmut mutmut run
+
+      - name: Write summary to step output
+        if: always()
+        run: |
+          {
+            echo "## 变异击杀率（改动模块）"
+            echo
+            echo '```'
+            uv run --with mutmut mutmut results 2>&1 | head -200
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
