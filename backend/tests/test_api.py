@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import json
 import shutil
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,7 @@ from dataset_factory.llm import (
     EndpointConfig,
     ImagePart,
     LLMError,
+    Message,
     ProbeResult,
     StreamDelta,
     TextPart,
@@ -1103,6 +1105,36 @@ def test_label_stream_sse(client: TestClient, fake_engine: FakeCompleter) -> Non
     done_data = json.loads(frames[-1].splitlines()[1].removeprefix("data: "))
     assert done_data["caption"] == "打标结果"
     assert "session_id" in done_data
+
+
+def test_session_snapshot_exposes_persisted_reasoning(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """思考过程随会话快照透出：界面回看历史消息的「思考过程」折叠区只有这一个数据来源。"""
+    from dataset_factory.labeling import LabelingEngine
+
+    class ThinkingCompleter(FakeCompleter):
+        """流式路线上多一段思考增量，其余沿用父类的逐轮正文脚本。"""
+
+        def stream(self, messages: Sequence[Message]) -> Iterator[StreamDelta]:
+            yield StreamDelta(kind="reasoning", text="先确认主体。")
+            yield from super().stream(messages)
+
+    monkeypatch.setattr(
+        routes_labeling,
+        "build_engine",
+        lambda: LabelingEngine(ThinkingCompleter(), "test-model"),
+    )
+    _save_prompt("p1", "你是打标助手。")
+    client.post(
+        "/api/label/stream", json={"prompt_name": "p1", "instruction": "描述它"}
+    )
+
+    messages = client.get("/api/sessions/latest").json()["messages"]
+
+    assert [item["text"] for item in messages] == ["描述它", "打标结果"]
+    assert messages[1]["reasoning"] == "先确认主体。"
+    assert messages[0]["reasoning"] is None
 
 
 def test_label_stream_mid_stream_error_emits_error_frame(

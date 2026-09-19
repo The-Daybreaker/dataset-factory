@@ -1,4 +1,4 @@
-共 62 条命令
+共 63 条命令
 batch add
 batch edit
 batch exclude
@@ -41,6 +41,7 @@ skill files
 skill import
 skill list
 skill read
+skill rename
 skill rm
 strategy add
 strategy copy

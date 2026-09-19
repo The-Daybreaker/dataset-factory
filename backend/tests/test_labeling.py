@@ -226,11 +226,12 @@ def test_label_stream_persists_reasoning_with_caption(
 ) -> None:
     """流式打标：思考增量随终稿一起落盘、恢复会话可回看；下一轮装配不含思考文本。"""
 
-    class _ThinkingCompleter:
-        """按脚本产出思考与正文增量的假 Completer（记录收到的消息供装配断言）。"""
+    class _ThinkingCompleter(FakeCompleter):
+        """按脚本产出思考与正文增量的假 Completer（记录收到的消息供装配断言）。
 
-        def __init__(self) -> None:
-            self.calls: list[list[Message]] = []
+        继承 conftest 的假 Completer 而不另写一个：`Completer` 协议要求 `complete`
+        也在（非流式路径本测试不走，但类型面要成立）。
+        """
 
         def stream(self, messages: Sequence[Message]) -> Iterator[StreamDelta]:
             self.calls.append(list(messages))

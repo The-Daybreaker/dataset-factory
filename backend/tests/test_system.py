@@ -237,6 +237,8 @@ def test_session_recovery_over_real_http(
         "role": "assistant",
         "text": "第二轮回复",
         "attachment": None,
+        # 非流式路径不产思考；快照一律带这个键，无思考时为 null（界面据此判「有没有」）。
+        "reasoning": None,
     }
 
 

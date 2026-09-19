@@ -1243,6 +1243,18 @@
             ],
             "title": "Attachment"
           },
+          "reasoning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "助手消息的思考过程全文（流式打标落盘；无思考为 null）",
+            "title": "Reasoning"
+          },
           "role": {
             "title": "Role",
             "type": "string"
@@ -2575,6 +2587,21 @@
         "title": "SkillInfo",
         "type": "object"
       },
+      "SkillRenameRequest": {
+        "description": "POST /api/skills/{name}/rename 的请求体。",
+        "properties": {
+          "new_name": {
+            "description": "目标名称（目录名即名称，校验规则与导入相同）",
+            "title": "New Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "new_name"
+        ],
+        "title": "SkillRenameRequest",
+        "type": "object"
+      },
       "SnapshotEndpointView": {
         "description": "快照端点的公开配置白名单，不返回凭据字段。",
         "properties": {
@@ -2767,6 +2794,11 @@
             "title": "Available",
             "type": "boolean"
           },
+          "body_chars": {
+            "description": "注入正文字符数（基础提示词正文 + 引用的启用 Skill 注入全文；引用缺失或停用按 0 计），供列表展示字数",
+            "title": "Body Chars",
+            "type": "integer"
+          },
           "created_at": {
             "description": "创建时刻（UTC ISO 8601）",
             "title": "Created At",
@@ -2828,6 +2860,7 @@
           "skills",
           "available",
           "missing_refs",
+          "body_chars",
           "created_at",
           "updated_at"
         ],
@@ -4895,6 +4928,72 @@
           }
         },
         "summary": "Save Package File",
+        "tags": [
+          "Skill 库"
+        ]
+      }
+    },
+    "/api/skills/{name}/rename": {
+      "post": {
+        "description": "重命名 skill：目录改名，SKILL.md frontmatter 的 name 同步改写。",
+        "operationId": "rename_api_skills__name__rename_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillRenameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "skill 不存在"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "新名称已被占用"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rename",
         "tags": [
           "Skill 库"
         ]

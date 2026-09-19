@@ -596,6 +596,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/skills/{name}/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rename
+         * @description 重命名 skill：目录改名，SKILL.md frontmatter 的 name 同步改写。
+         */
+        post: operations["rename_api_skills__name__rename_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/strategies": {
         parameters: {
             query?: never;
@@ -2206,6 +2226,11 @@ export interface components {
         HistoryMessageView: {
             /** Attachment */
             attachment: string | null;
+            /**
+             * Reasoning
+             * @description 助手消息的思考过程全文（流式打标落盘；无思考为 null）
+             */
+            reasoning?: string | null;
             /** Role */
             role: string;
             /** Text */
@@ -2943,6 +2968,17 @@ export interface components {
             name: string;
         };
         /**
+         * SkillRenameRequest
+         * @description POST /api/skills/{name}/rename 的请求体。
+         */
+        SkillRenameRequest: {
+            /**
+             * New Name
+             * @description 目标名称（目录名即名称，校验规则与导入相同）
+             */
+            new_name: string;
+        };
+        /**
          * SnapshotEndpointView
          * @description 快照端点的公开配置白名单，不返回凭据字段。
          */
@@ -3072,6 +3108,11 @@ export interface components {
              * @description 引用健康度：全部引用现存在才可用
              */
             available: boolean;
+            /**
+             * Body Chars
+             * @description 注入正文字符数（基础提示词正文 + 引用的启用 Skill 注入全文；引用缺失或停用按 0 计），供列表展示字数
+             */
+            body_chars: number;
             /**
              * Created At
              * @description 创建时刻（UTC ISO 8601）
@@ -4697,6 +4738,57 @@ export interface operations {
                 };
             };
             /** @description 文件已被其他写者修改 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_api_skills__name__rename_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillRenameRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description skill 不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description 新名称已被占用 */
             409: {
                 headers: {
                     [name: string]: unknown;
