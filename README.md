@@ -155,3 +155,19 @@ cd backend && uv run python scripts/export_openapi.py
 ```
 
 并把新快照一并提交；CI 的漂移检查（生成的 spec ≠ 快照即红）和 oasdiff 破坏性变更检查（ERR 级变更即红）都在守这条线。
+
+## 开发：一条命令跑全部门禁
+
+改完代码在仓库根执行 `bash workspace/scripts/verify.sh`（Windows PowerShell 用
+`.\workspace\scripts\verify.ps1`）。它按 `workspace/scripts/verify-steps.txt` 逐步跑 CI 的全套闸门
+（ruff / pyright strict / import-linter / pytest + 覆盖率三道闸门 / OpenAPI 漂移 / mkdocs --strict /
+pre-commit / Biome / tsc / Vitest / Vite build / 度量脚本 / 14 屏视觉与请求基线），任一步非 0 即停，
+最后给每步耗时。加 `--all` 再带上全量功能 E2E 与只报不卡的死代码工具。
+
+同一条清单被 `verify.sh` 与 `verify.ps1` 共用，两个平台不会跑出口径不同的「本地绿」。视觉基线依赖
+本机字体度量，只在本地守（CI 上没有对应字体会必然报差），CI 侧的界面断言由功能 E2E 承担。
+
+另有两件按需使用的度量件：`python workspace/scripts/measure_metrics.py`（重复实现与豁免的逐条计数，
+改前 / 改后都跑它，别手抄数字）、`python workspace/scripts/assertion_audit.py`（断言有效性四类口径，
+可加 `--detail`）；变异测试是 GitHub Actions 的手工工作流（`.github/workflows/mutation-metrics.yml`，
+mutmut 只支持 Linux/WSL），只出数字不做门禁。
