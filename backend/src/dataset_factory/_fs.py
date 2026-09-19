@@ -7,6 +7,7 @@ llm（配置与密钥）、prompts、skills、sessions 都要「按数据根存�
 
 - 内容指纹：`hash_file`（整文件 SHA-256）与 `canonical_sha256`（键排序 JSON 的 SHA-256）
   全项目只此一份口径——快照哈希、策略内容哈希、导入记录哈希必须能互相对得上；
+  边搬边哈希走 `hash_stream`（同一批字节既落盘又进摘要，锚点不会指向「复制前的源」）；
 - 名字能不能当目录里的一个文件名，统一由 `is_single_path_segment` 判（各域再按自己的
   严格程度追加禁字符，见调用点）；
 - 数据根：环境变量 DATASET_FACTORY_HOME 覆盖，否则 ~/.dataset_factory；
@@ -21,11 +22,15 @@ import json
 import os
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import IO
 
 ENV_HOME = "DATASET_FACTORY_HOME"  # 数据根覆盖（默认 ~/.dataset_factory）
 
 _HOME_DIRNAME = ".dataset_factory"
+
+_CHUNK_BYTES = 1024 * 1024  # 流式搬运块大小：够大压满磁盘带宽，又不把整文件拉进内存
 
 
 def data_root() -> Path:
@@ -131,6 +136,43 @@ def hash_file(path: Path) -> str:
     """
     with path.open("rb") as handle:
         return hashlib.file_digest(handle, "sha256").hexdigest()
+
+
+def hash_stream(
+    reader: IO[bytes],
+    writer: IO[bytes] | None = None,
+    *,
+    on_chunk: Callable[[bytes], None] | None = None,
+) -> tuple[str, int]:
+    """分块搬完一个流，返回 ``(这批字节的 SHA-256, 字节数)``；给了 ``writer`` 就顺手写出。
+
+    为什么必须同一次读：记录与校验的锚点要指向**实际落盘 / 实际交付**的那批字节。先读一遍算
+    哈希、再读一遍写出去，两读之间文件被改过，锚点就撒谎（导入记录、搬迁副本校验、导出交付
+    三处都靠这条）。
+
+    Args:
+        reader: 已打开的源（调用方负责打开与关闭）。
+        writer: 可选目标；给了就按块写入，不做 flush / fsync（刷新时机由调用方按目标性质定：
+            普通文件要 fsync，zip 成员写入器不能 fsync）。
+        on_chunk: 每搬一块调一次；调用方用它响应协作取消（大文件不能等到读完才停）。
+
+    Returns:
+        小写十六进制摘要与实际搬过的字节数。
+
+    Raises:
+        OSError: 读或写失败。
+        TaskCancelledError: 由 ``on_chunk`` 自己抛出（本函数不吞异常）。
+    """
+    digest = hashlib.sha256()
+    moved = 0
+    while chunk := reader.read(_CHUNK_BYTES):
+        if on_chunk is not None:
+            on_chunk(chunk)
+        digest.update(chunk)
+        if writer is not None:
+            writer.write(chunk)
+        moved += len(chunk)
+    return digest.hexdigest(), moved
 
 
 def canonical_sha256(data: object) -> str:

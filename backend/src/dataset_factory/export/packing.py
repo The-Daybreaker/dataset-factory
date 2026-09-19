@@ -11,7 +11,7 @@ from pathlib import Path
 from threading import Event
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from .._fs import is_single_path_segment
+from .._fs import hash_stream, is_single_path_segment
 from ..tasks import TaskCancelledError
 from ..workdir.assets import (
     ASSET_EXTENSIONS,
@@ -176,16 +176,14 @@ def _write_member(
     should_stop: Event | None,
 ) -> None:
     """分块写入并校验实际写入字节，避免计划与交付内容之间的变更被遗漏。"""
-    digest = hashlib.sha256()
     with (
         source.open("rb") as reader,
         archive.open(name, "w", force_zip64=True) as writer,
     ):
-        while chunk := reader.read(1024 * 1024):
-            _check_cancel(should_stop)
-            digest.update(chunk)
-            writer.write(chunk)
-    if digest.hexdigest() != expected_hash:
+        digest, _ = hash_stream(
+            reader, writer, on_chunk=lambda _chunk: _check_cancel(should_stop)
+        )
+    if digest != expected_hash:
         raise ExportError(
             f"文件「{source.name}」在打包期间发生变化，请重新生成导出计划。"
         )

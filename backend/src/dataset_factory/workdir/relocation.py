@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import shutil
@@ -12,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from .._fs import atomic_write_text, data_root
+from .._fs import atomic_write_text, data_root, hash_stream
 from ..tasks import TaskCancelledError
 from .errors import WorkdirPathError
 from .locks import (
@@ -78,14 +77,11 @@ def _inventory(root: Path) -> tuple[list[Path], list[Path]]:
 
 
 def _digest(path: Path, should_stop: threading.Event | None) -> tuple[int, str]:
-    digest = hashlib.sha256()
-    size = 0
     with path.open("rb") as handle:
-        while chunk := handle.read(1024 * 1024):
-            _check_stop(should_stop)
-            digest.update(chunk)
-            size += len(chunk)
-    return size, digest.hexdigest()
+        digest, size = hash_stream(
+            handle, on_chunk=lambda _chunk: _check_stop(should_stop)
+        )
+    return size, digest
 
 
 def _verify_copy(

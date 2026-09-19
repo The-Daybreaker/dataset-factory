@@ -19,7 +19,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import threading
 from collections.abc import Callable
@@ -28,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from .._clock import now_iso
-from .._fs import hash_file
+from .._fs import hash_file, hash_stream
 from ..llm import (
     IMAGE_EXTENSIONS,
     MAX_IMAGE_BYTES,
@@ -63,9 +62,6 @@ ASSET_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
 #: 「未导入」原因的标准措辞（界面按原因呈现，字符串即契约）。
 REASON_UNSUPPORTED_EXTENSION = "扩展名不支持"
 REASON_OVERSIZE = "超出大小上限"
-
-#: 扫描与哈希共用读取块大小（1 MiB：分块读，100 MiB 视频内存峰值恒定）。
-_CHUNK_BYTES = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -142,15 +138,12 @@ def _copy_into_workdir(store: WorkdirStore, source_file: Path, dest_name: str) -
     """
     store.tmp_dir.mkdir(parents=True, exist_ok=True)
     tmp_target = store.tmp_dir / dest_name
-    digest = hashlib.sha256()
     with source_file.open("rb") as src, tmp_target.open("wb") as dst:
-        while chunk := src.read(_CHUNK_BYTES):
-            dst.write(chunk)
-            digest.update(chunk)
+        digest, _ = hash_stream(src, dst)
         dst.flush()
         os.fsync(dst.fileno())
     os.replace(tmp_target, store.dsf_path.parent / dest_name)
-    return digest.hexdigest()
+    return digest
 
 
 def _whitelisted_files(directory: Path) -> dict[str, Path]:
