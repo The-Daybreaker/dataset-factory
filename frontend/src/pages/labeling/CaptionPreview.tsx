@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api, errorMessage } from "../../api";
 import type { components } from "../../api-types.gen";
+import { FormError } from "../../components/form-error";
 import { Button } from "../../components/ui/button";
 import { Tip } from "../../components/ui/tooltip";
 
@@ -44,13 +45,7 @@ function ComparisonCaption({
   }, [wid, batch, item]);
   return (
     <div className="p-3 whitespace-pre-wrap break-words text-t-md leading-loose">
-      {error ? (
-        <p role="alert" className="text-bad-ink">
-          {error}
-        </p>
-      ) : (
-        text
-      )}
+      {error ? <FormError className="text-bad-ink">{error}</FormError> : text}
     </div>
   );
 }
@@ -182,11 +177,7 @@ export function CaptionPreview({
           })}
         </section>
       )}
-      {error && (
-        <p role="alert" className="mb-3 text-t-sm text-bad-ink">
-          {error}
-        </p>
-      )}
+      {error && <FormError className="mb-3 text-t-sm text-bad-ink">{error}</FormError>}
       <div
         className="grid gap-3"
         style={{

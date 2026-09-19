@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError, api, errorMessage } from "../../api";
 import type { components } from "../../api-types.gen";
 import { DirectoryPicker } from "../../components/DirectoryPicker";
+import { FormError } from "../../components/form-error";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -310,11 +311,7 @@ export function WorkdirSettings({
           <RefreshCwIcon />
         </Button>
       </header>
-      {error && (
-        <p role="alert" className="py-3 text-bad-ink">
-          {error}
-        </p>
-      )}
+      {error && <FormError className="py-3 text-bad-ink">{error}</FormError>}
       {loading && (
         <p role="status" className="py-3 text-text-3">
           正在读取工作目录
@@ -350,9 +347,7 @@ export function WorkdirSettings({
               </Button>
             </div>
             {copyError && (
-              <p role="alert" className="text-t-sm text-bad-ink">
-                {copyError}
-              </p>
+              <FormError className="text-t-sm text-bad-ink">{copyError}</FormError>
             )}
             <div className="flex items-center gap-3 py-2 text-t-sm text-text-3">
               <span className="w-[76px] shrink-0 text-text-4">统计</span>
@@ -366,9 +361,7 @@ export function WorkdirSettings({
               </span>
             </div>
             {statsError && (
-              <p role="alert" className="text-t-sm text-bad-ink">
-                {statsError}
-              </p>
+              <FormError className="text-t-sm text-bad-ink">{statsError}</FormError>
             )}
             <div className="flex items-center gap-3 py-2 text-t-sm">
               <span className="w-[76px] shrink-0 text-text-4">导入</span>
@@ -383,14 +376,12 @@ export function WorkdirSettings({
           >
             <h2 className="mb-2 text-t-md font-medium">清理</h2>
             {summaryError && (
-              <p role="alert" className="text-t-sm text-bad-ink">
-                {summaryError}
-              </p>
+              <FormError className="text-t-sm text-bad-ink">{summaryError}</FormError>
             )}
             {maintenanceError && (
-              <p role="alert" className="break-all text-t-sm text-bad-ink">
+              <FormError className="break-all text-t-sm text-bad-ink">
                 {maintenanceError}
-              </p>
+              </FormError>
             )}
             <div className="flex items-center gap-3 py-2 text-t-sm">
               <span className="flex-1">清理无素材产物</span>
@@ -478,9 +469,7 @@ export function WorkdirSettings({
               </Button>
             </div>
             {runError && (
-              <p role="alert" className="pb-2 text-t-sm text-bad-ink">
-                {runError}
-              </p>
+              <FormError className="pb-2 text-t-sm text-bad-ink">{runError}</FormError>
             )}
             {batches.length === 0 && (
               <p className="py-2 text-t-sm text-text-3">还没有策略</p>
@@ -592,9 +581,9 @@ export function WorkdirSettings({
                 {action?.kind === "rename" &&
                   action.batch.id === batch.id &&
                   actionError && (
-                    <p role="alert" className="pb-2 text-t-sm text-bad-ink">
+                    <FormError className="pb-2 text-t-sm text-bad-ink">
                       {actionError}
-                    </p>
+                    </FormError>
                   )}
                 {expanded.has(batch.id) && (
                   <BatchConfiguration wid={wid} batch={batch.id} />
@@ -712,9 +701,7 @@ export function WorkdirSettings({
                   : "重新显示后可在打标页选择此策略。"}
             </p>
             {actionError && (
-              <p role="alert" className="text-bad-ink">
-                {actionError}
-              </p>
+              <FormError className="text-bad-ink">{actionError}</FormError>
             )}
             <DialogFooter>
               <Button variant="outline" disabled={busy} onClick={() => setAction(null)}>

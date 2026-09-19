@@ -2,6 +2,7 @@ import { ChevronDownIcon, RefreshCwIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { api, errorMessage } from "../../api";
 import type { components } from "../../api-types.gen";
+import { FormError } from "../../components/form-error";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -275,11 +276,7 @@ export function NewStrategyDialog({
             </DropdownMenu>
           </div>
         </fieldset>
-        {error && (
-          <p role="alert" className="text-t-sm text-bad-ink">
-            {error}
-          </p>
-        )}
+        {error && <FormError className="text-t-sm text-bad-ink">{error}</FormError>}
         {!catalog && !error && (
           <p role="status" className="text-t-sm text-text-3">
             正在读取策略配置

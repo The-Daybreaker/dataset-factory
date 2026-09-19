@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ApiError, api, errorMessage } from "../../api";
 import type { components } from "../../api-types.gen";
+import { FormError } from "../../components/form-error";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -183,11 +184,7 @@ function RunLogDialog({
             {result?.path ?? runId}
           </DialogDescription>
         </DialogHeader>
-        {error && (
-          <p role="alert" className="text-bad-ink">
-            {error}
-          </p>
-        )}
+        {error && <FormError className="text-bad-ink">{error}</FormError>}
         {tab === "run.log" ? (
           <pre
             data-testid="run-log-body"
@@ -365,9 +362,7 @@ export function RunOverview({ wid, batch, refreshKey, fallback }: Props) {
       </div>
       {error && (
         <div className="mb-3 flex items-center gap-2">
-          <p role="alert" className="text-bad-ink">
-            {error}
-          </p>
+          <FormError className="text-bad-ink">{error}</FormError>
           <Button
             variant="ghost"
             size="mini"

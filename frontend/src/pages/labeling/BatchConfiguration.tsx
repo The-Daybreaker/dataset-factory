@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../../api";
 import type { components } from "../../api-types.gen";
+import { FormError } from "../../components/form-error";
 import { Button } from "../../components/ui/button";
 
 export function BatchConfiguration({
@@ -39,9 +40,7 @@ export function BatchConfiguration({
   if (error)
     return (
       <div className="flex items-center gap-2 py-2">
-        <p role="alert" className="text-t-sm text-bad-ink">
-          {error}
-        </p>
+        <FormError className="text-t-sm text-bad-ink">{error}</FormError>
         <Button
           variant="ghost"
           size="sm"

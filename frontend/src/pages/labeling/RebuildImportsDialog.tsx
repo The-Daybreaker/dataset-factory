@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api, errorMessage, type TaskView } from "../../api";
+import { FormError } from "../../components/form-error";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -129,11 +130,7 @@ export function RebuildImportsDialog({ wid, onClose, onRebuilt }: Props) {
         <p className="rounded-md border border-warn-bd bg-warn-bg p-3 text-t-sm text-warn-ink">
           重建会按工作目录现状补一条导入记录，缺失对账以当前素材为准。来源记为空，无法再按原来源找回素材。现有产物不变；缺少打标时的素材哈希时，产物时效仍无法校验。
         </p>
-        {error && (
-          <p role="alert" className="text-t-sm text-bad-ink">
-            {error}
-          </p>
-        )}
+        {error && <FormError className="text-t-sm text-bad-ink">{error}</FormError>}
         {busy && <p role="status">正在重建导入记录</p>}
         {count !== null && (
           <p role="status" className="text-ok-ink">

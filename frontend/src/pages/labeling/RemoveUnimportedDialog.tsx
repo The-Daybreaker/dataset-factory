@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, errorMessage } from "../../api";
+import { FormError } from "../../components/form-error";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -74,11 +75,7 @@ export function RemoveUnimportedDialog({
             此文件将从工作目录移出，不再出现在未导入清单中。原文件会保留在恢复目录；就地采用的文件也会从原位置移出。
           </p>
         )}
-        {error && (
-          <p role="alert" className="text-t-sm text-bad-ink">
-            {error}
-          </p>
-        )}
+        {error && <FormError className="text-t-sm text-bad-ink">{error}</FormError>}
         <DialogFooter>
           <Button variant="outline" disabled={pending} onClick={onClose}>
             {recoveryPath ? "关闭" : "取消"}

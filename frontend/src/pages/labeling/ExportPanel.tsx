@@ -8,6 +8,7 @@ import {
 import { useEffect, useId, useRef, useState } from "react";
 import { ApiError, api, errorMessage, type TaskView } from "../../api";
 import type { components } from "../../api-types.gen";
+import { FormError } from "../../components/form-error";
 import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
 import { formatBytes } from "../../lib/format";
@@ -421,9 +422,7 @@ export function ExportPanel({ wid, batch, refreshKey, onImport }: Props) {
       </div>
       {planError && (
         <div className="mb-2 flex flex-wrap items-center gap-2">
-          <p role="alert" className="text-t-sm text-bad-ink">
-            {planError}
-          </p>
+          <FormError className="text-t-sm text-bad-ink">{planError}</FormError>
           <Button
             variant="ghost"
             size="xs"
@@ -435,9 +434,7 @@ export function ExportPanel({ wid, batch, refreshKey, onImport }: Props) {
       )}
       {error && (
         <div className="mb-2 flex flex-wrap items-center gap-2">
-          <p role="alert" className="text-t-sm text-bad-ink">
-            {error}
-          </p>
+          <FormError className="text-t-sm text-bad-ink">{error}</FormError>
           <Button
             variant="ghost"
             size="xs"
@@ -523,9 +520,7 @@ export function ExportPanel({ wid, batch, refreshKey, onImport }: Props) {
               取消导出
             </Button>
             {cancelError && (
-              <p role="alert" className="text-t-sm text-bad-ink">
-                {cancelError}
-              </p>
+              <FormError className="text-t-sm text-bad-ink">{cancelError}</FormError>
             )}
           </>
         )}

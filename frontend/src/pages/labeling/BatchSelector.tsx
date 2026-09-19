@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import type { components } from "../../api-types.gen";
+import { FormError } from "../../components/form-error";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -145,9 +146,9 @@ export function BatchSelector({
                 )}
               </div>
               {entry.error && (
-                <p role="alert" className="px-6 py-2 text-t-sm text-bad-ink">
+                <FormError className="px-6 py-2 text-t-sm text-bad-ink">
                   {entry.error}
-                </p>
+                </FormError>
               )}
               {!entry.error && active.length === 0 && (
                 <p className="px-6 py-2 text-t-sm text-muted-foreground">

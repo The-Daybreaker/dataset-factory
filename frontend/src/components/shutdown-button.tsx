@@ -9,6 +9,7 @@ import type { ReactElement } from "react";
 import { useState } from "react";
 
 import { api, errorMessage } from "../api";
+import { FormError } from "./form-error";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -89,9 +90,7 @@ export function ShutdownButton({
             </DialogDescription>
           </DialogHeader>
           {error !== null && (
-            <p className="text-[12.5px] text-destructive" role="alert">
-              {error}
-            </p>
+            <FormError className="text-[12.5px] text-destructive">{error}</FormError>
           )}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>

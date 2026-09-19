@@ -2,6 +2,7 @@ import { FolderIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { ApiError, api, errorMessage, type TaskView } from "../../api";
 import { DirectoryPicker } from "../../components/DirectoryPicker";
+import { FormError } from "../../components/form-error";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -307,11 +308,7 @@ export function ImportMaterialsDialog({
             </div>
           </div>
         )}
-        {error && (
-          <p role="alert" className="text-t-sm text-bad-ink">
-            {error}
-          </p>
-        )}
+        {error && <FormError className="text-t-sm text-bad-ink">{error}</FormError>}
         {task?.status === "running" && (
           <div role="status" className="space-y-2">
             <span>

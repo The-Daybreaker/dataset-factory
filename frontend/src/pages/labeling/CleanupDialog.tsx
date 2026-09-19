@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, errorMessage } from "../../api";
 import type { components } from "../../api-types.gen";
+import { FormError } from "../../components/form-error";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -121,11 +122,7 @@ export function CleanupDialog({
           </DialogDescription>
         </DialogHeader>
         {loading && <p role="status">正在读取清单</p>}
-        {error && (
-          <p role="alert" className="text-t-sm text-bad-ink">
-            {error}
-          </p>
-        )}
+        {error && <FormError className="text-t-sm text-bad-ink">{error}</FormError>}
         {result ? (
           <div role="status" className="space-y-2 text-t-sm">
             <p>已移出 {result.count} 项</p>

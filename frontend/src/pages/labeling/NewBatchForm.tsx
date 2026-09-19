@@ -11,6 +11,7 @@ import {
 } from "../../api";
 import type { components } from "../../api-types.gen";
 import { DirectoryPicker } from "../../components/DirectoryPicker";
+import { FormError } from "../../components/form-error";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -452,9 +453,7 @@ export function NewBatchForm({ onBack, onCreated }: Props) {
           </>
         )}
         {error && !unimported && (
-          <p role="alert" className="text-bad-ink">
-            {error}
-          </p>
+          <FormError className="text-bad-ink">{error}</FormError>
         )}
         {progress && (
           <p role="status" className="text-t-sm text-muted-foreground">
@@ -485,11 +484,7 @@ export function NewBatchForm({ onBack, onCreated }: Props) {
                 </li>
               ))}
             </ul>
-            {error && (
-              <p role="alert" className="text-t-sm text-bad-ink">
-                {error}
-              </p>
-            )}
+            {error && <FormError className="text-t-sm text-bad-ink">{error}</FormError>}
             <DialogFooter>
               <Button
                 variant="ghost"

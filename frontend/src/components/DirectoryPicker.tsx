@@ -8,6 +8,7 @@ import {
 import { useEffect, useId, useRef, useState } from "react";
 import { ApiError, api, errorMessage } from "../api";
 import type { components } from "../api-types.gen";
+import { FormError } from "../components/form-error";
 import { formatBytes } from "../lib/format";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
@@ -283,9 +284,7 @@ export function DirectoryPicker({
           </p>
         )}
         {error && (
-          <p role="alert" className="py-3 text-t-sm text-bad-ink">
-            {error}
-          </p>
+          <FormError className="py-3 text-t-sm text-bad-ink">{error}</FormError>
         )}
         {listing && (
           <section
@@ -442,9 +441,9 @@ export function DirectoryPicker({
           </form>
         )}
         {renameError && (
-          <p role="alert" className="mt-2 break-all text-t-sm text-bad-ink">
+          <FormError className="mt-2 break-all text-t-sm text-bad-ink">
             {renameError}
-          </p>
+          </FormError>
         )}
         {renamingBusy && (
           <p role="status" className="mt-2 text-t-sm">

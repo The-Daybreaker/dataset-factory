@@ -2,6 +2,7 @@ import { CopyIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../../api";
 import type { components } from "../../api-types.gen";
+import { FormError } from "../../components/form-error";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -74,9 +75,7 @@ export function SnapshotDialog({
         </DialogHeader>
         {error ? (
           <div className="flex items-center gap-2">
-            <p role="alert" className="text-bad-ink">
-              {error}
-            </p>
+            <FormError className="text-bad-ink">{error}</FormError>
             <Button variant="ghost" size="sm" onClick={() => setRevision((n) => n + 1)}>
               重新读取
             </Button>
@@ -139,11 +138,7 @@ export function SnapshotDialog({
             </p>
           </>
         )}
-        {copyError && (
-          <p role="alert" className="text-bad-ink">
-            {copyError}
-          </p>
-        )}
+        {copyError && <FormError className="text-bad-ink">{copyError}</FormError>}
         {copied && (
           <p role="status" className="text-t-sm text-text-3">
             已复制

@@ -2,6 +2,7 @@ import { FolderIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api, errorMessage, type TaskView } from "../../api";
 import { DirectoryPicker } from "../../components/DirectoryPicker";
+import { FormError } from "../../components/form-error";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -213,9 +214,7 @@ export function RelocateWorkdirDialog({
           </div>
         )}
         {error && (
-          <p role="alert" className="break-all text-t-sm text-bad-ink">
-            {error}
-          </p>
+          <FormError className="break-all text-t-sm text-bad-ink">{error}</FormError>
         )}
         {status === "running" && (
           <div role="status" className="space-y-2">

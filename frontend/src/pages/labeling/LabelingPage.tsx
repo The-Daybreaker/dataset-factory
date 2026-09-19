@@ -15,6 +15,7 @@ import {
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage } from "../../api";
 import type { components } from "../../api-types.gen";
+import { FormError } from "../../components/form-error";
 import { Button } from "../../components/ui/button";
 import { Tip } from "../../components/ui/tooltip";
 import { BatchConfiguration } from "./BatchConfiguration";
@@ -605,9 +606,7 @@ export function LabelingPage() {
         </Button>
       </header>
       {error && (
-        <p role="alert" className="mx-6 mb-3 text-t-sm text-bad-ink">
-          {error}
-        </p>
+        <FormError className="mx-6 mb-3 text-t-sm text-bad-ink">{error}</FormError>
       )}
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto px-4 pb-6 lg:flex-row lg:overflow-hidden lg:px-6">
         <aside

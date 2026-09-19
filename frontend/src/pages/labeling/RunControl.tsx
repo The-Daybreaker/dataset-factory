@@ -2,6 +2,7 @@ import { Square } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, errorMessage } from "../../api";
 import type { components } from "../../api-types.gen";
+import { FormError } from "../../components/form-error";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -352,11 +353,7 @@ export function RunControl({
 
   return (
     <section className="flex items-center gap-3" aria-label="运行控制">
-      {error && (
-        <p role="alert" className="text-t-sm text-bad-ink">
-          {error}
-        </p>
-      )}
+      {error && <FormError className="text-t-sm text-bad-ink">{error}</FormError>}
       {reconnecting && (
         <span role="status" className="text-t-sm text-warn-ink">
           正在重新连接

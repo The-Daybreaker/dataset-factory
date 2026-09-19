@@ -2,6 +2,7 @@ import { BookOpenIcon, ChevronDownIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, errorMessage } from "../../api";
 import type { components } from "../../api-types.gen";
+import { FormError } from "../../components/form-error";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -200,9 +201,7 @@ export function BatchOverview({
               ))}
             </ul>
             {redoError && (
-              <p role="alert" className="text-t-sm text-bad-ink">
-                {redoError}
-              </p>
+              <FormError className="text-t-sm text-bad-ink">{redoError}</FormError>
             )}
             <DialogFooter>
               <Button variant="ghost" disabled={redoing} onClick={() => setRedo(null)}>
@@ -286,14 +285,12 @@ export function BatchOverview({
           </Button>
         </div>
         {error && (
-          <p role="alert" className="mb-3 text-t-sm text-bad-ink">
-            {error}
-          </p>
+          <FormError className="mb-3 text-t-sm text-bad-ink">{error}</FormError>
         )}
         {exclusionError && (
-          <p role="alert" className="mb-3 text-t-sm text-bad-ink">
+          <FormError className="mb-3 text-t-sm text-bad-ink">
             {exclusionError}
-          </p>
+          </FormError>
         )}
         {expanded && report && (
           <div aria-busy={checking}>

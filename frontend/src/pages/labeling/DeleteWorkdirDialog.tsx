@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, errorMessage } from "../../api";
 import type { components } from "../../api-types.gen";
+import { FormError } from "../../components/form-error";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -104,9 +105,7 @@ export function DeleteWorkdirDialog({
           </div>
         )}
         {error && (
-          <p role="alert" className="break-all text-t-sm text-bad-ink">
-            {error}
-          </p>
+          <FormError className="break-all text-t-sm text-bad-ink">{error}</FormError>
         )}
         <DialogFooter>
           <Button variant="ghost" disabled={busy} onClick={onClose}>
