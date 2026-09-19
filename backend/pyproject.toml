@@ -185,5 +185,6 @@ pytest_add_cli_args_test_selection = ["tests/"]
 # 沙箱里还要有契约快照：tests/test_openapi_contract.py 按仓库根读 openapi.json 比对，
 # 不拷进来，mutmut 的基线采集就会整体红并放弃（「failed to collect stats」→ 击杀率取不到数）。
 also_copy = ["openapi.json"]
-# debug 开着会把 pytest 的报错正文完整打进取数日志（排障用，日志很大）；跑通一次后关掉。
-debug = true
+# debug=true 会把每个变异体的 pytest 正文（含超长命令行）打进取数日志，日志大到无法读回；
+# 排障阶段已结束，保持关闭。需要复现 harness 问题时再临时打开。
+debug = false

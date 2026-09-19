@@ -54,15 +54,15 @@ jobs:
 
       - name: Export stats
         if: always()
-        run: uv run --with mutmut mutmut export-cicd-stats
+        run: |
+          uv run --with mutmut mutmut export-cicd-stats
+          # 数字同时进日志：步骤摘要只渲染在网页上、gh 取不到，日志才可被脚本读回。
+          cat mutants/mutmut-cicd-stats.json
 
       - name: Write summary to step output
         if: always()
         run: |
-          {
-            echo "## 变异击杀率（本轮改动模块）"
-            echo
-            echo '```'
+          score() {
             if [ -f mutants/mutmut-cicd-stats.json ]; then
               jq -r '"total=\(.total)  tested=\(.total - .skipped)  killed=\(.killed + .timeout + .suspicious)  (killed=\(.killed) timeout=\(.timeout) suspicious=\(.suspicious))",
                      "survived=\(.survived)  no_tests=\(.no_tests)  skipped=\(.skipped)",
@@ -73,6 +73,12 @@ jobs:
             else
               echo "没有 stats 文件（变异阶段未跑完或未开始）"
             fi
+          }
+          {
+            echo "## 变异击杀率（本轮改动模块）"
+            echo
+            echo '```'
+            score
             echo '```'
             echo
             echo "`no_tests` = 没有任何用例会跑到的变异体数（覆盖空洞），不计入击杀率分子。"
@@ -83,3 +89,4 @@ jobs:
             uv run --with mutmut mutmut results --all 2>&1 | head -200
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          score
