@@ -65,15 +65,29 @@ jobs:
           score() {
             if [ -f mutants/mutmut-cicd-stats.json ]; then
               jq -r '"total=\(.total)  tested=\(.total - .skipped)  killed=\(.killed + .timeout + .suspicious)  (killed=\(.killed) timeout=\(.timeout) suspicious=\(.suspicious))",
-                     "survived=\(.survived)  no_tests=\(.no_tests)  skipped=\(.skipped)",
+                     "survived=\(.survived)  no_tests=\(.no_tests)  segfault=\(.segfault)  skipped=\(.skipped)",
                      (if (.total - .skipped) > 0 then
-                        "mutation score = \( (((.killed + .timeout + .suspicious) * 1000 / (.total - .skipped)) | round) / 10 )%"
-                      else "mutation score = n/a（无可测变异体）" end)' \
+                        "击杀率（保守口径：segfault 记未杀）= \( (((.killed + .timeout + .suspicious) * 1000 / (.total - .skipped)) | round) / 10 )%"
+                      else "击杀率（保守口径）= n/a（无可测变异体）" end),
+                     (if (.total - .skipped - .segfault) > 0 then
+                        "击杀率（排除 segfault 分母）= \( (((.killed + .timeout + .suspicious) * 1000 / (.total - .skipped - .segfault)) | round) / 10 )%"
+                      else "击杀率（排除 segfault 分母）= n/a" end)' \
                 mutants/mutmut-cicd-stats.json
             else
               echo "没有 stats 文件（变异阶段未跑完或未开始）"
             fi
           }
+          # `mutmut results` 默认只列**未击杀**的变异体（`--all` 才连 killed 一起列，
+          # 且它是需要取值的选项、写成裸 `--all` 会直接报错）。这里只要可行动的两类：
+          # survived（有用例跑到却没杀）与 no_tests（覆盖空洞）；segfault 属工具/环境噪声，
+          # 只在计数里出现，逐条列出来只会淹没前两类。
+          uncleared() {
+            uv run --with mutmut mutmut results 2>&1 \
+              | grep -E ': (survived|no_tests)$' \
+              | sed 's/^ *//' \
+              | sort
+          }
+          uncleared > uncleared-mutants.txt || true
           {
             echo "## 变异击杀率（本轮改动模块）"
             echo
@@ -82,11 +96,20 @@ jobs:
             echo '```'
             echo
             echo '`no_tests` = 没有任何用例会跑到的变异体数（覆盖空洞），不计入击杀率分子。'
+            echo '`segfault` = 子进程崩溃的变异体数（mutmut 在 pytest 崩溃时的分类），两个口径都列出来供对照。'
             echo
-            echo "### 变异体逐条结果（前 200 行）"
+            echo "### 未击杀清单（共 $(wc -l < uncleared-mutants.txt) 条，全量也在作业日志里）"
             echo
             echo '```'
-            uv run --with mutmut mutmut results --all 2>&1 | head -200 | tee /dev/stderr
+            cat uncleared-mutants.txt
+            echo '```'
+            echo
+            echo "### 按模块聚合"
+            echo
+            echo '```'
+            cut -d: -f1 uncleared-mutants.txt | sort | uniq -c | sort -rn
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           score
+          echo "--- uncleared mutants ($(wc -l < uncleared-mutants.txt)) ---"
+          cat uncleared-mutants.txt
