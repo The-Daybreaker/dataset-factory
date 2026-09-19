@@ -108,7 +108,7 @@ describe("SettingsPage · 连接·端点配置", () => {
     expect(screen.getByText("backup")).toBeInTheDocument();
     expect(screen.getByLabelText("名称")).toHaveValue("default");
     expect(screen.getByLabelText("名称")).toBeDisabled();
-    expect(screen.getByLabelText("模型名")).toHaveValue("model-a");
+    expect(screen.getByLabelText("模型名称")).toHaveValue("model-a");
     expect(screen.getByText(/已配置 · 来源：credentials 文件/)).toBeInTheDocument();
   });
 
@@ -117,8 +117,8 @@ describe("SettingsPage · 连接·端点配置", () => {
     render(<SettingsPage />);
 
     await waitFor(() => screen.getByLabelText("Base URL"));
-    await userEvent.clear(screen.getByLabelText("模型名"));
-    await userEvent.type(screen.getByLabelText("模型名"), "model-a2");
+    await userEvent.clear(screen.getByLabelText("模型名称"));
+    await userEvent.type(screen.getByLabelText("模型名称"), "model-a2");
     await userEvent.click(screen.getByRole("button", { name: "保存更改" }));
 
     await waitFor(() => {
@@ -154,7 +154,7 @@ describe("SettingsPage · 连接·端点配置", () => {
     await userEvent.click(screen.getByRole("button", { name: "添加配置" }));
     await userEvent.type(screen.getByLabelText("名称"), "new-one");
     await userEvent.type(screen.getByLabelText("Base URL"), "https://n/v1");
-    await userEvent.type(screen.getByLabelText("模型名"), "m");
+    await userEvent.type(screen.getByLabelText("模型名称"), "m");
     await userEvent.type(screen.getByLabelText("API 密钥"), "sk-new-key"); // pragma: allowlist secret —— 测试假密钥
     await userEvent.click(screen.getByRole("button", { name: "创建配置" }));
 

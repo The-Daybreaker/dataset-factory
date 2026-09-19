@@ -24,7 +24,6 @@ const apiMock = vi.hoisted(() => ({
   labelStream: vi.fn(),
   latestSession: vi.fn(),
   listStrategies: vi.fn(),
-  listStrategyReferences: vi.fn(),
 }));
 
 vi.mock("../../api", () => {
@@ -86,7 +85,6 @@ const SKILLS: SkillInfo[] = [
 beforeEach(() => {
   vi.clearAllMocks();
   apiMock.listStrategies.mockResolvedValue([]);
-  apiMock.listStrategyReferences.mockResolvedValue([]);
   apiMock.listPrompts.mockResolvedValue(PROMPTS);
   apiMock.listSkills.mockResolvedValue(SKILLS);
   apiMock.listEndpoints.mockResolvedValue(ENDPOINTS);

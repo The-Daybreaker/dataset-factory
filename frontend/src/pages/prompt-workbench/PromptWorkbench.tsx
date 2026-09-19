@@ -336,6 +336,8 @@ export function PromptWorkbench({
         name: file.name,
         dataUrl: String(reader.result),
         kind: isVideo ? "video" : "image",
+        mime: file.type,
+        byteSize: file.size,
         fps: 2,
         maxFrames: 16,
       });
@@ -372,6 +374,7 @@ export function PromptWorkbench({
         role: "user",
         text: instruction,
         attachment: sentAttachment,
+        ...(media !== null ? { attachmentDataUrl: media.dataUrl } : {}),
       },
     ]);
     setStreaming({ reasoning: "", content: "" });
@@ -491,7 +494,6 @@ export function PromptWorkbench({
           skills={skills}
           endpoints={endpoints}
           locked={promptDirty || controlsBusy}
-          onOpenSettings={onNavigateToSettings}
           onSelect={async (strategy) => {
             interactionRef.current += 1;
             const request = ++promptRequestRef.current;
@@ -600,7 +602,7 @@ export function PromptWorkbench({
                               <span className="block truncate text-t-md font-medium">
                                 {prompt.name}
                               </span>
-                              <span className="block truncate text-t-sm text-text-3">
+                              <span className="block truncate text-t-xs text-n-500">
                                 {prompt.description}
                               </span>
                             </button>
@@ -608,7 +610,7 @@ export function PromptWorkbench({
                               <TooltipTrigger asChild>
                                 <Button
                                   variant="ghost"
-                                  size="icon"
+                                  size="icon-sm"
                                   className="text-bad-ink"
                                   aria-label={`删除提示词 ${prompt.name}`}
                                   onClick={() => {
@@ -654,10 +656,10 @@ export function PromptWorkbench({
                 />
               </div>
               <div className="mt-4 flex min-h-0 flex-1 flex-col">
-                <div className="mb-2 flex items-baseline gap-2 text-t-sm">
-                  <span>正文</span>
+                <div className="mb-2 flex items-baseline gap-2">
+                  <span className="text-t-md font-medium text-foreground">正文</span>
                   <span
-                    className={`text-t-xs tabular-nums ${byteOver ? "text-bad-ink" : "text-text-4"}`}
+                    className={`text-t-xs font-medium tabular-nums ${byteOver ? "text-bad-ink" : "text-muted-foreground"}`}
                   >
                     {bodySize} / 32 KiB
                   </span>
@@ -726,7 +728,7 @@ export function PromptWorkbench({
                   <Button
                     type="button"
                     variant="ghost"
-                    size="icon"
+                    size="icon-sm"
                     aria-label="新会话"
                     className="ml-auto"
                     onClick={newSession}

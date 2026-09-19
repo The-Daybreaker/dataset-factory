@@ -54,8 +54,10 @@ export function ServicePanel(): ReactElement {
       </div>
       <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
         <div className="mb-2 flex items-center gap-2">
-          <h3 className="text-t-md font-semibold">运行日志</h3>
-          <span className="text-t-xs text-muted-foreground">最近 200 行</span>
+          <h3 className="text-t-md font-medium">运行日志</h3>
+          <span className="text-t-xs font-medium text-muted-foreground">
+            最近 200 行
+          </span>
           <span className="flex-1" />
           <Button
             type="button"

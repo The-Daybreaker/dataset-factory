@@ -652,8 +652,8 @@ export function LabelingPage() {
             <SearchIcon className="size-3 shrink-0 text-text-3" />
             <input
               className="min-w-0 flex-1 border-0 bg-transparent text-t-sm text-text-2 outline-none placeholder:text-n-400"
-              aria-label="搜索素材"
-              placeholder="搜索素材"
+              aria-label="搜索条目"
+              placeholder="搜索条目"
               value={query}
               onChange={(event) => setQuery(event.currentTarget.value)}
             />

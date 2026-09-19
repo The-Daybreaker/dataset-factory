@@ -78,7 +78,7 @@ function DropdownMenuLabel({
   return (
     <DropdownMenuPrimitive.Label
       data-slot="dropdown-menu-label"
-      className={cn("px-2 py-1.5 text-[12px] text-muted-foreground", className)}
+      className={cn("px-2 py-1.5 text-t-xs text-muted-foreground", className)}
       {...props}
     />
   );

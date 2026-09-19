@@ -482,7 +482,7 @@ describe("打标页读取流程", () => {
       "/api/workdirs/one/items/first/asset",
     );
     expect(api.listItems).toHaveBeenCalledWith("one", "s1");
-    await user.type(screen.getByRole("textbox", { name: "搜索素材" }), "absent");
+    await user.type(screen.getByRole("textbox", { name: "搜索条目" }), "absent");
     expect(screen.queryByRole("button", { name: "first.jpg" })).not.toBeInTheDocument();
   });
 

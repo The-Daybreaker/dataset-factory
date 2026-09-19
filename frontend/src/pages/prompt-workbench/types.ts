@@ -6,6 +6,9 @@ export interface PendingMedia {
   name: string;
   dataUrl: string;
   kind: "image" | "video";
+  /** MIME 类型与字节数（来自 File 对象，待发卡片的信息行用）。 */
+  mime: string;
+  byteSize: number;
   fps: number;
   maxFrames: number;
 }
@@ -18,4 +21,6 @@ export interface ChatMessage extends HistoryMessageView {
   createdAt?: Date;
   /** 本轮思考过程（仅本轮打标产生、只存页面内存不落盘——历史恢复的消息没有它）。 */
   reasoning?: string;
+  /** 本轮发送的附件字节（data URL，仅当轮消息有；历史恢复只有文件名、渲染图标占位）。 */
+  attachmentDataUrl?: string;
 }

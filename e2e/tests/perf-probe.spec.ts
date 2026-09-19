@@ -60,7 +60,7 @@ test("3000 条清单下搜索输入的长任务数", async ({ page }, testInfo) 
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   await page.getByRole("button", { name: "打标", exact: true }).click();
-  const search = page.getByRole("textbox", { name: "搜索素材" });
+  const search = page.getByRole("textbox", { name: "搜索条目" });
   await expect(search).toBeVisible({ timeout: SEED_TIMEOUT });
   const listItems = page.getByRole("button", { name: /^sample-/ });
   await expect(listItems.first()).toBeVisible({ timeout: SEED_TIMEOUT });

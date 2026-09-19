@@ -9,7 +9,25 @@ import {
 } from "react";
 import { Button } from "../../components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
+import { formatBytesAuto } from "../../lib/format";
 import type { PendingMedia } from "./types";
+
+/** MIME → 简短类型标注（待发附件卡信息行；原型口径：JPG · 842 KB 这类一眼可读的摘要）。 */
+function mimeLabel(mime: string): string {
+  const map: Record<string, string> = {
+    "image/jpeg": "JPG",
+    "image/png": "PNG",
+    "image/webp": "WEBP",
+    "image/gif": "GIF",
+    "video/mp4": "MP4",
+    "video/quicktime": "MOV",
+    "video/webm": "WEBM",
+    "video/x-msvideo": "AVI",
+    "video/x-matroska": "MKV",
+    "video/x-m4v": "M4V",
+  };
+  return map[mime] ?? mime;
+}
 
 export function InputArea({
   instruction,
@@ -59,6 +77,9 @@ export function InputArea({
             )}
             <div className="min-w-0 flex-1">
               <div className="truncate">{media.name}</div>
+              <div className="text-t-xs text-muted-foreground">
+                {mimeLabel(media.mime)} · {formatBytesAuto(media.byteSize)}
+              </div>
               {media.kind === "video" && (
                 <div className="flex flex-wrap items-center gap-2">
                   <label className="flex items-center gap-1">
@@ -110,7 +131,7 @@ export function InputArea({
         )}
         <textarea
           aria-label="打标指令"
-          placeholder="输入指令，继续交互……"
+          placeholder="输入指令，继续交互……（如：把「燕麦色」改成具体的色号）"
           className="block min-h-14 w-full resize-none border-0 bg-transparent px-1 pt-2 pb-1 text-t-md text-text-2 outline-none"
           value={instruction}
           onInput={(event) => onInstructionChange(event.currentTarget.value)}
@@ -147,13 +168,16 @@ export function InputArea({
               等待模型 · {waitSeconds}s
             </span>
           )}
+          <span className="ml-auto shrink-0 text-t-sm text-muted-foreground">
+            Enter 发送 · Shift+Enter 换行
+          </span>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 type="button"
                 size="icon"
                 variant="ghost"
-                className="ml-auto shrink-0 rounded-full bg-n-200 text-primary-foreground hover:bg-n-300"
+                className="shrink-0 rounded-full bg-n-200 text-primary-foreground hover:bg-n-300"
                 aria-label="发送"
                 disabled={!canSend}
                 onClick={onSend}

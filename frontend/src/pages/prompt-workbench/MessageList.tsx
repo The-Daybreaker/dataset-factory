@@ -1,8 +1,8 @@
 /** 消息流：历史消息渲染 + 流式增量面板（本轮生成中的临时消息）。 */
-import { CheckIcon, CopyIcon, FilmIcon, ImageIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, FilmIcon, ImageIcon, PlayIcon } from "lucide-react";
 import type { ReactElement } from "react";
 import { Button } from "../../components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
+import { Tip } from "../../components/ui/tooltip";
 import logo from "../../logo-speed-d.png";
 import type { ChatMessage } from "./types";
 
@@ -37,18 +37,33 @@ export function MessageList({
       {messages.map((message) =>
         message.role === "user" ? (
           <div key={message.id} className="flex justify-end">
-            <div className="max-w-[94%] rounded-xl rounded-br-sm bg-primary/10 px-4 py-3 text-t-md wrap-anywhere whitespace-pre-wrap">
-              {message.text}
+            {/* 原型口径：附件在气泡外上方，只显示缩略图/封面，文件名悬停浮现 */}
+            <div className="flex max-w-[94%] min-w-0 flex-col items-end gap-1">
               {message.attachment !== null && (
-                <span className="mt-2 flex items-center gap-2 rounded-lg bg-card p-2 text-t-sm text-text-3">
-                  {isVideoAttachment(message.attachment) ? (
-                    <FilmIcon className="size-7 shrink-0 rounded-md bg-muted p-1.5" />
-                  ) : (
-                    <ImageIcon className="size-7 shrink-0 rounded-md bg-muted p-1.5" />
-                  )}
-                  <span className="truncate">{message.attachment}</span>
-                </span>
+                <Tip label={message.attachment}>
+                  <span className="relative flex size-14 items-center justify-center overflow-hidden rounded-lg bg-muted shadow-xs">
+                    {isVideoAttachment(message.attachment) ? (
+                      <>
+                        <FilmIcon className="size-5 text-text-3" />
+                        <span className="absolute flex size-4 items-center justify-center rounded-sm bg-black/60 text-white">
+                          <PlayIcon className="size-2.5" />
+                        </span>
+                      </>
+                    ) : message.attachmentDataUrl !== undefined ? (
+                      <img
+                        src={message.attachmentDataUrl}
+                        alt=""
+                        className="size-full object-cover"
+                      />
+                    ) : (
+                      <ImageIcon className="size-5 text-text-3" />
+                    )}
+                  </span>
+                </Tip>
               )}
+              <div className="rounded-xl rounded-br-sm bg-primary/10 px-4 py-3 text-t-md wrap-anywhere whitespace-pre-wrap">
+                {message.text}
+              </div>
             </div>
           </div>
         ) : (
@@ -74,7 +89,7 @@ export function MessageList({
               <div className="inline-block max-w-full rounded-xl rounded-bl-sm border border-input bg-muted/55 px-4 py-3 text-t-md wrap-anywhere whitespace-pre-wrap">
                 {message.text}
               </div>
-              <div className="mt-2 flex flex-wrap items-center gap-3 text-t-sm text-text-4">
+              <div className="mt-2 flex flex-wrap items-center gap-3 text-t-sm text-muted-foreground">
                 {(message.model !== undefined ||
                   message.durationSeconds !== undefined) && (
                   <span className="min-w-0 truncate">
@@ -88,21 +103,16 @@ export function MessageList({
                       .join(" · ")}
                   </span>
                 )}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label="复制 caption"
-                      onClick={() => onCopy(message)}
-                    >
-                      {copiedId === message.id ? <CheckIcon /> : <CopyIcon />}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {copiedId === message.id ? "已复制" : "复制"}
-                  </TooltipContent>
-                </Tooltip>
+                <Tip label={copiedId === message.id ? "已复制" : "复制"}>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="复制 caption"
+                    onClick={() => onCopy(message)}
+                  >
+                    {copiedId === message.id ? <CheckIcon /> : <CopyIcon />}
+                  </Button>
+                </Tip>
                 {message.createdAt !== undefined && (
                   <span className="ml-auto">
                     {message.createdAt.toLocaleTimeString("zh-CN", {

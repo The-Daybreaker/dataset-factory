@@ -363,7 +363,7 @@ export function SkillsPanel(): ReactElement {
         className="flex min-w-0 shrink-0 flex-col lg:min-h-0"
       >
         <div className="flex flex-wrap items-center gap-2 px-4 pt-6 pb-2 lg:px-6">
-          <h3 className="text-t-sm font-medium">技能列表</h3>
+          <h3 className="text-t-sm font-medium text-muted-foreground">技能列表</h3>
           <span className="text-t-sm text-muted-foreground">{skills.length} 个</span>
           <Button
             variant="ghost"

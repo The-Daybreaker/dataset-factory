@@ -105,6 +105,6 @@ test.describe("设置页", () => {
 
     await expect(page.getByLabel("Base URL")).toHaveValue(/fake-llm\/v1$/);
     await expect(page.getByText(/已配置 · 来源：credentials 文件/)).toBeVisible();
-    await expect(page.getByLabel("名称")).toBeDisabled();
+    await expect(page.getByLabel("名称", { exact: true })).toBeDisabled();
   });
 });

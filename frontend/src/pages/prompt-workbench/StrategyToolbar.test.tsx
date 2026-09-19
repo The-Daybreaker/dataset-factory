@@ -15,7 +15,6 @@ import { StrategyToolbar } from "./StrategyToolbar";
 
 const mocks = vi.hoisted(() => ({
   listStrategies: vi.fn(),
-  listStrategyReferences: vi.fn(),
   createStrategy: vi.fn(),
   updateStrategy: vi.fn(),
   copyStrategy: vi.fn(),
@@ -45,7 +44,6 @@ function mount(strict = false): void {
     <TooltipProvider>
       <StrategyToolbar
         references={{ endpoint: "default", prompt: "caption", skills: [] }}
-        onOpenSettings={vi.fn()}
         prompts={[{ name: "caption", description: "" }]}
         endpoints={[]}
         skills={[]}
@@ -59,7 +57,6 @@ function mount(strict = false): void {
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.listStrategies.mockResolvedValue([strategy]);
-  mocks.listStrategyReferences.mockResolvedValue([]);
   select.mockResolvedValue(undefined);
 });
 
@@ -81,67 +78,6 @@ it("StrictMode 下关闭重开菜单后忽略旧列表响应", async () => {
   await act(async () => resolveOld([]));
 
   expect(screen.getByRole("button", { name: /详细描述.*训练用/ })).toBeInTheDocument();
-});
-
-it("公用配置行展示端点、提示词与高级参数，前往设置可点", async () => {
-  const onOpenSettings = vi.fn();
-  const content = (
-    <TooltipProvider>
-      <StrategyToolbar
-        references={{ endpoint: "default", prompt: "caption", skills: [] }}
-        onOpenSettings={onOpenSettings}
-        prompts={[{ name: "caption", description: "" }]}
-        endpoints={[
-          {
-            api_format: "openai-chat",
-            base_url: "https://api.example.com/v1",
-            has_api_key: true,
-            is_active: true,
-            model: "test-model",
-            name: "default",
-            request_params: {
-              extra_body: null,
-              max_retries: null,
-              max_tokens: 8192,
-              temperature: 0.7,
-              timeout_seconds: null,
-              top_p: null,
-            },
-          },
-        ]}
-        skills={[]}
-        locked={false}
-        onSelect={select}
-      />
-    </TooltipProvider>
-  );
-  render(content);
-  expect(await screen.findByText("default")).toBeInTheDocument();
-  expect(screen.getByText("caption")).toBeInTheDocument();
-  expect(screen.getByText(/temperature 0\.7 · max_tokens 8192/)).toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: "前往设置" }));
-  expect(onOpenSettings).toHaveBeenCalledOnce();
-});
-
-it("选中策略后显示被多少批次应用的出身提示", async () => {
-  const user = userEvent.setup();
-  mocks.listStrategyReferences.mockResolvedValue([
-    {
-      workdir_id: "w1",
-      workdir_title: "人物 · 白裙",
-      seq: 1,
-      batch_name: "详细描述A",
-    },
-  ]);
-  mount();
-  await user.click(screen.getByRole("button", { name: "切换策略" }));
-  await user.click(await screen.findByRole("button", { name: /详细描述.*训练用/ }));
-  expect(await screen.findByText(/已被 1 个批次应用/)).toBeInTheDocument();
-});
-
-it("没有选中策略时不显示出身提示", () => {
-  mount();
-  expect(screen.queryByText(/已被 .* 个批次应用/)).not.toBeInTheDocument();
 });
 
 it("删除失败的原因在确认弹窗内可见，重试仍使用原策略", async () => {

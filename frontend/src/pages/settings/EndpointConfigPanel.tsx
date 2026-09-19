@@ -408,7 +408,7 @@ export function EndpointConfigPanel(): ReactElement {
               </Select>
             </div>
             <div className="space-y-1">
-              <Label htmlFor="endpoint-model">模型名</Label>
+              <Label htmlFor="endpoint-model">模型名称</Label>
               <Input
                 id="endpoint-model"
                 value={draftModel}
@@ -424,7 +424,7 @@ export function EndpointConfigPanel(): ReactElement {
                 value={draftKey}
                 placeholder={
                   !creating && (current?.has_api_key ?? false)
-                    ? "留空 = 沿用已存密钥"
+                    ? "留空 = 沿用已配置密钥"
                     : "请输入密钥"
                 }
                 onInput={(event) => setDraftKey(event.currentTarget.value)}

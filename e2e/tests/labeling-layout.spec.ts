@@ -39,7 +39,7 @@ test("打标页长名称下顶栏与条目列保持原型尺寸和对齐", async
   const column = page.getByRole("complementary", { name: "素材条目" });
   const selector = page.getByRole("button", { name: "选择工作目录与批次" });
   const create = page.getByRole("button", { name: "新建跑批", exact: true });
-  const search = page.getByRole("textbox", { name: "搜索素材" });
+  const search = page.getByRole("textbox", { name: "搜索条目" });
   const bounds = await Promise.all([column.boundingBox(), selector.boundingBox(), create.boundingBox(), search.locator("..").boundingBox()]);
   const [listBox, selectorBox, createBox, searchBox] = bounds;
   if (!listBox || !selectorBox || !createBox || !searchBox) throw new Error("缺少布局元素");

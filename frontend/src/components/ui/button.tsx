@@ -27,6 +27,7 @@ const buttonVariants = cva(
         lg: "h-(--h-lg) px-4 text-t-lg",
         mini: "h-4 rounded-none bg-transparent px-0 text-t-sm text-text-3 hover:bg-transparent hover:text-text-1 disabled:bg-transparent [&_svg]:size-3.5",
         icon: "size-(--h-md) p-0",
+        "icon-sm": "size-(--h-sm) p-0 [&_svg]:size-3.5",
         "icon-lg": "size-(--h-lg) p-0 [&_svg]:size-4.5",
         "icon-xs": "size-(--h-xs) rounded-md p-0 [&_svg]:size-[13px]",
       },
