@@ -55,7 +55,7 @@ def test_endpoint_and_model_come_from_the_snapshot(
         "snap-endpoint",
         base_url="https://library.example/v1",
         model="m-library",
-        api_key=SecretValue("sk-live"),
+        api_key=SecretValue("stored-live"),
         request_params={"temperature": 0.9},
     )
     monkeypatch.delenv("DSF_API_KEY", raising=False)
@@ -79,15 +79,15 @@ def test_api_key_is_read_live_and_never_taken_from_the_block(
         "snap-endpoint",
         base_url="https://snap.example/v1",
         model="m-snap",
-        api_key=SecretValue("sk-rotated"),
+        api_key=SecretValue("stored-rotated"),
     )
     monkeypatch.delenv("DSF_API_KEY", raising=False)
 
-    config = _captured_config(
-        monkeypatch, {**_SNAPSHOT_BASE, "api_key": "sk-in-snapshot"}
-    )
+    stale_key = "snapshot-stale"
 
-    assert config.api_key.reveal() == "sk-rotated"
+    config = _captured_config(monkeypatch, {**_SNAPSHOT_BASE, "api_key": stale_key})
+
+    assert config.api_key.reveal() == "stored-rotated"
 
 
 def test_env_channel_wins_over_the_stored_key(
@@ -98,13 +98,13 @@ def test_env_channel_wins_over_the_stored_key(
         "snap-endpoint",
         base_url="https://snap.example/v1",
         model="m-snap",
-        api_key=SecretValue("sk-file"),
+        api_key=SecretValue("file-channel"),
     )
-    monkeypatch.setenv("DSF_API_KEY", "sk-env")
+    monkeypatch.setenv("DSF_API_KEY", "env-channel")
 
     config = _captured_config(monkeypatch, dict(_SNAPSHOT_BASE))
 
-    assert config.api_key.reveal() == "sk-env"
+    assert config.api_key.reveal() == "env-channel"
 
 
 @pytest.mark.parametrize("api_format", [None, "", _SNAPSHOT_BASE["api_format"]])
@@ -116,7 +116,7 @@ def test_missing_or_default_api_format_assembles(
         "snap-endpoint",
         base_url="https://snap.example/v1",
         model="m-snap",
-        api_key=SecretValue("sk-live"),
+        api_key=SecretValue("stored-live"),
     )
     monkeypatch.delenv("DSF_API_KEY", raising=False)
     block = {k: v for k, v in _SNAPSHOT_BASE.items() if k != "api_format"}
@@ -156,7 +156,7 @@ def test_request_params_absent_use_built_in_defaults(
         "snap-endpoint",
         base_url="https://snap.example/v1",
         model="m-snap",
-        api_key=SecretValue("sk-live"),
+        api_key=SecretValue("stored-live"),
     )
     monkeypatch.delenv("DSF_API_KEY", raising=False)
 
@@ -180,7 +180,7 @@ def test_real_assembly_returns_a_completer(
         "snap-endpoint",
         base_url="https://snap.example/v1",
         model="m-snap",
-        api_key=SecretValue("sk-live"),
+        api_key=SecretValue("stored-live"),
         request_params={"timeout_seconds": 33, "max_retries": 0},
     )
     monkeypatch.delenv("DSF_API_KEY", raising=False)
