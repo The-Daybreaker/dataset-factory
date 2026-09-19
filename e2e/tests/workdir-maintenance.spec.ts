@@ -107,7 +107,13 @@ test("工作目录搬迁经界面确认后保留素材与快照并更新登记",
   expect(moves).toEqual([]);
   expect((await stat(source)).isDirectory()).toBeTruthy();
   await dialog.getByRole("button", { name: "确认搬迁", exact: true }).click();
-  await expect(dialog.getByRole("status")).toContainText("已搬迁到");
+  // 搬迁是「复制 + 逐文件回读校验」的后台任务，界面那条状态行要等它跑完才出现。
+  // 默认 5s 在整条门禁连跑（前面刚跑完 pytest / Vitest / 构建）时不够用，实测同一份代码
+  // 单跑必过、跟在门禁后面偶发不出现（2026-09-19 三次 in-suite 失败均是等待预算不足，
+  // 报错都是 element(s) not found 而非搬迁失败）。放宽等待，断言内容与后面的磁盘核对一字未改。
+  await expect(dialog.getByRole("status")).toContainText("已搬迁到", {
+    timeout: 30_000,
+  });
   expect(moves).toEqual([{ path: target }]);
   expect(await readFile(path.join(target, "sample.png"))).toEqual(bytes);
   expect(await readFile(path.join(target, ".dsf", "strategies", "s1.json"))).toEqual(snapshot);
