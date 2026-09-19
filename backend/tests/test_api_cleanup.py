@@ -398,6 +398,29 @@ def test_cleanup_rejects_import_in_progress(
     assert path.read_bytes() == b"caption"
 
 
+def test_run_cleanup_proceeds_while_import_in_progress(
+    tmp_path: Path, temp_data_root: Path
+) -> None:
+    """导入进行中清理运行记录不被挡住（与 `cleanup` / `unimported/remove` 的 409 相反）。
+
+    三类清理对导入锁的姿态本就不同，这条把差异钉成快照：改任何一类都会红。
+    """
+    store = WorkdirStore(tmp_path)
+    entry = WorkdirRegistry.register(tmp_path)
+    record = store.runs_dir / "0001-1"
+    record.mkdir(parents=True)
+    (record / "items.jsonl").write_bytes(b"{}\n")
+    client = TestClient(create_app(frontend_dir=tmp_path / "frontend"))
+
+    with import_guard(store.dsf_path):
+        result = client.post(
+            f"/api/workdirs/{entry.id}/cleanup-runs", json={"names": ["0001-1"]}
+        )
+
+    assert result.status_code == 200
+    assert not record.exists()
+
+
 @pytest.mark.parametrize("recreate_source", [False, True])
 def test_cleanup_move_failure_preserves_all_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recreate_source: bool
