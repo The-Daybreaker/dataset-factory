@@ -20,6 +20,7 @@ from ..llm import (
     active_config_name,
     create_config,
     delete_config,
+    first_api_key,
     has_stored_key,
     list_configs,
     probe_endpoint,
@@ -130,13 +131,10 @@ def activate(name: str) -> Response:
 @router.post("/test", response_model=EndpointTestResult)
 def test_connection(request: EndpointTestRequest) -> EndpointTestResult:
     """测试端点连通性：用表单当前值发一个极小的真实请求，不必先保存。"""
-    key: SecretValue | None
-    if request.api_key is not None and request.api_key.strip() != "":
-        key = SecretValue(request.api_key.strip())
-    elif request.name is not None:
-        key = read_stored_api_key(request.name)
-    else:
-        key = None
+    key = first_api_key(
+        _parse_key(request.api_key),
+        read_stored_api_key(request.name) if request.name is not None else None,
+    )
     if key is None:
         return EndpointTestResult(
             ok=False,

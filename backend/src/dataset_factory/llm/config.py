@@ -141,7 +141,7 @@ def describe_config() -> ConfigDescription:
     Raises:
         ConfigError: 当前配置的 config.json 存在但损坏（非法 JSON / 顶层非对象 / 字段类型错）。
     """
-    env_key_present = bool(os.environ.get(ENV_API_KEY, "").strip())
+    env_key_present = env_api_key() is not None
     active = active_config_name()
     if active is None or not has_config(active):
         return ConfigDescription(
@@ -227,6 +227,29 @@ def _as_opt_int(raw: object | None) -> int | None:
     return cast(int, raw) if raw is not None else None
 
 
+def env_api_key() -> SecretValue | None:
+    """环境变量通道 `DSF_API_KEY`：未设或全空白都按「没有密钥」处理。
+
+    这条空白判定只能出现在这里——各出口（跑批、CLI 测端点、Web 测连接）都靠它决定是否
+    回落下一级通道，写歪一处就会出现「设了空环境变量当成有密钥」这种难查的分歧。
+    """
+    raw = os.environ.get(ENV_API_KEY, "").strip()
+    return SecretValue(raw) if raw else None
+
+
+def first_api_key(*candidates: SecretValue | None) -> SecretValue | None:
+    """按给定顺序返回第一个可用密钥，全不可用返回 None——报错方式归各出口自己定。
+
+    候选项必须已经是「空白即 None」的形态（`env_api_key` / `_parse_key` /
+    `read_stored_api_key` 三条通道都是这口径），所以这里只认 `is not None`，
+    不去比对密钥内容：`SecretValue` 的字符串化是掩码，比内容只会把密钥引到不该出现的地方。
+    """
+    for candidate in candidates:
+        if candidate is not None:
+            return candidate
+    return None
+
+
 def resolve_api_key(file_key: SecretValue | None) -> SecretValue:
     """按双通道解析 API 密钥：环境变量 DSF_API_KEY 优先，其次 credentials 文件密钥。
 
@@ -241,11 +264,9 @@ def resolve_api_key(file_key: SecretValue | None) -> SecretValue:
     Raises:
         ConfigError: 两个通道都拿不到非空密钥。
     """
-    env_key = os.environ.get(ENV_API_KEY)
-    if env_key and env_key.strip():
-        return SecretValue(env_key.strip())
-    if file_key is not None:
-        return file_key
+    resolved = first_api_key(env_api_key(), file_key)
+    if resolved is not None:
+        return resolved
     raise ConfigError(
         "未找到 API 密钥：请设置当前使用配置的密钥（`dsf config set` 或 Web 设置页），"
         f"或使用环境变量 {ENV_API_KEY}。"

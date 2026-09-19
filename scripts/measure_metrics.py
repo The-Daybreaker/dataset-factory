@@ -242,6 +242,16 @@ PATTERNS: tuple[
         "patch/monkeypatch 打在 `_` 前缀私名上的位点（钉实现，重构时假红）",
     ),
     (
+        "G2 重复实现",
+        "环境密钥通道各自读取",
+        BACKEND_SRC,
+        r"environ\.get\(ENV_API_KEY|environ\.get\(.DSF_API_KEY",
+        (
+            "自己读 DSF_API_KEY 并判空白的处数——空白判定只能有一处，两处就会在「设了空环境变量」"
+            "这种输入上分叉（现收在 `llm/config.env_api_key`）"
+        ),
+    ),
+    (
         "G3 测试质量",
         "前端 vi.mock api 重抄",
         FRONTEND_SRC,

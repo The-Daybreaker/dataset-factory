@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import json
-import os
 from typing import Annotated, cast
 
 import typer
@@ -32,6 +31,8 @@ from ..llm import (
     create_config,
     delete_config,
     describe_config,
+    env_api_key,
+    first_api_key,
     has_config,
     list_configs,
     probe_endpoint,
@@ -201,8 +202,7 @@ def config_test(
         )
         raise typer.Exit(1)
     data = read_config_data(resolved)
-    env_key = os.environ.get(ENV_API_KEY, "").strip()
-    key = SecretValue(env_key) if env_key else read_stored_api_key(resolved)
+    key = first_api_key(env_api_key(), read_stored_api_key(resolved))
     if key is None:
         typer.secho(
             f"错误：配置 {resolved!r} 没有已存密钥，也未设环境变量 {ENV_API_KEY}；"
