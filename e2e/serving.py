@@ -153,6 +153,41 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _carries_asset(payload: dict[str, object]) -> bool:
+    """这次模型调用是否带了素材（图片 / 视频走 image_url / video_url 内容块）。
+
+    用途：把「批次的打标调用」与「端点连通性探测」分开。闸门是全局的，而前端 chip 的
+    连通性探测走同一个端点配置与模型名——不分开，探测就会先进闸门、把测试的
+    ``gated-entered`` 握手抢先满足，测试于是在条目**尚未派发**时就按了停止
+    （2026-09-20 实锤：该次运行全长 183ms、尝试 0、无产物，而 succeeded 断言
+    在这个交织里永远不可能成立）。
+
+    探测（``llm.probe_endpoint``）只发一条 text "ping"、不带素材，所以「带不带素材」
+    是两者在 payload 上最本质的差别。一旦这个判据失准，后果是**大声失败**——
+    gated-entered 永不置位、测试的 poll 直接超时——不会静默放行。
+
+    Args:
+        payload: 收到的 chat completions 请求体。
+
+    Returns:
+        请求消息里是否存在素材内容块。
+    """
+    messages = payload.get("messages")
+    if not isinstance(messages, list):
+        return False
+    asset_block_types = {"image_url", "video_url"}
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("type") in asset_block_types:
+                return True
+    return False
+
+
 def build_fake_llm_app() -> FastAPI:
     """提供固定回复及可显式放行的模型，用于验证真实运行中的停止。"""
     app = FastAPI()
@@ -186,9 +221,13 @@ def build_fake_llm_app() -> FastAPI:
 
     @app.post("/v1/chat/completions")
     def chat_completions(payload: dict[str, object]) -> Response:
-        """返回固定的 OpenAI 兼容响应。"""
+        """返回固定的 OpenAI 兼容响应。
+
+        只有**带素材**的调用才进闸门：连通性探测走同一个模型名，但它不带素材，让它
+        也进闸门会把测试的「条目正在模型调用中」握手污染掉（见 :func:`_carries_asset`）。
+        """
         model = payload.get("model", "fake-e2e-model")
-        if model == _GATED_MODEL:
+        if model == _GATED_MODEL and _carries_asset(payload):
             global _GATED_ENTERED_COUNT
             with _GATED_COUNT_GUARD:
                 _GATED_ENTERED_COUNT += 1
