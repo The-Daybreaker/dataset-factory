@@ -316,7 +316,11 @@ def test_cleanup_rechecks_restored_pair_before_any_move(
 def test_run_cleanup_preserves_unselected_records_and_products(
     tmp_path: Path, temp_data_root: Path
 ) -> None:
-    """整份清理所选损坏运行记录，其他运行和产物不受影响。"""
+    """整份清理所选损坏运行记录，其他运行和产物不受影响。
+
+    清理运行记录只取运行锁——导入只动工作目录根的素材与 ``imports.jsonl``、不碰
+    ``.dsf/runs/``，两者没有共同数据——所以被移走的只有整份记录，素材与产物照旧保留。
+    """
     store = WorkdirStore(tmp_path)
     entry = WorkdirRegistry.register(tmp_path)
     for name in ("first", "second"):

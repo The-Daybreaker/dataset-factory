@@ -127,7 +127,13 @@ def preview_run_cleanup(workdir: Path) -> list[RunCleanupEntry]:
 
 
 def cleanup_runs(workdir: Path, names: list[str]) -> CleanupResult:
-    """运行锁内整份移动所选记录，其他运行、素材和产物保持原样。"""
+    """运行锁内整份移动所选记录，其他运行、素材和产物保持原样。
+
+    这里不需要导入锁：导入只往工作目录根写素材、往 ``imports.jsonl`` 写登记，从头到尾
+    不碰 ``.dsf/runs/``，两者没有共同数据。对照上面按孤立产物清理的那条——它必须取导入锁
+    （见 `cleanup_products`），因为它判的「这份产物还有没有素材配对」里，素材集合正是导入
+    会改的东西。判定依赖什么，就守什么的锁。
+    """
     if not workdir.is_dir():
         raise WorkdirPathError("工作目录不存在，请检查路径后重试。")
     store = WorkdirStore(workdir)
