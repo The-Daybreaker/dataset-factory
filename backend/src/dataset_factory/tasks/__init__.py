@@ -179,6 +179,15 @@ class TaskManager:
         except Exception as exc:  # noqa: BLE001 - 任务体异常边界：任何业务异常都归档为 failed
             record.info.status = "failed"
             record.info.error = str(exc) or type(exc).__name__
+            # 失败原因同时进日志：任务失败大多是用户级校验（目标已存在、路径不合法…），
+            # 界面会显示、日志里却什么都没有——事后只看得到「状态 failed」，查不出为什么
+            # （2026-09-20 实锤：搬迁任务 15ms 就 failed，日志里只有状态、没有原因）。
+            logger.warning(
+                "长任务失败：%s（受理至失败 %.0fms）：%s",
+                task_id,
+                ms_since(record.accepted),
+                record.info.error,
+            )
         else:
             record.info.status = "succeeded"
             if result is not None:
