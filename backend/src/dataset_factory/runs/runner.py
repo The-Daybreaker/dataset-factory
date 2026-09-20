@@ -477,6 +477,9 @@ class BatchRunner:
         for item in planned_stems:
             if self._should_stop():
                 interrupted = True
+                # 留一行「哪条没开始」：停止后的记录里 attempted / succeeded 全是 0，
+                # 光看记录分不清「压根没派出去」还是「派出去了才被打断」。
+                logger.info("跑批 %s 收到停止信号：条目 %s 未开始", self._run_id, item)
                 break
             self._current_item = item
             # 素材路径与计划同源（full 用计划期的目录扫描结果，retry 现解析）——
@@ -591,6 +594,17 @@ class BatchRunner:
                 # 停止信号在：正在处理的条目无论失败可否重试都不写终态行——
                 # 「被打断」不是「失败」（模型调用中打断与退避中打断口径一致），
                 # 记成失败会让停止后的失败统计凭空多账。
+                # 但日志要留：不记流水是对的，连「为什么被丢」也不留就成了黑洞——
+                # 2026-09-20 实锤，一条这样被丢掉的条目事后只剩「尝试 0 / 成功 0」，
+                # 连失败原因都查不到。
+                logger.info(
+                    "跑批 %s 的条目 %s 尝试 %d 被打断，不写终态行（原因 %s：%s）",
+                    self._run_id,
+                    item,
+                    attempt,
+                    failure.reason_code,
+                    _one_line(failure.message),
+                )
                 return False
             self._counters["failed"] += 1
             self._counters["attempted"] += 1

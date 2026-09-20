@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 import time
 
@@ -137,6 +138,40 @@ def test_progress_is_clamped_and_frozen_after_terminal() -> None:
         assert manager.get(task_id).progress == 0.0
 
     asyncio.run(scenario())
+
+
+def test_lifecycle_logs_separate_queue_wait_from_execution(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """生命周期打出「受理 / 开始执行 / 首个进度 / 结束」四行，且各只打一次。
+
+    这四行是「任务停在原地」类故障的唯一线索：界面从受理那一刻起就显示「运行中」，
+    「压根没派出去」与「派出去了但不推进」在外部完全同形，只能靠日志分开。
+    """
+
+    async def scenario() -> list[str]:
+        manager = TaskManager()
+
+        def body(task_id: str, should_stop: threading.Event) -> dict[str, object]:
+            manager.set_progress(task_id, 0.0)  # 零进度不记（避免噪声）
+            manager.set_progress(task_id, 0.25)
+            manager.set_progress(task_id, 0.6)  # 首个非零之后的回报不再记
+            return {"copied": 1}
+
+        with caplog.at_level(logging.INFO, logger="dataset_factory.tasks"):
+            task_id = manager.create(body)
+            await wait_for_status(manager, task_id, "succeeded")
+        return [
+            record.getMessage()
+            for record in caplog.records
+            if task_id in record.getMessage()
+        ]
+
+    messages = asyncio.run(scenario())
+    assert any("受理" in m and "开始执行" not in m for m in messages)
+    assert any("开始执行" in m and "受理后" in m for m in messages)
+    assert sum("首个进度" in m for m in messages) == 1
+    assert any("结束" in m and "succeeded" in m for m in messages)
 
 
 def test_cancel_on_unknown_task_raises_not_found() -> None:

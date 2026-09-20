@@ -18,9 +18,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import secrets
 import threading
 from collections.abc import Callable
+from time import perf_counter
+
+from .._obs import ms_since
 
 __all__ = [
     "RETRY_AFTER_SECONDS",
@@ -40,6 +44,8 @@ _TASK_ID_LENGTH = 12
 TaskId = str
 #: 任务结果载荷（JSON 可序列化；由任务体返回，如导入条数 / 导出路径）。
 TaskResult = dict[str, object]
+
+logger = logging.getLogger(__name__)
 
 
 class TaskNotFoundError(Exception):
@@ -79,18 +85,49 @@ class TaskInfo:
 
 
 class _TaskRecord:
-    """内部任务记录：快照 + 取消信号。"""
+    """内部任务记录：快照 + 取消信号 + 受理时刻。"""
 
-    __slots__ = ("info", "should_stop")
+    __slots__ = ("accepted", "info", "should_stop")
 
     def __init__(self, task_id: TaskId) -> None:
         self.info = TaskInfo(task_id)
         self.should_stop = threading.Event()
+        # 受理时刻：与「开始执行」相减 = 事件循环调度 + 线程池排队耗时（perf_counter 单调时钟）。
+        self.accepted = perf_counter()
 
 
 def _generate_task_id() -> TaskId:
     """随机短 ID（secrets，与 wid 同一「随机短 ID + 查重」模式）。"""
     return secrets.token_hex(6)[:_TASK_ID_LENGTH]
+
+
+def _invoke(
+    runner: TaskRunner,
+    task_id: TaskId,
+    should_stop: threading.Event,
+    accepted: float,
+) -> TaskResult | None:
+    """在工作线程里执行任务体，并留下「线程真的跑起来了」这一行。
+
+    受理行与这一行之间的时间差 = 事件循环调度 + 线程池排队。任务卡住时先看这段：它把
+    「任务没被派出去」和「任务派出去了但自己不推进」两种完全不同的故障分开。
+
+    Args:
+        runner: 任务体（同步阻塞函数）。
+        task_id: 任务短 ID。
+        should_stop: 协作式取消信号。
+        accepted: 受理时刻的 ``perf_counter()`` 读数。
+
+    Returns:
+        任务体返回的结果载荷（可能为 None）。
+    """
+    logger.info(
+        "长任务开始执行：%s（受理后 %.0fms，线程 %s）",
+        task_id,
+        ms_since(accepted),
+        threading.current_thread().name,
+    )
+    return runner(task_id, should_stop)
 
 
 class TaskManager:
@@ -119,6 +156,11 @@ class TaskManager:
             task_id = _generate_task_id()
         record = _TaskRecord(task_id)
         self._tasks[task_id] = record
+        # 受理 / 开始执行 / 终态这三行是「任务停在原地」类故障的唯一线索：从受理到线程真正
+        # 开始跑之间隔着事件循环调度与线程池排队，这三段时间外部一律显示为「运行中 · 0%」，
+        # 只能靠日志分开。三行都自动带上创建它的那个请求的 request id（to_thread 会传播
+        # contextvars），因此能与中间件记的 POST 行对上。
+        logger.info("长任务受理：%s", task_id)
         # 包一层 asyncio 任务：事件循环不被阻塞（to_thread 丢线程池），异常集中收口。
         asyncio.get_running_loop().create_task(
             self._run(record, runner), name=f"task-{task_id}"
@@ -127,8 +169,11 @@ class TaskManager:
 
     async def _run(self, record: _TaskRecord, runner: TaskRunner) -> None:
         """任务包装：丢线程执行任务体，按退出方式归档状态。"""
+        task_id = record.info.id
         try:
-            result = await asyncio.to_thread(runner, record.info.id, record.should_stop)
+            result = await asyncio.to_thread(
+                _invoke, runner, task_id, record.should_stop, record.accepted
+            )
         except TaskCancelledError:
             record.info.status = "cancelled"
         except Exception as exc:  # noqa: BLE001 - 任务体异常边界：任何业务异常都归档为 failed
@@ -138,6 +183,12 @@ class TaskManager:
             record.info.status = "succeeded"
             if result is not None:
                 record.info.result = result
+        logger.info(
+            "长任务结束：%s 状态 %s（受理至结束 %.0fms）",
+            task_id,
+            record.info.status,
+            ms_since(record.accepted),
+        )
 
     def get(self, task_id: TaskId) -> TaskInfo:
         """查任务快照；不存在抛 TaskNotFoundError（404，消息只指动作）。"""
@@ -156,7 +207,12 @@ class TaskManager:
         record = self._tasks.get(task_id)
         if record is None or record.info.status != "running":
             return
-        record.info.progress = min(1.0, max(0.0, progress))
+        clamped = min(1.0, max(0.0, progress))
+        if clamped > 0 and record.info.progress == 0:
+            # 只记首次：进度是逐文件回报的，逐条记会把日志淹掉。首个非零进度意味着任务体
+            # 已越过「盘点 / 建目录」这类前置阶段——挪不动进展时看它到没到。
+            logger.info("长任务首个进度：%s（%.0f%%）", task_id, clamped * 100)
+        record.info.progress = clamped
 
     def request_cancel(self, task_id: TaskId) -> TaskInfo:
         """协作式取消：置取消信号即返回当前快照。
