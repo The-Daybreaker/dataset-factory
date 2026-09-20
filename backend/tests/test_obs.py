@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import io
 import logging
 from time import perf_counter
 
@@ -146,6 +147,29 @@ def test_access_log_records_method_path_status_duration(
         "GET /ping -> 200" in record.message and "ms" in record.message
         for record in caplog.records
     )
+
+
+def test_access_log_carries_request_id(mini_app: FastAPI) -> None:
+    """访问日志那一行带着 request id（它曾写在上下文还原之后，出来的永远是 `-`）。
+
+    这一行是「把 HTTP 请求与库层日志对上」的钥匙：任务受理、模型调用、跑批落盘都靠它
+    串起来。断言走 formatter 渲染后的文本（同本文件其余用例的理由：`request_id` 是过滤器
+    注入的动态属性，不在 `LogRecord` 的静态类型里）。
+    """
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.addFilter(RequestIdFilter())
+    handler.setFormatter(logging.Formatter(_FORMAT))
+    middleware_logger = logging.getLogger("dataset_factory.api.middleware")
+    middleware_logger.addHandler(handler)
+    middleware_logger.setLevel(logging.INFO)
+    try:
+        with TestClient(mini_app) as client:
+            client.get("/ping", headers={REQUEST_ID_HEADER: "access-log-01"})
+    finally:
+        middleware_logger.removeHandler(handler)
+
+    assert "[access-log-01] HTTP GET /ping -> 200" in stream.getvalue()
 
 
 def test_unhandled_exception_returns_500_with_request_id(

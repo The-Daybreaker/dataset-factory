@@ -79,14 +79,17 @@ class RequestLogMiddleware(BaseHTTPMiddleware):
                 },
                 headers={REQUEST_ID_HEADER: request_id},
             )
+        else:
+            # 访问日志必须记在 else 里、而不是 finally 之后：request id 是在 finally 中还原的，
+            # 写在它后面这行永远只显示 `-`——而「拿这一行去对库层日志」正是它存在的理由。
+            logger.info(
+                "HTTP %s %s -> %d（%.0fms）",
+                request.method,
+                request.url.path,
+                response.status_code,
+                ms_since(start),
+            )
         finally:
             reset_request_id(token)
         response.headers[REQUEST_ID_HEADER] = request_id
-        logger.info(
-            "HTTP %s %s -> %d（%.0fms）",
-            request.method,
-            request.url.path,
-            response.status_code,
-            ms_since(start),
-        )
         return response
