@@ -42,13 +42,20 @@ def confirm_action(message: str, yes: bool) -> None:
 
 
 def confirm_or_abort(message: str, yes: bool) -> None:
-    """删除类命令的确认：拒绝、或非交互下无法确认 → 取消（退出码 1）。
+    """删除类命令的两级确认：交互中拒绝 → 取消（退出码 1）；非交互缺 --yes → 用法错误（退出码 2）。
 
-    与 `confirm_action` 是两套对外口径（提示写 stdout、非交互按取消算而不是用法错误），
-    这是各命令现状的差别，收敛时保持原样，只把三处逐字相同的两行写法并到一处。
+    两种结局分开取码，因为对调用方意味着不同的事：拒绝是「这次不做」，脚本该停就停；
+    缺 --yes 是「你调用方式不对」——与参数缺失同类，补上 --yes 再来。后者与 Typer/click
+    对用法错误一律给 2 的默认行为一致，也与 `confirm_action` 同口径。
+
+    非交互环境（管道 / 脚本）一律要求显式 ``--yes``，不读 stdin 里的答复——否则
+    「管道里恰好有个 y」和「有人真的按了 y」在退出码上分不开。
     """
     if yes:
         return
+    if not sys.stdin.isatty():
+        typer.echo("错误：非交互环境执行此操作必须提供 --yes。", err=True)
+        raise typer.Exit(2)
     if not typer.confirm(message):
         raise typer.Abort()
 

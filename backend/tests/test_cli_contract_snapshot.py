@@ -205,7 +205,11 @@ def test_readonly_commands_output_snapshot(
 def test_error_and_usage_exit_codes_snapshot(
     cli: TyperGroup, temp_data_root: Path
 ) -> None:
-    """用法错误与运行失败的退出码约定（0 / 1 / 2）是对外承诺，逐条钉住。"""
+    """用法错误与运行失败的退出码约定（0 / 1 / 2 / 130）是对外承诺，逐条钉住。
+
+    最后一条是「非交互环境缺 ``--yes``」：它按用法错误退 2 并点名 ``--yes``，与「用户在
+    提示里拒绝」这类中止（退 1）分开——两种结局对调用方意味着不同的事，不能混给一个码。
+    """
     cases = (
         ["no-such-command"],
         ["prompt", "show"],
@@ -213,9 +217,19 @@ def test_error_and_usage_exit_codes_snapshot(
         ["workdir", "show", "missing-id"],
         ["batch", "status", "--workdir", "missing", "--batch", "s1"],
         ["config", "remove"],
+        ["prompt", "rm", "不存在的提示词"],
     )
     collected = [
         f"$ dsf {' '.join(path)}\n{_normalize(_render(_invoke(cli, path)), temp_data_root)}"
         for path in cases
     ]
     _check("outputs-error-cases.txt", "\n".join(collected))
+
+
+def test_root_help_snapshot(cli: TyperGroup) -> None:
+    """根命令 ``--help`` 的快照。
+
+    根命令不是叶子命令，采集面扫不到它；而它末尾挂着退出码摘要——那是对外承诺的一部分，
+    进来单独钉住。
+    """
+    _check("help-root.txt", _normalize(_render(_invoke(cli, ["--help"])), Path.cwd()))

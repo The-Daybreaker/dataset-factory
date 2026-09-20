@@ -170,20 +170,35 @@ def test_partial_deletion_preview_retains_warning_and_cli_can_retry(
     assert WorkdirRegistry.list_all() == []
 
 
-@pytest.mark.parametrize("answer", ["n\n", "y\nwrong-path\n"])
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        pytest.param("n\n", typer.Abort, id="第一级答否"),
+        pytest.param("y\nwrong-path\n", typer.Exit, id="第二级路径对不上"),
+    ],
+)
 def test_interactive_delete_rejects_decline_or_wrong_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answer: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    answer: str,
+    expected: type[BaseException],
 ) -> None:
-    """两级确认中的任一步被拒绝时，原始素材与登记均保持。"""
+    """两级确认中任一步没通过时，原始素材与登记均保持，且两种结局都算「取消」。
+
+    第一级答「否」由 click 的 Abort 收场，第二级路径对不上走显式 ``Exit(1)``；click 的
+    standalone 模式把 Abort 也落成 1，所以对调用方是同一个码（见 cli/main.py 的退出码约定）。
+    """
     root = tmp_path / "photos"
     root.mkdir()
     (root / "a.jpg").write_bytes(b"image")
     entry = WorkdirRegistry.register(root)
     monkeypatch.setattr(sys, "stdin", TerminalInput(answer))
 
-    with pytest.raises((typer.Abort, typer.Exit)):
+    with pytest.raises(expected) as excinfo:
         remove_workdir(root)
 
+    if isinstance(excinfo.value, typer.Exit):
+        assert excinfo.value.exit_code == 1
     assert (root / "a.jpg").read_bytes() == b"image"
     assert WorkdirRegistry.get(entry.id).path == str(root)
 

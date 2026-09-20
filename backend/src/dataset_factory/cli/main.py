@@ -11,9 +11,16 @@
 退出码约定（外部 agent 按此解析）：
 
 - ``0`` 成功（stdout 只承载结果正文，保持干净）；
-- ``1`` 运行失败（用户错：配置缺失 / 输入非法 / 找不到资源 / 模型调用失败，stderr 给
-  可操作中文消息；程序 bug 同样非 0，stderr 带原始 traceback 便于定位）；
-- ``2`` 命令用法错误（参数缺失 / 拼错，由 Typer/click 默认行为给出）。
+- ``1`` 运行失败——用户可修的运行错误（配置缺失 / 输入非法 / 找不到资源 / 模型调用失败，
+  stderr 给可操作中文消息），以及用户主动中止（在确认提示里拒绝、确认输入对不上）；
+  程序 bug 同样非 0，stderr 带原始 traceback 便于定位；
+- ``2`` 命令用法错误（参数缺失 / 拼错、非交互环境缺必需的 ``--yes``）；
+- ``130`` 被 Ctrl-C 打断（128 + SIGINT）；操作已在安全点收尾，已完成的部分照常写 stdout。
+
+取码依据是点击库自身的模型：click 的 ``ClickException``（含 ``FileError``）与 ``Abort``
+都是 1、``UsageError``（含 ``BadParameter``、参数互斥冲突）是 2——不另立一套码表，
+免得调用方要多学一个体系。BSD ``sysexits``（EX_USAGE=64 那一套）不采用：FreeBSD 自己的
+手册已把它标为 legacy，并写着「its use is discouraged」「not portable」「选码常常含糊」。
 """
 
 from __future__ import annotations
@@ -49,6 +56,12 @@ _LOG_FORMAT = "%(asctime)s %(levelname)s [%(request_id)s] %(name)s: %(message)s"
 _LOG_LEVEL_ENV = "DSF_LOG_LEVEL"
 _DEFAULT_LOG_LEVEL = "INFO"
 
+# `--help` 末尾给一眼可见的退出码摘要；完整理由与边界见本模块 docstring。
+_EXIT_CODES_EPILOG = (
+    "退出码：0 成功；1 运行失败或用户中止；"
+    "2 命令用法错误（参数缺失/拼错、非交互缺 --yes）；130 被 Ctrl-C 打断。"
+)
+
 
 def configure_logging(level_name: str) -> None:
     """配置应用日志输出到 stderr（stdout 留给结果正文，供外部 agent 干净解析）。
@@ -73,6 +86,7 @@ def configure_logging(level_name: str) -> None:
 
 app = typer.Typer(
     help="Dataset Factory —— AI 打标工具（发图 + 指令产出 caption，支持迭代改写）。",
+    epilog=_EXIT_CODES_EPILOG,
     no_args_is_help=True,
     add_completion=False,
 )

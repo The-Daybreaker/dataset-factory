@@ -290,7 +290,9 @@ def remove_workdir(
         confirmed = typer.prompt("再次输入完整路径确认删除", err=True)
         if confirmed != preview.path:
             typer.echo("错误：确认路径不一致，未执行删除。", err=True)
-            raise typer.Exit(2)
+            # 退 1 而不是 2：这是「没确认成功」——和在上面那道确认里直接答「否」（click 的
+            # Abort 也是 1）是同一类结局。给 2 会让调用方误以为自己的调用方式不对。
+            raise typer.Exit(1)
     result = delete_workdir(wid, path.expanduser().resolve())
     typer.echo(json.dumps(asdict(result), ensure_ascii=False))
     if not result.deleted:

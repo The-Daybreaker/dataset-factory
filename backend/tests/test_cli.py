@@ -6,14 +6,17 @@
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import logging.handlers
+import sys
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import cast
 
 import pytest
+import typer
 import uvicorn
 from fastapi import FastAPI
 from typer.testing import CliRunner
@@ -21,6 +24,7 @@ from typer.testing import CliRunner
 import dataset_factory.cli.config as config_module
 import dataset_factory.cli.label as label_module
 from dataset_factory.cli import app
+from dataset_factory.cli.operations import confirm_or_abort
 from dataset_factory.llm import (
     EndpointConfig,
     ImagePart,
@@ -530,19 +534,24 @@ def test_prompt_rename_roundtrip(temp_data_root: Path) -> None:
     assert "你是打标助手。" in show.output
 
 
-def test_prompt_rm_aborts_without_confirm(temp_data_root: Path) -> None:
-    """prompt rm 不确认：中止（退出码非 0、提示词仍在）。"""
+def test_prompt_rm_without_yes_outside_terminal_exits_usage_error(
+    temp_data_root: Path,
+) -> None:
+    """prompt rm 在非终端环境不给 -y：按用法错误退 2 并点名 --yes，提示词仍在。"""
     _save_prompt("h3", "你是打标助手。")
 
-    result = runner.invoke(app, ["prompt", "rm", "h3"], input="n\n")
+    result = runner.invoke(app, ["prompt", "rm", "h3"])
 
-    assert result.exit_code != 0
+    assert result.exit_code == 2
+    assert "--yes" in result.stderr
     listing = runner.invoke(app, ["prompt", "list"])
     assert "h3" in listing.output
 
 
-def test_config_rm_aborts_without_confirm(temp_data_root: Path) -> None:
-    """config rm 不确认：中止（退出码非 0、配置仍在列表里）。"""
+def test_config_remove_without_yes_outside_terminal_exits_usage_error(
+    temp_data_root: Path,
+) -> None:
+    """config remove 在非终端环境不给 -y：按用法错误退 2 并点名 --yes，配置仍在列表里。"""
     added = runner.invoke(
         app,
         ["config", "add", "alpha", "--base-url", "https://a/v1", "--model", "m-a"],
@@ -550,20 +559,61 @@ def test_config_rm_aborts_without_confirm(temp_data_root: Path) -> None:
     )
     assert added.exit_code == 0
 
-    result = runner.invoke(app, ["config", "rm", "alpha"], input="n\n")
+    result = runner.invoke(app, ["config", "remove", "alpha"])
 
-    assert result.exit_code != 0
+    assert result.exit_code == 2
+    assert "--yes" in result.stderr
     assert "alpha" in runner.invoke(app, ["config", "list"]).output
 
 
-def test_skill_rm_aborts_without_confirm(temp_data_root: Path) -> None:
-    """skill rm 不确认：中止（退出码非 0、skill 仍在库里）。"""
+def test_skill_rm_without_yes_outside_terminal_exits_usage_error(
+    temp_data_root: Path,
+) -> None:
+    """skill rm 在非终端环境不给 -y：按用法错误退 2 并点名 --yes，skill 仍在库里。"""
     assert runner.invoke(app, ["skill", "import", str(_SKILL_PACK)]).exit_code == 0
 
-    result = runner.invoke(app, ["skill", "rm", "example-caption-skill"], input="n\n")
+    result = runner.invoke(app, ["skill", "rm", "example-caption-skill"])
 
-    assert result.exit_code != 0
+    assert result.exit_code == 2
+    assert "--yes" in result.stderr
     assert "example-caption-skill" in runner.invoke(app, ["skill", "list"]).output
+
+
+class _TerminalInput(io.StringIO):
+    """模拟交互终端：确认类命令按 isatty 分流，要测「有人在终端前答话」那一侧就得站到这里。"""
+
+    def isatty(self) -> bool:
+        """此输入流代表交互终端。"""
+        return True
+
+
+def test_confirmation_helper_decline_aborts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """交互终端里回答「否」：落到 click 的 Abort（standalone 模式退 1）。"""
+    monkeypatch.setattr(sys, "stdin", _TerminalInput("n\n"))
+
+    with pytest.raises(typer.Abort):
+        confirm_or_abort("确认删除该配置？", yes=False)
+
+
+def test_confirmation_helper_missing_yes_outside_terminal_is_usage_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """非终端环境不给 --yes：按用法错误退 2，且不读 stdin 里现成的答复。"""
+    monkeypatch.setattr(sys, "stdin", io.StringIO("y\n"))
+
+    with pytest.raises(typer.Exit) as excinfo:
+        confirm_or_abort("确认删除该配置？", yes=False)
+
+    assert excinfo.value.exit_code == 2
+
+
+def test_confirmation_helper_yes_skips_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """显式给了 --yes 就不再问：非终端环境照样放行。"""
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+
+    assert confirm_or_abort("确认删除该配置？", yes=True) is None
 
 
 def test_skill_lifecycle(temp_data_root: Path) -> None:
