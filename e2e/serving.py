@@ -46,6 +46,11 @@ _FAKE_REPLY = "E2E 假模型的打标结果"
 _GATED_MODEL = "gated-e2e-model"
 _GATED_ENTERED = threading.Event()
 _GATED_RELEASE = threading.Event()
+# 自上次 reset 起「进过闸门」的调用次数。闸门是全局的，端点连通性探测（前端 chip
+# 自动发起，走同一个端点配置与模型名）也会进闸门——只报「有没有」无法区分是谁进的，
+# 于是「条目正在模型调用中」这个握手可能被探测调用抢先满足（2026-09-20 实锤）。
+_GATED_ENTERED_COUNT = 0
+_GATED_COUNT_GUARD = threading.Lock()
 
 # 日志级别沿用 `dsf serve` 的口径（环境变量 DSF_LOG_LEVEL，缺省 INFO）。这里把变量名写一遍
 # 而不去 import cli 里的：那是个私有名，跨模块引用私有名会被 pyright strict 判违规。
@@ -153,9 +158,15 @@ def build_fake_llm_app() -> FastAPI:
     app = FastAPI()
 
     @app.post("/__test__/gated-entered")
-    def gated_entered() -> dict[str, bool]:
-        """返回模型请求是否已到达等待点。"""
-        return {"entered": _GATED_ENTERED.is_set()}
+    def gated_entered() -> dict[str, object]:
+        """返回模型请求是否已到达等待点，以及自上次 reset 起进过闸门的次数。
+
+        次数是排查「握手被谁满足」的关键：count 比测试开始发车时的基线多 1 以上，
+        说明有可能是别的调用（如端点连通性探测）先进了闸门。
+        """
+        with _GATED_COUNT_GUARD:
+            count = _GATED_ENTERED_COUNT
+        return {"entered": _GATED_ENTERED.is_set(), "count": count}
 
     @app.post("/__test__/gated-release")
     def gated_release() -> dict[str, bool]:
@@ -165,9 +176,12 @@ def build_fake_llm_app() -> FastAPI:
 
     @app.post("/__test__/gated-reset")
     def gated_reset() -> dict[str, bool]:
-        """为串行测试重置等待点。"""
+        """为串行测试重置等待点与计数。"""
+        global _GATED_ENTERED_COUNT
         _GATED_ENTERED.clear()
         _GATED_RELEASE.clear()
+        with _GATED_COUNT_GUARD:
+            _GATED_ENTERED_COUNT = 0
         return {"reset": True}
 
     @app.post("/v1/chat/completions")
@@ -175,6 +189,9 @@ def build_fake_llm_app() -> FastAPI:
         """返回固定的 OpenAI 兼容响应。"""
         model = payload.get("model", "fake-e2e-model")
         if model == _GATED_MODEL:
+            global _GATED_ENTERED_COUNT
+            with _GATED_COUNT_GUARD:
+                _GATED_ENTERED_COUNT += 1
             _GATED_ENTERED.set()
             if not _GATED_RELEASE.wait(timeout=30):
                 return JSONResponse({"error": "gate timed out"}, status_code=504)
