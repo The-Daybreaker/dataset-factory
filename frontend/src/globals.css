@@ -64,6 +64,9 @@
   --lh-tight: 1.35;
   --lh-base: 1.55;
   --lh-loose: 1.75;
+  /* 阴影档（与 ui-system.css §1 一字不差）：实现侧此前漏抄 --sh-1，labeling 两处
+     shadow-(--sh-1) 一直解析成 none；2026-09-20 补上（有意演进，随基线重采生效）。 */
+  --sh-1: 0 1px 2px hsl(220 26% 14% / 0.04), 0 1px 3px hsl(220 26% 14% / 0.05);
   /* 层级（§2.5 只允许这四个值）：实现侧浮层现统一压在 z-50 一档，toast 按规范要盖过弹窗
      （原型 --z-toast 300 > --z-modal 200），故取 50 之上的一档。 */
   --z-toast: 60;
@@ -162,6 +165,8 @@
   --background: var(--n-0);
   --nav-hover: 220 6% 11.5%; /* 比侧栏 n-75（9%）亮一档 */
   --nav-active: 220 6% 13.5%; /* 选中再亮一档 */
+  --sh-1:
+    0 1px 2px hsl(0 0% 0% / 0.3), 0 1px 3px hsl(0 0% 0% / 0.26); /* 暗色阴影重定义（ui-system.css .dark 同值） */
 }
 
 /* 字体族令牌：与 ui-system.css --font-sans / --font-mono 一字不差（非 inline 块，

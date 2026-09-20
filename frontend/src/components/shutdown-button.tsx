@@ -95,7 +95,7 @@ export function ShutdownButton({
             </DialogDescription>
           </DialogHeader>
           {error !== null && (
-            <FormError className="text-[12.5px] text-destructive">{error}</FormError>
+            <FormError className="text-t-sm text-destructive">{error}</FormError>
           )}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>

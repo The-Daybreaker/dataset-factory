@@ -2,16 +2,11 @@ import type { LucideIcon } from "lucide-react";
 import {
   ActivityIcon,
   ArrowLeftIcon,
-  DatabaseIcon,
-  EyeIcon,
   FileTextIcon,
   FolderInputIcon,
-  FolderOutputIcon,
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
-  ScanLineIcon,
   SettingsIcon,
-  SlidersHorizontalIcon,
   TagsIcon,
 } from "lucide-react";
 import type { ReactElement } from "react";
@@ -55,15 +50,6 @@ interface NavItem {
   label: string;
   icon: LucideIcon;
 }
-
-const PLANNED_ITEMS = [
-  { label: "导入 / 素材库", icon: FolderInputIcon },
-  { label: "格式归一", icon: SlidersHorizontalIcon },
-  { label: "机器质检", icon: ScanLineIcon },
-  { label: "数据集", icon: DatabaseIcon },
-  { label: "复核", icon: EyeIcon },
-  { label: "导出", icon: FolderOutputIcon },
-];
 
 interface NavGroup {
   title: string;
@@ -316,30 +302,6 @@ export function App(): ReactElement {
                     </li>
                   );
                 })}
-                {group.title === "流水线" &&
-                  PLANNED_ITEMS.map((item) => (
-                    <li key={item.label}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span className="block">
-                            <button
-                              type="button"
-                              disabled
-                              aria-label={item.label}
-                              className={cn(
-                                "flex h-(--h-md) w-full cursor-not-allowed items-center gap-3 rounded-md px-3 text-n-400",
-                                collapsed && "justify-center px-0",
-                              )}
-                            >
-                              <item.icon className="size-4 shrink-0" />
-                              {!collapsed && item.label}
-                            </button>
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent>{item.label} · 规划中</TooltipContent>
-                      </Tooltip>
-                    </li>
-                  ))}
               </ul>
             </div>
           ))

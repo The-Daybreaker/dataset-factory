@@ -351,7 +351,7 @@ export function EndpointConfigPanel(): ReactElement {
                 {creating ? "添加配置" : current?.name}
               </h3>
               {!creating && current?.is_active && (
-                <Badge variant="success">当前使用</Badge>
+                <Badge variant="info">当前使用</Badge>
               )}
               {!creating && (
                 <Button

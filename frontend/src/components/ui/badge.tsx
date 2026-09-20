@@ -4,18 +4,22 @@ import type { ComponentProps } from "react";
 import { cn } from "../../lib/utils";
 
 const badgeVariants = cva(
-  "inline-flex items-center justify-center gap-1 rounded-sm border px-2 py-0.5 text-[12px] font-medium w-fit whitespace-nowrap [&>svg]:size-3",
+  // 章的固定形态（ui-spec §5.15「章 / 标记」行）：胶囊形、18px 一档、11px 字（--t-xs）、medium。
+  // 18px 实现侧暂无高度令牌（--h-xs 是 22px 的行内动作档），按规范字面书写并在此登记出处。
+  "inline-flex h-[18px] w-fit items-center justify-center gap-1 whitespace-nowrap rounded-full px-2 text-[11px] font-medium [&>svg]:size-3",
   {
     variants: {
       variant: {
-        default: "border-transparent bg-primary text-primary-foreground",
-        /* 已启用 = 主色浅底（主色 10% 派生） */
-        success: "border-transparent bg-primary/10 text-primary",
-        /* 已停用 = 灰底 */
-        muted: "border-transparent bg-muted text-muted-foreground",
+        // 状态章一律「实底彩色 + 白字」（§5.2，v4.1 定案）：字色走 --on-ink，
+        // 暗色下随令牌自动翻成深字；浅底形态不再做章。
+        default: "bg-primary text-primary-foreground",
+        success: "bg-ok-ink text-on-ink",
+        info: "bg-info-ink text-on-ink",
+        destructive: "bg-bad-ink text-on-ink",
+        // 「已停用」这类不需要强调的状态：不开新的章底色（§5.2 尾句），
+        // 用灰字 + 字重表达——落在 2026-09-20 的取色拍板上（候选 α）。
+        muted: "text-n-500",
         outline: "text-foreground",
-        /* 危险态徽章（如配置删除确认） */
-        destructive: "border-transparent bg-destructive/10 text-destructive",
       },
     },
     defaultVariants: {
