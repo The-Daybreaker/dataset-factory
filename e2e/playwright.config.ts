@@ -12,6 +12,12 @@ import { ISOLATED_SPEC_FILES, isolatedPort } from "./tests/fixtures/isolated-ser
 // 前端构建挂在共用服务那条命令上，不放进 globalSetup：已装机型的源码
 // （playwright/lib/runner/index.js 的 createGlobalSetupTasks）里，插件启动——含起服务
 // ——排在 globalSetup **之前**，构建放进 globalSetup 会赶不上服务启动。
+//
+// 采集被测服务的日志：`stdout` 的默认值是 "ignore"（Playwright 官方文档 webServer 条），
+// 服务打到 stdout 的东西会被整段丢掉；`stderr` 默认才是 "pipe"。应用日志走 stderr，所以
+// 单把级别打开就能看到——但「失败时什么都没有」这种代价在排查里太高，索性两边都收。
+// 每条服务都已设 `name`，官方文档写明它会作为日志前缀（"This name will be prefixed to
+// log messages"），所以七条服务的输出混在同一条流里也能逐条归因。
 const PORT = 8765;
 
 /** 起一份被测服务。端口不同，serving.py 就会自己建一份不同的临时数据根。 */
@@ -44,6 +50,7 @@ export default defineConfig({
         : `npm run build --prefix ../frontend && ${serve(PORT)}`,
       url: `http://127.0.0.1:${PORT}/api/prompts`,
       name: "shared",
+      stdout: "pipe",
       // 不复用已存在的服务：8765 上若残留着上次没退干净的服务，它的数据根是旧的、
       // 也不会被新进程的清扫碰到，「每次都从干净状态开始」这条前提会悄悄失效。
       // 直接报错，比静默跑在旧数据上强。
@@ -58,6 +65,7 @@ export default defineConfig({
       // 的先后问题，被这条探针顺手解决了。
       url: `http://127.0.0.1:${isolatedPort(file)}/`,
       name: file,
+      stdout: "pipe",
       reuseExistingServer: false,
       timeout: 120_000,
     })),

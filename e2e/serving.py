@@ -47,6 +47,13 @@ _GATED_MODEL = "gated-e2e-model"
 _GATED_ENTERED = threading.Event()
 _GATED_RELEASE = threading.Event()
 
+# 日志级别沿用 `dsf serve` 的口径（环境变量 DSF_LOG_LEVEL，缺省 INFO）。这里把变量名写一遍
+# 而不去 import cli 里的：那是个私有名，跨模块引用私有名会被 pyright strict 判违规。
+_LOG_LEVEL_ENV = "DSF_LOG_LEVEL"
+_DEFAULT_LOG_LEVEL = "INFO"
+
+logger = logging.getLogger(__name__)
+
 
 def _sweep_stale_data_homes(*, grace_seconds: float) -> None:
     """清掉历史 E2E 留在系统临时目录里、已经没人用的数据根。
@@ -229,15 +236,34 @@ def build_fake_llm_app() -> FastAPI:
     return app
 
 
+def _configure_logging() -> None:
+    """把被测服务的日志接到应用自己的配置上（stderr + request id），级别读 DSF_LOG_LEVEL。
+
+    必须在 ``DATASET_FACTORY_HOME`` 落到环境变量之后再调用——应用在导入期就解析数据根，
+    而本函数要导入应用模块（同 main 里那句注释的理由）。
+
+    为什么要配：E2E 的价值全在「失败时能查」。原先这里把 root logger 压到 WARNING、
+    uvicorn 的 access log 又是关的，于是「任务停在原地」这类故障现场一行证据都不留——
+    本轮连跑五轮的失败日志里没有一条服务输出，排查只能靠猜。
+    """
+    from dataset_factory.cli.main import configure_logging
+
+    configure_logging(os.environ.get(_LOG_LEVEL_ENV, _DEFAULT_LOG_LEVEL))
+    # 请求记录由应用中间件负责（带耗时与 request id，比 uvicorn 的 access log 信息多），
+    # 这里把 uvicorn 自己的 logger 压到 WARNING：同一件事不打两遍，也免掉逐连接噪声。
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
 def main() -> None:
     args = _parse_args()
-    logging.basicConfig(level=logging.WARNING)
 
     _sweep_stale_data_homes(grace_seconds=_STALE_DATA_HOME_GRACE_SECONDS)
     owns_data_home = args.data_home is None
     data_home = _resolve_data_home(args.data_home, port=args.port)
     # 数据根必须在导入 dataset_factory 之前落到环境变量上：应用在导入期就解析它。
     os.environ["DATASET_FACTORY_HOME"] = str(data_home)
+    _configure_logging()
     owner_lock = _claim_data_home(data_home)
     if owns_data_home:
         # 自建的临时数据根由本进程负责收尾；--data-home 显式指定的归调用方管，
@@ -263,6 +289,9 @@ def main() -> None:
 
     import uvicorn
 
+    logger.info(
+        "E2E 被测服务启动中：http://127.0.0.1:%d（数据根 %s）", args.port, data_home
+    )
     uvicorn.run(
         system_app, host="127.0.0.1", port=args.port, log_config=None, access_log=False
     )
