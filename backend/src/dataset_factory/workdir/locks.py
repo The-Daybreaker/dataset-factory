@@ -56,7 +56,26 @@ from .errors import (
     WorkdirPathError,
 )
 
-__all__ = ["RunLock", "StateLock", "import_guard", "read_occupier"]
+__all__ = [
+    "MAINTENANCE_WAIT_SECONDS",
+    "RunLock",
+    "StateLock",
+    "import_guard",
+    "read_occupier",
+]
+
+#: 开始一次维护类动作（搬迁 / 删除 / 导入 / 只读统计）时，等维护锁释放的窗口（秒）。
+#:
+#: 为什么要等：维护锁的持有者有两类、持有时长差三个数量级——跨文件短写入是毫秒级
+#: （``workdir_write`` 自己就用 10 秒去抢锁，说明它预期会被短暂占用），而搬迁 / 删除是
+#: 秒级以上。开始动作时若零容忍抢锁，一次碰巧并发的短写入就能让用户看到「工作目录正在
+#: 搬迁或删除」，而那一刻既没搬迁也没删除——2026-09-20 用 request id 对日志实锤：只读的
+#: ``GET .../stats`` 拿到 409（41ms），而同窗口的邻居请求全是 200。
+#:
+#: 窗口取 5 秒：足以吸收最慢的短写入（实测同进程内写类请求最长约 900ms），又能在真的
+#: 搬迁 / 删除时尽快给出那条本来就准确的提示。**默认值仍是 0**——:func:`maintenance_guard`
+#: 的既有契约不变，只有「开始一次动作」的调用点显式传这个窗口。
+MAINTENANCE_WAIT_SECONDS = 5.0
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +141,10 @@ def maintenance_guard(workdir: Path, *, timeout: float = 0) -> Generator[None]:
     抢不到 = 该目录正在被搬迁或删除，抛 ``WorkdirMaintenanceError`` 而不是
     ``RunOccupiedError``——两者都劝用户「等会儿再来」，但占用者不同，提示不能
     张冠李戴（详见该异常类的 docstring）。
+
+    超时怎么给：默认 0 适合「已经在临界区里、确认自己仍持有」的嵌套调用；**开始一次
+    动作**（搬迁 / 删除 / 导入 / 只读统计）时应当传 :data:`MAINTENANCE_WAIT_SECONDS`，
+    否则会与毫秒级的跨文件短写入撞出假占用（理由与实测见该常量）。
     """
     path = maintenance_record(workdir).with_suffix(".lock")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -184,7 +207,9 @@ def import_guard(
         if lock.is_locked:
             lock.acquire(timeout=0)
         else:
-            with maintenance_guard(dsf_path.parent):
+            # 维护锁给等待窗口：抢它的人可能是毫秒级短写入（理由见常量注释），零容忍会
+            # 让只读统计在并发下凭空失败。imports 锁本身仍是「非阻塞竞争即返回」。
+            with maintenance_guard(dsf_path.parent, timeout=MAINTENANCE_WAIT_SECONDS):
                 require_workdir_writable(dsf_path)
                 require_directory_identity(dsf_path.parent, directory_identity)
                 lock.acquire(timeout=0)

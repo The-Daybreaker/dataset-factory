@@ -15,6 +15,7 @@ from .._fs import atomic_write_text, data_root, hash_stream
 from ..tasks import TaskCancelledError
 from .errors import WorkdirPathError
 from .locks import (
+    MAINTENANCE_WAIT_SECONDS,
     RunLock,
     StateLock,
     import_guard,
@@ -238,7 +239,10 @@ def relocate_workdir(
     if destination.is_symlink() or destination.is_junction():
         raise WorkdirPathError("搬迁目标不能是链接，请检查后重试。")
     destination = destination.resolve()
-    with maintenance_guard(source), maintenance_guard(destination):
+    with (
+        maintenance_guard(source, timeout=MAINTENANCE_WAIT_SECONDS),
+        maintenance_guard(destination, timeout=MAINTENANCE_WAIT_SECONDS),
+    ):
         if registered_path(wid).resolve() != source:
             raise WorkdirPathError("工作目录位置已变化，请刷新后重试。")
         store = WorkdirStore(source)
@@ -445,7 +449,10 @@ def retry_relocation_cleanup(wid: str, old_path: Path) -> dict[str, object]:
     """只清理由该工作目录搬迁记录证明的旧位置，不能指定任意删除路径。"""
     source = old_path.absolute()
     destination = registered_path(wid).resolve()
-    with maintenance_guard(source), maintenance_guard(destination):
+    with (
+        maintenance_guard(source, timeout=MAINTENANCE_WAIT_SECONDS),
+        maintenance_guard(destination, timeout=MAINTENANCE_WAIT_SECONDS),
+    ):
         if registered_path(wid).resolve() != destination:
             raise WorkdirPathError("工作目录位置已变化，请刷新后重试。")
         record = maintenance_record(source)

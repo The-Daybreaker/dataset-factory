@@ -244,6 +244,41 @@ def test_maintenance_contention_reports_its_own_error(workdir: Path) -> None:
     assert "搬迁" in str(errors[0])
 
 
+def test_import_guard_waits_out_a_short_maintenance_hold(workdir: Path) -> None:
+    """导入 / 统计入口等短维护释放后再进，不零容忍地报「正在搬迁或删除」。
+
+    背景（2026-09-20 实锤）：只读的 ``GET .../stats`` 经 ``import_guard`` 用零超时抢
+    维护锁，与并发的毫秒级跨文件短写入相撞 → 409「工作目录正在搬迁或删除」，而那一刻
+    既没搬迁也没删除。跑批启停早有同款处理（见
+    ``test_run_control_waits_for_short_maintenance``），这里把同一口径钉在导入 / 统计入口。
+    """
+    dsf = WorkdirStore(workdir).dsf_path
+    started = threading.Event()
+    finished = threading.Event()
+    outcomes: list[str] = []
+
+    def contender_body() -> None:
+        started.set()
+        try:
+            with import_guard(dsf):
+                outcomes.append("entered")
+        except WorkdirMaintenanceError:
+            outcomes.append("maintenance-error")
+        finally:
+            finished.set()
+
+    with maintenance_guard(workdir):
+        contender = threading.Thread(target=contender_body)
+        contender.start()
+        assert started.wait(5)
+        finished_early = finished.wait(0.1)
+    contender.join(5)
+
+    assert not contender.is_alive()
+    assert not finished_early
+    assert outcomes == ["entered"]
+
+
 @pytest.mark.parametrize("stop", [False, True])
 @pytest.mark.parametrize("running", [False, True])
 def test_run_control_waits_for_short_maintenance(

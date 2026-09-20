@@ -12,6 +12,7 @@ from typing import cast
 from .._fs import atomic_write_text, data_root, hash_file
 from .errors import WorkdirPathError
 from .locks import (
+    MAINTENANCE_WAIT_SECONDS,
     RunLock,
     StateLock,
     import_guard,
@@ -153,7 +154,7 @@ def delete_workdir(wid: str, confirmed_path: Path) -> DeletionResult:
     root = _root(wid)
     if confirmed_path.resolve() != root:
         raise WorkdirPathError("确认路径与当前工作目录不同，请重新查看删除范围。")
-    with maintenance_guard(root):
+    with maintenance_guard(root, timeout=MAINTENANCE_WAIT_SECONDS):
         if _root(wid) != root:
             raise WorkdirPathError("工作目录位置已变化，请刷新后重试。")
         record_path = maintenance_record(root)
