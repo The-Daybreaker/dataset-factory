@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { isolatedBaseURL, isolatedFakeLlmURL } from "./fixtures/isolated-servers";
+
+// 本文件打真后端，用自己那份服务与数据根；假端点带跨请求的「等待点」状态，也只有
+// 自己的服务上有——指到别人的服务就等于把运行控制权交给了另一个文件。
+test.use({ baseURL: isolatedBaseURL("run-control.spec.ts") });
 
 test("停止保留产物，选择重试可覆盖旧产物，运行中隐藏需确认", async ({
   page,
@@ -33,7 +38,7 @@ test("停止保留产物，选择重试可覆盖旧产物，运行中隐藏需�
   const endpoint = await request.post("/api/endpoints", {
     data: {
       name: endpointName,
-      base_url: "http://127.0.0.1:8765/fake-llm/v1",
+      base_url: isolatedFakeLlmURL("run-control.spec.ts"),
       model: "gated-e2e-model",
       api_key: "sk-e2e-not-a-real-key", // pragma: allowlist secret
     },

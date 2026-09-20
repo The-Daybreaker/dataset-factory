@@ -1,4 +1,8 @@
 import { expect, test } from "@playwright/test";
+import { isolatedBaseURL } from "./fixtures/isolated-servers";
+
+// 本文件打真后端，用自己那份服务与数据根：别处建的提示词不会混进策略库。
+test.use({ baseURL: isolatedBaseURL("strategy-workbench.spec.ts") });
 
 test("策略保存、切换和对话使用同一组合，工作台匹配两栏原型", async ({ page, request }, testInfo) => {
   const errors: string[] = [];

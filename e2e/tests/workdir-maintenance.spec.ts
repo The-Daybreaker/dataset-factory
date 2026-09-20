@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { isolatedBaseURL } from "./fixtures/isolated-servers";
+
+// 本文件打真后端，用自己那份服务与数据根：搬迁/删除的维护锁也落在自己的数据根里，
+// 不会被别的文件的操作撞上。
+test.use({ baseURL: isolatedBaseURL("workdir-maintenance.spec.ts") });
 
 test("工作目录搬迁经界面确认后保留素材与快照并更新登记", async ({ page, request }, testInfo) => {
   test.setTimeout(60_000);

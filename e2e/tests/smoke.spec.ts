@@ -9,6 +9,10 @@
  * 旅程里的点击目标已对准新外壳的侧栏导航。
  */
 import { expect, test } from "@playwright/test";
+import { isolatedBaseURL } from "./fixtures/isolated-servers";
+
+// 本文件打真后端，用自己那份服务与数据根：别的文件建的提示词、登记的工作目录都进不来。
+test.use({ baseURL: isolatedBaseURL("smoke.spec.ts") });
 
 test.describe("界面冒烟", () => {
   test("移动导航的主题选择跨开关保留并与桌面及系统模式一致", async ({ page }) => {

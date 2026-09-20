@@ -2,6 +2,10 @@ import { expect, test } from "@playwright/test";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { hostname } from "node:os";
+import { isolatedBaseURL } from "./fixtures/isolated-servers";
+
+// 本文件打真后端，用自己那份服务与数据根：重建导入读的是自己数据根里的事件流。
+test.use({ baseURL: isolatedBaseURL("rebuild-imports.spec.ts") });
 
 test("首次复制导入展示三种跳过反馈并逐条重导后继续启动", async ({ page, request }, testInfo) => {
   const source = testInfo.outputPath("source");

@@ -1,4 +1,8 @@
 import { expect, test } from "@playwright/test";
+import { isolatedBaseURL } from "./fixtures/isolated-servers";
+
+// 本文件打真后端，用自己那份服务与数据根：导入的技能只落在自己的数据根里。
+test.use({ baseURL: isolatedBaseURL("skill-editing.spec.ts") });
 
 test("技能拖入、正文与描述写回经真实接口保存并刷新恢复", async ({ page, request }, testInfo) => {
   const errors: string[] = [];
