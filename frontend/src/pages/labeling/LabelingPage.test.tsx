@@ -592,25 +592,25 @@ describe("切页记忆与状态章", () => {
   it("空闲上报回读磁盘终态而不是抹掉状态章", async () => {
     vi.mocked(api.currentRun).mockResolvedValue(null);
     vi.mocked(api.latestRun).mockResolvedValue({
-        record: {
-          run_id: "r1",
-          batch: 1,
-          mode: "full",
-          status: "completed",
-          started_at: "2026-09-22T00:00:00Z",
-          finished_at: "2026-09-22T00:01:00Z",
-          counters: {
-            attempted: 0,
-            failed: 0,
-            planned: 0,
-            skipped: 0,
-            succeeded: 0,
-          },
-          dsf_version: "0.1.0",
-          snapshot: "",
-          strategy_hash: "",
-          trigger: "manual",
+      record: {
+        run_id: "r1",
+        batch: 1,
+        mode: "full",
+        status: "completed",
+        started_at: "2026-09-22T00:00:00Z",
+        finished_at: "2026-09-22T00:01:00Z",
+        counters: {
+          attempted: 0,
+          failed: 0,
+          planned: 0,
+          skipped: 0,
+          succeeded: 0,
         },
+        dsf_version: "0.1.0",
+        snapshot: "",
+        strategy_hash: "",
+        trigger: "manual",
+      },
       log_path: null,
       items_path: null,
     });
