@@ -97,7 +97,11 @@ test("新建跑批在启动前列出来源中未复制的文件", async ({ page 
     await expect(page.getByRole("textbox", { name: label, exact: true })).toHaveValue(directory);
   }
   await page.getByRole("textbox", { name: "策略名", exact: true }).fill("首次复制预检");
-  await page.getByRole("button", { name: "开始打标", exact: true }).click();
+  // L1：新建跑批改为画布内换块，顶栏运行控制同屏——把点击限定在表单区。
+  await page
+    .getByRole("region", { name: "新建跑批" })
+    .getByRole("button", { name: "开始打标", exact: true })
+    .click();
   const confirmation = page.getByRole("dialog", { name: "开始打标前确认" });
   await expect(confirmation).toContainText("design.psd");
   expect(starts).toHaveLength(0);
@@ -215,7 +219,11 @@ test("重建导入记录经真实任务恢复登记并自动刷新概览", async
   await expect(changed).toHaveCount(0);
   expect(await readFile(path.join(directory, "s1__sample.txt"), "utf8")).toBe("E2E 假模型的打标结果");
   const included = page.getByRole("region", { name: "将入包清单" });
-  await expect(included.getByText("001.png + 001.txt", { exact: true })).toBeVisible();
+  // 等待预算放宽（2026-09-21）：重打完成后导出面板要等 RunControl 报终态（idle 哨兵 /
+  // run-finished）+ 计划重取，SSE 重连退避最长 10s——in-suite 高负载下 5s 不够。
+  await expect(included.getByText("001.png + 001.txt", { exact: true })).toBeVisible({
+    timeout: 20_000,
+  });
   await included.getByRole("button", { name: "选择", exact: true }).click();
   await included.getByRole("button", { name: "全选", exact: true }).click();
   await included.getByRole("button", { name: "排除选中的", exact: true }).click();

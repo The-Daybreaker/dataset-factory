@@ -12,7 +12,7 @@ test("打标页长名称下顶栏与条目列保持原型尺寸和对齐", async
     batch: 1, query: "", groups: { done: [{ item: "sample", name: "sample.jpg",
       status: "done", media: "image", can_retry: true, in_retry: false }] },
   } }));
-  await page.route("**/runs/current", (route) => route.fulfill({ status: 404, json: { detail: "没有运行" } }));
+  await page.route("**/runs/current", (route) => route.fulfill({ status: 200, json: null })); // L3：空闲 = 200 + null
   await page.route("**/runs/latest", (route) => route.fulfill({ json: {
     record: null, log_path: null, items_path: null,
   } }));
@@ -52,8 +52,9 @@ test("打标页长名称下顶栏与条目列保持原型尺寸和对齐", async
   expect(searchBox.height).toBe(26);
   expect(selectorBox.x + selectorBox.width).toBeLessThan(createBox.x);
   const context = page.getByRole("region", { name: "策略配置" });
-  // 端点章 title = 「端点 · 模型 · 健康信息」（C1 探测点），健康段随探测结果变化，按前缀匹配。
-  const endpoint = context.getByTitle(/Example · caption-model/);
+  // V14（2026-09-21 审计）：健康信息移入自研气泡，章内文本 = 「端点 · 模型」——
+  // 按文本定位后取父级章容器做尺寸断言（可读名来自 base_url 域名，V9）。
+  const endpoint = context.getByText("Example · caption-model", { exact: true }).locator("..");
   await expect(endpoint).toBeVisible();
   await expect(endpoint).toHaveCSS("height", "26px");
   await expect(endpoint).toHaveCSS("border-radius", "12px");

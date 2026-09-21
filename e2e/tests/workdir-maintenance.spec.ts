@@ -51,7 +51,8 @@ test("工作目录搬迁经界面确认后保留素材与快照并更新登记",
   await strategyDialog.getByRole("button", { name: "创建策略", exact: true }).click();
   await expect(strategyDialog).toHaveCount(0);
   await expect(page.getByRole("button", { name: "改名策略 设置新增", exact: true })).toBeVisible();
-  expect((await request.get(`/api/workdirs/${wid}/batches/s2/runs/current`)).status()).toBe(404);
+  expect((await request.get(`/api/workdirs/${wid}/batches/s2/runs/current`)).status()).toBe(200); // L3：空闲 = 200 + null
+    expect(await (await request.get(`/api/workdirs/${wid}/batches/s2/runs/current`)).json()).toBeNull();
   await page.getByRole("button", { name: "返回打标页", exact: true }).click();
   await page.getByRole("button", { name: "选择工作目录与批次" }).click();
   await page.getByRole("button", { name: "新增策略 搬迁验证", exact: true }).click();
@@ -78,7 +79,7 @@ test("工作目录搬迁经界面确认后保留素材与快照并更新登记",
   await expect(page.getByRole("button", { name: "选择工作目录与批次" })).toContainText("下拉新增");
   const batchList = await (await request.get(`/api/workdirs/${wid}/batches`)).json();
   expect(batchList.map((entry: { id: string; name: string }) => [entry.id, entry.name])).toEqual([["s1", "搬迁改名"], ["s2", "设置新增"], ["s3", "下拉新增"]]);
-  expect((await request.get(`/api/workdirs/${wid}/batches/s3/runs/current`)).status()).toBe(404);
+  expect((await request.get(`/api/workdirs/${wid}/batches/s3/runs/current`)).status()).toBe(200); // L3：空闲 = 200 + null
   expect(JSON.parse(await readFile(path.join(source, ".dsf", "strategies", "s3.json"), "utf8"))).toHaveProperty("prompt");
   await page.getByRole("button", { name: "选择工作目录与批次" }).click();
   await page.getByRole("button", { name: "工作目录设置 搬迁验证", exact: true }).click();
@@ -121,8 +122,10 @@ test("工作目录搬迁经界面确认后保留素材与快照并更新登记",
   // 默认 5s 在整条门禁连跑（前面刚跑完 pytest / Vitest / 构建）时不够用，实测同一份代码
   // 单跑必过、跟在门禁后面偶发不出现（2026-09-19 三次 in-suite 失败均是等待预算不足，
   // 报错都是 element(s) not found 而非搬迁失败）。放宽等待，断言内容与后面的磁盘核对一字未改。
+  // 2026-09-21 再放宽到 60s：in-suite 跑时搬迁任务与并行 worker 抢 CPU，「正在搬迁 · 0%」
+  // 卡 30s 的形态与 2026-09-19 相同（等待预算不足，非搬迁失败）。
   await expect(dialog.getByRole("status")).toContainText("已搬迁到", {
-    timeout: 30_000,
+    timeout: 60_000,
   });
   expect(moves).toEqual([{ path: target }]);
   expect(await readFile(path.join(target, "sample.png"))).toEqual(bytes);
