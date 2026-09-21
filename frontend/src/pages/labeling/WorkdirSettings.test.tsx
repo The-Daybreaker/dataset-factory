@@ -22,7 +22,7 @@ vi.mock("../../api", async (original) => ({
   },
 }));
 
-it("隐藏策略等待确认，失败保留活跃状态并可重试成功", async () => {
+it("停用策略等待确认，失败保留活跃状态并可重试成功", async () => {
   const user = userEvent.setup();
   const changed = vi.fn();
   const batch = {
@@ -45,7 +45,7 @@ it("隐藏策略等待确认，失败保留活跃状态并可重试成功", asyn
   render(<WorkdirSettings wid="w1" onBack={vi.fn()} onChanged={changed} />);
 
   await user.click(await screen.findByRole("button", { name: "停用" }));
-  const dialog = within(screen.getByRole("dialog", { name: "隐藏策略？" }));
+  const dialog = within(screen.getByRole("dialog", { name: "停用策略？" }));
   expect(dialog.getByText(/已完成条目与产物保留/)).toBeVisible();
   expect(api.setBatchActive).not.toHaveBeenCalled();
   await user.click(dialog.getByRole("button", { name: "确认" }));
@@ -64,7 +64,7 @@ it("隐藏策略等待确认，失败保留活跃状态并可重试成功", asyn
   expect(changed).toHaveBeenCalledOnce();
 });
 
-it("运行中的策略显示运行状态并禁止删除，仍可请求隐藏", async () => {
+it("运行中的策略显示运行状态并禁止删除，仍可请求停用", async () => {
   vi.mocked(api.getWorkdir).mockResolvedValue({
     id: "w1",
     path: "/srv/dataset",

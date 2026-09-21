@@ -5,6 +5,7 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
@@ -14,7 +15,7 @@ import pytest
 from typer.testing import CliRunner
 
 from dataset_factory.cli.main import app
-from dataset_factory.llm import StreamDelta, create_config
+from dataset_factory.llm import Message, StreamDelta, create_config
 from dataset_factory.llm.errors import LLMBadRequestError
 from dataset_factory.prompts import Prompt, delete_prompt, save_prompt
 from dataset_factory.strategies import create_strategy, list_batches
@@ -105,7 +106,7 @@ def test_ctrl_c_keeps_completed_item_and_restores_handler(
     """模型调用中一次 Ctrl-C 不丢当前成功产物，退出码 130 且后续条目不跑。"""
 
     class InterruptingCompleter(FakeCompleter):
-        def stream(self, messages: object) -> object:
+        def stream(self, messages: Sequence[Message]) -> Iterator[StreamDelta]:
             signal.raise_signal(signal.SIGINT)
             return iter([StreamDelta(kind="content", text="completed before stop")])
 
@@ -221,7 +222,7 @@ def test_failed_run_reports_counts_and_nonzero_exit(
     """不可重试模型错误返回失败计数和退出码 1，不生成产物。"""
 
     class RejectingCompleter(FakeCompleter):
-        def stream(self, messages: object) -> object:
+        def stream(self, messages: Sequence[Message]) -> Iterator[StreamDelta]:
             raise LLMBadRequestError("Unsupported media")
 
     def assemble(endpoint: object) -> FakeCompleter:
