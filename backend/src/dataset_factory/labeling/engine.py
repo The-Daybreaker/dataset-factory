@@ -505,8 +505,8 @@ class LabelingEngine:
             MaterialLabelResult：caption 终稿 + 素材哈希（与非流式完全同形）。
 
         Raises:
-            与 :meth:`label_material` 同一套（含流中途失败的 LLMError——此时增量
-            已转发，调用方按失败处置，半截内容只活内存、不落盘）。
+            LLMError: 与 :meth:`label_material` 同一套失败——流中途失败时增量
+                已转发，调用方按失败处置，半截内容只活内存、不落盘。
         """
         start = perf_counter()
         messages, asset_hash = _prepare_material_messages(
