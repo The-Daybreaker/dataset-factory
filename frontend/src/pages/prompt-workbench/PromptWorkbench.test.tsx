@@ -14,6 +14,7 @@ import {
   type PromptInfo,
   type SkillInfo,
 } from "../../api";
+import { ChatSessionProvider } from "./chat-session";
 import { PromptWorkbench } from "./PromptWorkbench";
 
 // 工作台测试只关心「交互 → 调了哪个 API → 界面状态对不对」，api 层整体 mock 掉。
@@ -91,6 +92,14 @@ beforeEach(() => {
   });
 });
 
+/** 工作台的对话状态住在 App 级会话域里：渲染必须包 Provider（与 App 的真实装配一致）。 */
+const renderWorkbench = () =>
+  render(
+    <ChatSessionProvider>
+      <PromptWorkbench onNavigateToSettings={() => {}} />
+    </ChatSessionProvider>,
+  );
+
 describe("PromptWorkbench", () => {
   it("连续选择附件时只采用最后一次读取结果，移除后不被迟到读取恢复", async () => {
     const readers: DeferredReader[] = [];
@@ -103,7 +112,7 @@ describe("PromptWorkbench", () => {
     }
     vi.stubGlobal("FileReader", DeferredReader);
     try {
-      render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+      renderWorkbench();
       await waitFor(() =>
         expect(screen.getByLabelText("名称")).toHaveValue("h3-video"),
       );
@@ -132,7 +141,7 @@ describe("PromptWorkbench", () => {
         rejectActivation = reject;
       }),
     );
-    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    renderWorkbench();
     await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("h3-video"));
     fireEvent.input(screen.getByLabelText("打标指令"), {
       target: { value: "保留指令" },
@@ -159,7 +168,7 @@ describe("PromptWorkbench", () => {
         resolveSession = resolve;
       }),
     );
-    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    renderWorkbench();
     await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("h3-video"));
 
     await userEvent.click(screen.getByRole("button", { name: "添加 Skill" }));
@@ -196,7 +205,7 @@ describe("PromptWorkbench", () => {
       ],
     });
 
-    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    renderWorkbench();
 
     expect(await screen.findByText("一个穿红外套的人在雪地里")).toBeInTheDocument();
     fireEvent.click(screen.getByText("思考过程"));
@@ -210,7 +219,7 @@ describe("PromptWorkbench", () => {
         rejectSession = reject;
       }),
     );
-    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    renderWorkbench();
     await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("h3-video"));
 
     fireEvent.input(screen.getByLabelText("打标指令"), { target: { value: "新指令" } });
@@ -238,7 +247,7 @@ describe("PromptWorkbench", () => {
     apiMock.listStrategies.mockResolvedValue([strategy]);
     apiMock.savePrompt.mockResolvedValue(undefined);
     apiMock.activateEndpoint.mockResolvedValue(undefined);
-    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    renderWorkbench();
     await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("h3-video"));
 
     fireEvent.input(screen.getByLabelText("描述"), { target: { value: "新描述" } });
@@ -267,7 +276,7 @@ describe("PromptWorkbench", () => {
   it("策略端点激活失败保留原提示词与端点并允许重试", async () => {
     apiMock.listStrategies.mockResolvedValue([strategy]);
     apiMock.activateEndpoint.mockRejectedValueOnce(new Error("端点不可用"));
-    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    renderWorkbench();
     await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("h3-video"));
     apiMock.getPrompt.mockResolvedValue({
       name: "simple",
@@ -290,7 +299,7 @@ describe("PromptWorkbench", () => {
         resolveSession = resolve;
       }),
     );
-    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    renderWorkbench();
     await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("h3-video"));
 
     fireEvent.input(screen.getByLabelText("描述"), { target: { value: "保留编辑" } });
@@ -311,7 +320,7 @@ describe("PromptWorkbench", () => {
     apiMock.savePrompt
       .mockRejectedValueOnce(new Error("写入失败"))
       .mockResolvedValueOnce(undefined);
-    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    renderWorkbench();
     await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("h3-video"));
 
     fireEvent.input(screen.getByLabelText("名称"), { target: { value: "renamed" } });
@@ -335,7 +344,7 @@ describe("PromptWorkbench", () => {
         resolvePrompt = resolve;
       }),
     );
-    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    renderWorkbench();
     await waitFor(() => expect(apiMock.getPrompt).toHaveBeenCalledWith("h3-video"));
 
     await userEvent.click(screen.getByRole("button", { name: "切换提示词" }));
@@ -348,7 +357,7 @@ describe("PromptWorkbench", () => {
   });
 
   it("进页拉取列表与端点配置；无会话恢复时自动选中首条作为本轮基础提示词", async () => {
-    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    renderWorkbench();
 
     await waitFor(() => {
       expect(apiMock.getPrompt).toHaveBeenCalledWith("h3-video");
@@ -364,7 +373,7 @@ describe("PromptWorkbench", () => {
   it("改名保存：先 renamePrompt（改文件名）再按新名 savePrompt", async () => {
     apiMock.renamePrompt.mockResolvedValue(undefined);
     apiMock.savePrompt.mockResolvedValue(undefined);
-    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    renderWorkbench();
 
     await waitFor(() => {
       expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
@@ -388,7 +397,7 @@ describe("PromptWorkbench", () => {
 
   it("保存：调 savePrompt（名称 + 描述 + 正文）并刷新列表", async () => {
     apiMock.savePrompt.mockResolvedValue(undefined);
-    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    renderWorkbench();
 
     await waitFor(() => {
       expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
@@ -410,7 +419,7 @@ describe("PromptWorkbench", () => {
   });
 
   it("发送：labelStream 请求携带选中的基础提示词，流式渲染后上屏终稿与模型 meta", async () => {
-    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    renderWorkbench();
 
     await waitFor(() => {
       expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
@@ -451,7 +460,7 @@ describe("PromptWorkbench", () => {
       handlers.onDelta("content", "果");
       handlers.onDone("s1", "打标结果");
     });
-    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    renderWorkbench();
 
     await waitFor(() => {
       expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
@@ -478,7 +487,7 @@ describe("PromptWorkbench", () => {
       handlers.onDelta("content", "打标结果");
       handlers.onDone("s1", "打标结果");
     });
-    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    renderWorkbench();
 
     await waitFor(() => {
       expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
@@ -496,7 +505,7 @@ describe("PromptWorkbench", () => {
 
   it("提示词库为空时发送：labelStream 收到 null（后端给可操作错误）", async () => {
     apiMock.listPrompts.mockResolvedValue([]);
-    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    renderWorkbench();
 
     await waitFor(() => expect(apiMock.listPrompts).toHaveBeenCalled());
     await userEvent.type(screen.getByLabelText("打标指令"), "打标");
@@ -513,7 +522,7 @@ describe("PromptWorkbench", () => {
 
   it("端点切换器选择另一套配置：调 activateEndpoint 并更新 chip", async () => {
     apiMock.activateEndpoint.mockResolvedValue(undefined);
-    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    renderWorkbench();
 
     await waitFor(() => screen.getByText("default · model-a"));
     await userEvent.click(screen.getByLabelText("端点配置切换器"));
@@ -527,7 +536,7 @@ describe("PromptWorkbench", () => {
 
   it("删除提示词：确认对话框 → 调 deletePrompt", async () => {
     apiMock.deletePrompt.mockResolvedValue(undefined);
-    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    renderWorkbench();
 
     await waitFor(() => {
       expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
@@ -559,7 +568,7 @@ describe("PromptWorkbench", () => {
       handlers.onDelta("content", "视频描述");
       handlers.onDone("s1", "视频描述");
     });
-    render(<PromptWorkbench onNavigateToSettings={() => {}} />);
+    renderWorkbench();
 
     await waitFor(() => {
       expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
@@ -592,5 +601,51 @@ describe("PromptWorkbench", () => {
       );
     });
     vi.unstubAllGlobals();
+  });
+
+  it("生成中卸载再重挂工作台（模拟切页往返），流式面板接上、回复照常上屏", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    apiMock.labelStream.mockImplementation(async (_payload, handlers) => {
+      handlers.onStart("s1");
+      handlers.onDelta("content", "半截");
+      await gate;
+      handlers.onDone("s1", "切页回归终稿");
+    });
+    // 与 App 装配同构：会话域在工作台之外，「切页」只是挂载 / 卸载工作台。
+    function Toggle({ show }: { show: boolean }) {
+      return show ? <PromptWorkbench onNavigateToSettings={() => {}} /> : null;
+    }
+    const { rerender } = render(
+      <ChatSessionProvider>
+        <Toggle show />
+      </ChatSessionProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
+    });
+    await userEvent.type(screen.getByLabelText("打标指令"), "打个标");
+    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(screen.getByText("半截")).toBeInTheDocument());
+
+    // 切走（卸载）→ 切回（重挂）：会话域不随组件生命周期重建，流式面板原样接上。
+    rerender(
+      <ChatSessionProvider>
+        <Toggle show={false} />
+      </ChatSessionProvider>,
+    );
+    rerender(
+      <ChatSessionProvider>
+        <Toggle show />
+      </ChatSessionProvider>,
+    );
+    expect(screen.getByText("生成中…")).toBeInTheDocument();
+
+    release();
+    expect(await screen.findByText("切页回归终稿")).toBeInTheDocument();
+    expect(screen.queryByText("生成中…")).not.toBeInTheDocument();
   });
 });

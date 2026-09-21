@@ -10,7 +10,7 @@ import {
   useState,
 } from "react";
 import type { EndpointConfigSummary, PromptInfo, SkillInfo } from "../../api";
-import { ApiError, api } from "../../api";
+import { api } from "../../api";
 import { Alert, AlertDescription } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import {
@@ -41,58 +41,14 @@ import type { Feedback } from "../../lib/feedback";
 import { reportError } from "../../lib/feedback";
 import { formatBytes } from "../../lib/format";
 import { BodyEditor } from "./BodyEditor";
+import { useChatSession } from "./chat-session";
 import { EndpointSwitcher } from "./EndpointSwitcher";
 import { InputArea } from "./InputArea";
 import { MessageList } from "./MessageList";
 import { StrategyToolbar } from "./StrategyToolbar";
-import type { ChatMessage, PendingMedia } from "./types";
 
 /** 基础提示词的字节护栏（对齐 Codex project_doc_max_bytes，后端同值校验）。 */
 const PROMPT_BYTE_BUDGET = 32 * 1024;
-
-/** 抽视频首帧与时长（L26/V8）：本地 <video> 解码，失败静默降级为图标（不打扰发送）。 */
-function captureVideoMeta(
-  dataUrl: string,
-): Promise<{ posterUrl?: string; durationSec?: number }> {
-  return new Promise((resolve) => {
-    const video = document.createElement("video");
-    let settled = false;
-    const finish = (meta: { posterUrl?: string; durationSec?: number }): void => {
-      if (settled) return;
-      settled = true;
-      video.removeAttribute("src");
-      resolve(meta);
-    };
-    const timer = window.setTimeout(() => finish({}), 3000);
-    video.preload = "metadata";
-    video.muted = true;
-    video.onloadedmetadata = () => {
-      const duration = Number.isFinite(video.duration) ? video.duration : undefined;
-      video.onseeked = () => {
-        window.clearTimeout(timer);
-        try {
-          const canvas = document.createElement("canvas");
-          canvas.width = video.videoWidth || 160;
-          canvas.height = video.videoHeight || 90;
-          const context = canvas.getContext("2d");
-          context?.drawImage(video, 0, 0, canvas.width, canvas.height);
-          finish({
-            posterUrl: canvas.toDataURL("image/jpeg", 0.7),
-            durationSec: duration,
-          });
-        } catch {
-          finish({ durationSec: duration });
-        }
-      };
-      video.currentTime = Math.min(0.1, duration ?? 0.1);
-    };
-    video.onerror = () => {
-      window.clearTimeout(timer);
-      finish({});
-    };
-    video.src = dataUrl;
-  });
-}
 
 export function PromptWorkbench({
   onNavigateToSettings,
@@ -119,23 +75,38 @@ export function PromptWorkbench({
   const [strategyBusy, setStrategyBusy] = useState(false);
   const [endpointBusy, setEndpointBusy] = useState(false);
 
-  // ---------- 对话列 ----------
+  // ---------- 对话列（状态与逻辑住在 App 级会话域：切页卸载本组件不打断流式生成） ----------
+  const {
+    messages,
+    streaming,
+    copiedId,
+    skillNames,
+    instruction,
+    media,
+    sending,
+    waitSeconds,
+    chatError,
+    restoreState,
+    restoredPromptName,
+    send,
+    stopGeneration,
+    newSession,
+    clearConversation,
+    toggleSkill,
+    applySkillNames,
+    setInstruction,
+    pickMedia,
+    setMediaFps,
+    setMediaMaxFrames,
+    clearMedia,
+    copyCaption,
+    setChatError,
+  } = useChatSession();
+
+  // ---------- 端点配置（页面职责：发送时刻把 activeModel / promptName 传给会话域） ----------
   const [endpoints, setEndpoints] = useState<EndpointConfigSummary[]>([]);
   const [activeModel, setActiveModel] = useState("");
   const [skills, setSkills] = useState<SkillInfo[]>([]);
-  const [skillNames, setSkillNames] = useState<string[]>([]);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [instruction, setInstruction] = useState("");
-  const [media, setMedia] = useState<PendingMedia | null>(null);
-  const [sending, setSending] = useState(false);
-  const [waitSeconds, setWaitSeconds] = useState(0);
-  const [chatError, setChatError] = useState("");
-  const [copiedId, setCopiedId] = useState<number | null>(null);
-  const [streaming, setStreaming] = useState<{
-    reasoning: string;
-    content: string;
-  } | null>(null);
   const bodyInputRef = useRef<HTMLTextAreaElement>(null);
   // 会话恢复是否带回了基础提示词：带回了就不做「自动选中首条」（恢复优先于默认）。
   const restoredPromptRef = useRef(false);
@@ -143,10 +114,6 @@ export function PromptWorkbench({
   const savingPromptRef = useRef(false);
   const interactionRef = useRef(0);
   const activatingEndpointRef = useRef(false);
-  const sendingRef = useRef(false);
-  const mediaRequestRef = useRef(0);
-  // 「停止生成」（N1④）：发送期间持有的 AbortController，停止钮触发即中止本轮。
-  const abortRef = useRef<AbortController | null>(null);
 
   /** 失败分流：连接类失败改弹浮层（不占界面位置），后端返回的业务错误仍就地展示。 */
   const failEditor = useCallback((err: unknown): void => {
@@ -175,9 +142,7 @@ export function PromptWorkbench({
         if (options?.resetSession === true) {
           // 切提示词 = 下一轮换 system 底座（N1 同源③）：旧对话接着新配置只会
           // 让产出来源混乱——直接重开会话，界面上的清空就是最直白的告知。
-          setSessionId(null);
-          setMessages([]);
-          setChatError("");
+          clearConversation();
         }
       } catch (err) {
         if (
@@ -188,14 +153,13 @@ export function PromptWorkbench({
         failEditor(err);
       }
     },
-    [failEditor],
+    [clearConversation, failEditor],
   );
 
   useEffect(
     () => () => {
       promptRequestRef.current += 1;
       interactionRef.current += 1;
-      mediaRequestRef.current += 1;
     },
     [],
   );
@@ -236,62 +200,14 @@ export function PromptWorkbench({
     };
   }, [selectPrompt, failEditor]);
 
-  // 恢复最近一次会话（「还没有会话」404 是首次使用的正常情况，不当错误展示）。
+  // 会话恢复带回了基础提示词：带回了就不做「自动选中首条」（恢复优先于默认），
+  // 也不覆盖用户已选 / 已编辑的草稿——用户动过手（interactionRef > 0）就让位。
   useEffect(() => {
-    let cancelled = false;
-    const interaction = interactionRef.current;
-    void (async () => {
-      try {
-        const snapshot = await api.latestSession();
-        if (cancelled || interaction !== interactionRef.current) {
-          return;
-        }
-        restoredPromptRef.current = true;
-        setSessionId(snapshot.session_id);
-        setSkillNames(snapshot.settings.skill_names);
-        // 历史附件直连会话附件端点（B5）：缩略图不再依赖内存 dataURL，刷新不丢。
-        setMessages(
-          snapshot.messages.map((item, index) => ({
-            ...item,
-            id: index,
-            ...(item.attachment !== null
-              ? {
-                  attachmentUrl: api.sessionAttachmentUrl(
-                    snapshot.session_id,
-                    item.attachment,
-                  ),
-                }
-              : {}),
-          })),
-        );
-        if (snapshot.settings.prompt_name !== null) {
-          await selectPrompt(snapshot.settings.prompt_name);
-        }
-      } catch (err) {
-        const noSessionYet = err instanceof ApiError && err.status === 404;
-        if (!cancelled && interaction === interactionRef.current && !noSessionYet) {
-          setChatError(reportError(err) ?? "");
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectPrompt]);
-
-  // 发送期间每秒累加等待时间；结束（成功 / 失败）时归零。
-  useEffect(() => {
-    if (!sending) {
-      return;
-    }
-    setWaitSeconds(0);
-    const timer = setInterval(() => {
-      setWaitSeconds((current) => current + 1);
-    }, 1000);
-    return () => {
-      clearInterval(timer);
-    };
-  }, [sending]);
+    if (restoreState !== "restored") return;
+    restoredPromptRef.current = true;
+    if (restoredPromptName === null || interactionRef.current !== 0) return;
+    void selectPrompt(restoredPromptName);
+  }, [restoreState, restoredPromptName, selectPrompt]);
 
   const reloadPrompts = useCallback(async (): Promise<void> => {
     try {
@@ -369,7 +285,7 @@ export function PromptWorkbench({
   };
 
   const activateEndpoint = async (name: string): Promise<void> => {
-    if (activatingEndpointRef.current || sendingRef.current || strategyBusy) return;
+    if (activatingEndpointRef.current || sending || strategyBusy) return;
     interactionRef.current += 1;
     activatingEndpointRef.current = true;
     setEndpointBusy(true);
@@ -388,241 +304,34 @@ export function PromptWorkbench({
     }
   };
 
-  const toggleSkill = (name: string): void => {
-    if (sendingRef.current || strategyBusy || activatingEndpointRef.current) return;
+  const handleToggleSkill = (name: string): void => {
+    if (sending || strategyBusy || activatingEndpointRef.current) return;
     interactionRef.current += 1;
-    setSkillNames((current) =>
-      current.includes(name)
-        ? current.filter((item) => item !== name)
-        : [...current, name],
-    );
+    toggleSkill(name);
   };
 
-  const pickMedia = (event: ChangeEvent<HTMLInputElement>): void => {
+  const handlePickMedia = (event: ChangeEvent<HTMLInputElement>): void => {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (file === undefined) {
-      return;
+    if (file !== undefined) {
+      interactionRef.current += 1;
     }
+    pickMedia(file);
+  };
+
+  /** 发送（配置侧收口）：忙态守卫在这里，会话域只管发送本身与重入守卫。 */
+  const handleSend = (): void => {
+    if (endpointBusy || strategyBusy || promptBusy) return;
     interactionRef.current += 1;
-    const request = ++mediaRequestRef.current;
-    const isVideo = file.type.startsWith("video/");
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (request !== mediaRequestRef.current) return;
-      const dataUrl = String(reader.result);
-      const base = {
-        name: file.name,
-        dataUrl,
-        kind: (isVideo ? "video" : "image") as "video" | "image",
-        mime: file.type,
-        byteSize: file.size,
-        fps: 2,
-        maxFrames: 16,
-      };
-      // 附件卡先上屏（视频封面 / 时长异步后补，不挡操作）。
-      setMedia(base);
-      if (!isVideo) return;
-      void captureVideoMeta(dataUrl).then((meta) => {
-        if (request !== mediaRequestRef.current) return;
-        setMedia((current) =>
-          current !== null && current.dataUrl === dataUrl
-            ? { ...current, posterUrl: meta.posterUrl, durationSec: meta.durationSec }
-            : current,
-        );
-      });
-    };
-    reader.onerror = () => {
-      if (request === mediaRequestRef.current)
-        setChatError("附件读取失败，请重新选择。");
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const send = async (): Promise<void> => {
-    if (
-      sendingRef.current ||
-      activatingEndpointRef.current ||
-      strategyBusy ||
-      savingPromptRef.current ||
-      (instruction.trim() === "" && media === null)
-    ) {
-      return;
-    }
-    interactionRef.current += 1;
-    mediaRequestRef.current += 1;
-    sendingRef.current = true;
-    setSending(true);
-    setChatError("");
-    const startedAt = Date.now();
-    // 发送前取定值，随后立刻清输入（N1①，2026-09-21 审计：输入框不再等模型说完才清，
-    // 失败路径同样清——失败的那句话已进气泡，输入框里挂着旧话只会诱发重复发送）。
-    const sentInstruction = instruction;
-    const sentMedia = media;
-    const sentAttachment = media?.name ?? null;
-    const controller = new AbortController();
-    abortRef.current = controller;
-    // 用户消息先上屏（乐观更新）；回复走流式增量，done 后再落终稿消息。
-    setMessages((current) => [
-      ...current,
-      {
-        id: current.length,
-        role: "user",
-        partial: false,
-        text: sentInstruction,
-        attachment: sentAttachment,
-        ...(sentMedia !== null
-          ? {
-              attachmentDataUrl: sentMedia.dataUrl,
-              ...(sentMedia.kind === "video"
-                ? { attachmentDurationSec: sentMedia.durationSec }
-                : {}),
-            }
-          : {}),
-      },
-    ]);
-    setInstruction("");
-    setMedia(null);
-    setStreaming({ reasoning: "", content: "" });
-    let reasoningText = "";
-    let contentText = "";
-    let firstContentAt: number | null = null;
-    /** 断流 / 报错 / 主动停止：已收到的半截也留痕（B5 + N1 同源①），不整段丢弃。 */
-    const keepPartial = (): void => {
-      if (contentText === "" && reasoningText === "") {
-        return;
-      }
-      setMessages((current) => [
-        ...current,
-        {
-          id: current.length,
-          role: "assistant",
-          partial: true,
-          text: contentText,
-          attachment: null,
-          ...(reasoningText === "" ? {} : { reasoning: reasoningText }),
-        },
-      ]);
-    };
-    try {
-      await api.labelStream(
-        {
-          session_id: sessionId,
-          prompt_name: selectedName === "" ? null : selectedName,
-          skill_names: skillNames,
-          instruction: sentInstruction,
-          image_base64: sentMedia?.kind === "image" ? sentMedia.dataUrl : null,
-          image_name: sentMedia?.kind === "image" ? sentMedia.name : "image.png",
-          video_base64: sentMedia?.kind === "video" ? sentMedia.dataUrl : null,
-          video_name: sentMedia?.kind === "video" ? sentMedia.name : "video.mp4",
-          video_fps: sentMedia?.kind === "video" ? sentMedia.fps : 2,
-          video_max_frames: sentMedia?.kind === "video" ? sentMedia.maxFrames : 16,
-        },
-        {
-          onStart: (id) => setSessionId(id),
-          onDelta: (kind, text) => {
-            // 思考增量另存一份到局部变量：done 时挂到消息上（结束后保留可回看）；
-            // 首个正文增量的时刻 = 思考耗时（V7 的本地口径）。
-            if (kind === "reasoning") {
-              reasoningText += text;
-            } else {
-              contentText += text;
-              if (firstContentAt === null) {
-                firstContentAt = Date.now();
-              }
-            }
-            setStreaming((current) =>
-              current === null
-                ? current
-                : kind === "reasoning"
-                  ? { ...current, reasoning: current.reasoning + text }
-                  : { ...current, content: current.content + text },
-            );
-          },
-          onDone: (id, caption) => {
-            setMessages((current) => [
-              ...current,
-              {
-                id: current.length,
-                role: "assistant",
-                partial: false,
-                text: caption,
-                attachment: null,
-                model: activeModel || undefined,
-                durationSeconds: Math.round((Date.now() - startedAt) / 1000),
-                reasoningSeconds:
-                  firstContentAt !== null
-                    ? Math.max(1, Math.round((firstContentAt - startedAt) / 1000))
-                    : undefined,
-                createdAt: new Date(),
-                ...(reasoningText === "" ? {} : { reasoning: reasoningText }),
-              },
-            ]);
-            setSessionId(id);
-            // 与追加消息同一同步块里清流式面板：合并成一次提交，避免「终稿 + 流式面板」
-            // 短暂同屏一帧（e2e 严格模式抓到过）。finally 的清算是错误路径兜底。
-            setStreaming(null);
-          },
-          onError: (message) => {
-            keepPartial();
-            setChatError(message);
-          },
-        },
-        controller.signal,
-      );
-    } catch (err) {
-      keepPartial();
-      // 用户主动停止不当失败展示（停止本身就是那轮的结局）。
-      if (!controller.signal.aborted) {
-        setChatError(reportError(err) ?? "");
-      }
-    } finally {
-      abortRef.current = null;
-      sendingRef.current = false;
-      setSending(false);
-      setStreaming(null);
-    }
-  };
-
-  /** 停止生成（N1④）：中止当前请求；已收到的部分按半截消息留痕。 */
-  const stopGeneration = (): void => {
-    abortRef.current?.abort();
-  };
-
-  /** 清空当前会话（Q4 改名）：只清内存与界面——旧会话仍完整保存在磁盘上。 */
-  const newSession = (): void => {
-    interactionRef.current += 1;
-    mediaRequestRef.current += 1;
-    setSessionId(null);
-    setMessages([]);
-    setChatError("");
-    // 旧输入 / 旧附件 / 旧 Skill 不带进新会话（N1 同源②）。
-    setInstruction("");
-    setMedia(null);
-    setSkillNames([]);
-  };
-
-  const copyCaption = (message: ChatMessage): void => {
-    void navigator.clipboard.writeText(message.text).then(() => {
-      setCopiedId(message.id);
-      window.setTimeout(() => setCopiedId(null), 1500);
-    });
+    send({ promptName: selectedName === "" ? null : selectedName, activeModel });
   };
 
   // 中文输入法的回车上屏不属于「发送」（isComposing 判定），Shift+Enter 换行。
   const onInstructionKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
-      void send();
+      handleSend();
     }
-  };
-
-  // 抽帧参数改动走函数式更新：值已在 InputArea 的事件处理里同步取出，这里只合成新 media。
-  const setMediaFps = (fps: number): void => {
-    setMedia((current) => (current === null ? current : { ...current, fps }));
-  };
-  const setMediaMaxFrames = (maxFrames: number): void => {
-    setMedia((current) => (current === null ? current : { ...current, maxFrames }));
   };
 
   const bodyBytes = new TextEncoder().encode(draftBody).length;
@@ -666,7 +375,7 @@ export function PromptWorkbench({
               setDraftBody(full.body);
               setSavedPrompt(full);
               setIsNewDraft(false);
-              setSkillNames(strategy.skills);
+              applySkillNames(strategy.skills);
               setEndpoints((current) =>
                 current.map((entry) => ({
                   ...entry,
@@ -679,9 +388,7 @@ export function PromptWorkbench({
               );
               // 切策略 = 换端点 + 提示词 + Skill 的整套口径（N1 同源③）：旧对话的
               // 产出来自旧配置，接着聊只会混淆出处——直接重开会话。
-              setSessionId(null);
-              setMessages([]);
-              setChatError("");
+              clearConversation();
             } finally {
               setStrategyBusy(false);
             }
@@ -893,7 +600,10 @@ export function PromptWorkbench({
                     size="icon-sm"
                     aria-label="清空当前会话"
                     className="ml-auto"
-                    onClick={newSession}
+                    onClick={() => {
+                      interactionRef.current += 1;
+                      newSession();
+                    }}
                   >
                     <PlusIcon />
                   </Button>
@@ -945,7 +655,7 @@ export function PromptWorkbench({
                         disabled={!skill.enabled || controlsBusy}
                         onSelect={(event) => {
                           event.preventDefault();
-                          toggleSkill(skill.name);
+                          handleToggleSkill(skill.name);
                         }}
                       >
                         <span className="truncate">
@@ -968,7 +678,7 @@ export function PromptWorkbench({
                       <button
                         type="button"
                         aria-label={`移除 Skill ${name}`}
-                        onClick={() => toggleSkill(name)}
+                        onClick={() => handleToggleSkill(name)}
                       >
                         <XIcon className="size-3.5" />
                       </button>
@@ -983,17 +693,14 @@ export function PromptWorkbench({
               }}
               onInstructionKeyDown={onInstructionKeyDown}
               media={media}
-              onPickMedia={pickMedia}
+              onPickMedia={handlePickMedia}
               onMediaFpsChange={setMediaFps}
               onMediaMaxFramesChange={setMediaMaxFrames}
-              onClearMedia={() => {
-                mediaRequestRef.current += 1;
-                setMedia(null);
-              }}
+              onClearMedia={clearMedia}
               canSend={canSend}
               sending={sending}
               waitSeconds={waitSeconds}
-              onSend={() => void send()}
+              onSend={handleSend}
               onStop={stopGeneration}
             />
           </section>

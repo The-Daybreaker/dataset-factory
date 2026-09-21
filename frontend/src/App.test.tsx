@@ -12,6 +12,10 @@ const apiMock = vi.hoisted(() => ({
   listPrompts: vi.fn(),
   listSkills: vi.fn(),
   listEndpoints: vi.fn(),
+  getPrompt: vi.fn(),
+  labelStream: vi.fn(),
+  listWorkdirs: vi.fn(),
+  listBatches: vi.fn(),
   getService: vi.fn(),
   latestSession: vi.fn(),
   getConfig: vi.fn(),
@@ -151,5 +155,56 @@ describe("App 外壳", () => {
     expect(
       screen.queryByRole("button", { name: "刷新策略库" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("流式生成中切到打标页再回来：回复照常上屏（切页不打断生成）", async () => {
+    const user = userEvent.setup();
+    apiMock.listPrompts.mockResolvedValue([{ name: "p1", description: "" }]);
+    apiMock.getPrompt.mockResolvedValue({
+      name: "p1",
+      description: "",
+      body: "正文",
+    });
+    apiMock.listEndpoints.mockResolvedValue([
+      {
+        name: "ep",
+        base_url: "https://a/v1",
+        model: "model-a",
+        api_format: "openai-chat-completions",
+        has_api_key: true,
+        is_active: true,
+        request_params: {},
+      },
+    ]);
+    // 打标页进页拉工作目录清单；空清单即止，不触及更多接口。
+    apiMock.listWorkdirs.mockResolvedValue([]);
+    apiMock.latestSession.mockRejectedValue(
+      new ApiError("http", "还没有任何会话", 404, null),
+    );
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    apiMock.labelStream.mockImplementation(async (_payload, handlers) => {
+      handlers.onStart("s-1");
+      handlers.onDelta("content", "半截");
+      await gate;
+      handlers.onDone("s-1", "切页不丢终稿");
+    });
+
+    render(<App />);
+    await screen.findByLabelText("打标指令");
+    await user.type(screen.getByLabelText("打标指令"), "打个标");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    await screen.findByText("半截");
+
+    // 生成中途切到打标页再回工作台：流式面板接上，说明生成没被打断。
+    await user.click(screen.getByRole("button", { name: "打标" }));
+    await user.click(screen.getByRole("button", { name: "策略" }));
+    expect(screen.getByText("生成中…")).toBeInTheDocument();
+
+    release();
+    expect(await screen.findByText("切页不丢终稿")).toBeInTheDocument();
+    expect(screen.queryByText("生成中…")).not.toBeInTheDocument();
   });
 });

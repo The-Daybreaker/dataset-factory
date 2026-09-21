@@ -25,6 +25,7 @@ import {
 import { useTheme } from "./hooks/use-theme";
 import { cn } from "./lib/utils";
 import logo from "./logo-speed-d.png";
+import { ChatSessionProvider } from "./pages/prompt-workbench/chat-session";
 import { PromptWorkbench } from "./pages/prompt-workbench/PromptWorkbench";
 import type { SettingsSection } from "./pages/settings/SettingsPage";
 
@@ -368,19 +369,23 @@ export function App(): ReactElement {
           </DialogContent>
         </Dialog>
         <main className="min-h-0 min-w-0 flex-1 overflow-y-auto">
-          {/* fallback 给 null 而非骨架屏：占位元素本身就是新像素，切换路由时宁可空一帧。 */}
-          <Suspense fallback={null}>
-            {page === "prompts" && (
-              <PromptWorkbench onNavigateToSettings={openSettings} />
-            )}
-            {page === "settings" && <SettingsPage section={settingsSection} />}
-            {page === "labeling" && (
-              <LabelingPage
-                onNavigateToSettings={openSettings}
-                onOpenWorkbench={() => setPage("prompts")}
-              />
-            )}
-          </Suspense>
+          {/* 对话会话域住在条件渲染之外：页面切换会卸载 PromptWorkbench，会话状态与
+              进行中的流式回复必须活过卸载，切页再回来才接得上（流式回复不消失）。 */}
+          <ChatSessionProvider>
+            {/* fallback 给 null 而非骨架屏：占位元素本身就是新像素，切换路由时宁可空一帧。 */}
+            <Suspense fallback={null}>
+              {page === "prompts" && (
+                <PromptWorkbench onNavigateToSettings={openSettings} />
+              )}
+              {page === "settings" && <SettingsPage section={settingsSection} />}
+              {page === "labeling" && (
+                <LabelingPage
+                  onNavigateToSettings={openSettings}
+                  onOpenWorkbench={() => setPage("prompts")}
+                />
+              )}
+            </Suspense>
+          </ChatSessionProvider>
         </main>
       </div>
       {/* 浮层提示挂在外壳唯一一处：连接类失败在各页面投递，渲染出口只留一个。 */}
