@@ -12,7 +12,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../components/ui/dialog";
-import { type ItemUpdate, parseItemUpdate } from "./items-state";
+import { Tip } from "../../components/ui/tooltip";
+import {
+  type ItemDelta,
+  type ItemUpdate,
+  parseItemDelta,
+  parseItemUpdate,
+} from "./items-state";
 
 type RunStatus = components["schemas"]["RunStatusView"];
 
@@ -21,6 +27,8 @@ interface Props {
   batch: string;
   onFinish: () => void | Promise<void>;
   onItemUpdate?: (event: ItemUpdate) => void;
+  /** 流式增量转发（A2：跑批逐字呈现）；不转发时增量事件只被忽略。 */
+  onItemDelta?: (event: ItemDelta) => void;
   onCurrentItem?: (item: string | null) => void;
   onImport?: () => void;
   externalRunId?: string;
@@ -49,6 +57,7 @@ export function RunControl({
   onFinish,
   onImport,
   onItemUpdate,
+  onItemDelta,
   onCurrentItem,
   externalRunId,
   retryRequest,
@@ -65,12 +74,15 @@ export function RunControl({
   const [acceptedRunId, setAcceptedRunId] = useState<string | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
   const [known, setKnown] = useState(false);
+  const [retryConfirming, setRetryConfirming] = useState(false);
   const lifecycle = useRef(0);
   const actionPending = useRef(false);
   const finishRef = useRef(onFinish);
   finishRef.current = onFinish;
   const itemRef = useRef(onItemUpdate);
   itemRef.current = onItemUpdate;
+  const itemDeltaRef = useRef(onItemDelta);
+  itemDeltaRef.current = onItemDelta;
   const currentItemRef = useRef(onCurrentItem);
   currentItemRef.current = onCurrentItem;
   const runStatusRef = useRef(onRunStatus);
@@ -82,7 +94,6 @@ export function RunControl({
     let disposed = false;
     let delay = 1000;
     let observed = acceptedRunId !== null || !!externalRunId;
-    let streamFailed = false;
     let connection = 0;
     const generation = ++lifecycle.current;
     setKnown(false);
@@ -103,7 +114,17 @@ export function RunControl({
           if (!disposed) setError(errorMessage(reason));
         });
       }
-      timer = setTimeout(() => void connect(), 5000);
+      // L3（2026-09-21 审计定案）：空闲轮询从 5 秒自续降到 15 秒慢轮——它的存在
+      // 理由只剩「发现 CLI 等外部进程启动的运行」（跨进程没有推送通道）；后端已把
+      // 「没在跑」改成 200 + null，慢轮不再产生 404 错误噪音。后台标签页暂停。
+      timer = setTimeout(() => {
+        if (disposed) return;
+        if (document.hidden) {
+          timer = setTimeout(() => void connect(), 15000);
+          return;
+        }
+        void connect();
+      }, 15000);
     }
 
     function retry() {
@@ -112,7 +133,6 @@ export function RunControl({
       clearTimeout(timer);
       source?.close();
       source = null;
-      streamFailed = true;
       setReconnecting(true);
       timer = setTimeout(() => void connect(), delay);
       delay = Math.min(delay * 2, 10000);
@@ -123,20 +143,27 @@ export function RunControl({
         const view = await api.currentRun(wid, batch);
         if (disposed) return;
         setKnown(true);
+        // 空闲 = 200 + null（L3）：不是错误、也不再轮询；404 只剩 wid / 批次不存在。
+        // 空闲必须报给顶栏状态章：运行可能在页面未观察的窗口期结束（如设置抽屉开着
+        // 时重打完成），不报会让 batchRunState 卡在 running、把导出入口永久藏住（V15）。
+        if (view === null) {
+          runStatusRef.current?.("idle");
+          finish();
+          return;
+        }
         if (view.status !== "running" && view.status !== "pending") {
           if (view.error) setError(view.error);
+          runStatusRef.current?.(view.status);
           finish();
           return;
         }
         observed = true;
+        // 闭包里用的收窄副本（TS 不为嵌套函数保留 const 的 null 收窄）。
+        const activeRun = view;
         setStatus(view);
         runStatusRef.current?.(view.status);
         setCurrent(view.current_item);
         if (view.current_item) currentItemRef.current?.(view.current_item);
-        if (streamFailed) {
-          await finishRef.current();
-          if (disposed) return;
-        }
         const token = ++connection;
         const stream = new EventSource(
           `/api/workdirs/${encodeURIComponent(wid)}/batches/${encodeURIComponent(batch)}/runs/stream`,
@@ -145,6 +172,7 @@ export function RunControl({
         const isCurrent = () => !disposed && token === connection;
         let syncing = false;
         let syncAgain = false;
+        let refreshedRunId: string | null = null;
         // 订阅前的事件不会重放；按服务端快照校准，避免客户端增量漏计或重复计数。
         async function syncProgress() {
           syncAgain = true;
@@ -155,8 +183,9 @@ export function RunControl({
               syncAgain = false;
               const latest = await api.currentRun(wid, batch);
               if (!isCurrent()) return;
-              if (latest.run_id !== view.run_id) {
-                retry();
+              if (latest === null || latest.run_id !== activeRun.run_id) {
+                // 空闲 / 换了运行：按收尾处理（B9 连带的 null 语义适配）。
+                finish();
                 return;
               }
               if (latest.status !== "running" && latest.status !== "pending") {
@@ -181,12 +210,17 @@ export function RunControl({
           if (!isCurrent()) return;
           void syncProgress();
           try {
-            await finishRef.current();
-            if (!isCurrent()) return;
+            // B9（2026-09-21 审计定案）：全量条目刷新**每个运行只做一次**——
+            // 此前每次 SSE 建连 / 重连都触发一遍 listItems + export/plan。
+            // 断线缺口由 syncProgress 的快照校准 + 终态刷新兜底。
+            if (refreshedRunId !== activeRun.run_id) {
+              refreshedRunId = activeRun.run_id;
+              await finishRef.current();
+              if (!isCurrent()) return;
+            }
             for (const update of pending) itemRef.current?.(update);
             pending.length = 0;
             ready = true;
-            streamFailed = false;
             delay = 1000;
             setError("");
             setReconnecting(false);
@@ -218,6 +252,19 @@ export function RunControl({
             retry();
           }
         });
+        stream.addEventListener("item-delta", (event) => {
+          if (!isCurrent()) return;
+          try {
+            const data = parseItemDelta(
+              JSON.parse((event as MessageEvent<string>).data),
+            );
+            if (data.batch === Number(batch.slice(1))) {
+              itemDeltaRef.current?.(data);
+            }
+          } catch {
+            // 增量帧解析失败不打断跑批观察（增量只是呈现层），忽略这一帧。
+          }
+        });
         stream.addEventListener("run-finished", (event) => {
           if (!isCurrent()) return;
           try {
@@ -226,7 +273,7 @@ export function RunControl({
               data &&
               typeof data === "object" &&
               "run_id" in data &&
-              data.run_id === view.run_id &&
+              data.run_id === activeRun.run_id &&
               "batch" in data &&
               data.batch === Number(batch.slice(1)) &&
               "status" in data &&
@@ -417,23 +464,74 @@ export function RunControl({
         </>
       ) : (
         <>
-          <Button
-            size="sm"
-            disabled={busy || reconnecting || !known}
-            onClick={() => void prepareFullRun()}
+          {/* L6（2026-09-21 审计 / ui-spec §4.3）：禁用必须说明原因。 */}
+          <Tip
+            label={
+              busy
+                ? "上一个操作还在处理中"
+                : reconnecting
+                  ? "正在重新连接运行状态"
+                  : !known
+                    ? "正在确认运行状态…"
+                    : ""
+            }
           >
-            开始打标
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={busy || reconnecting || !known}
-            onClick={() => void start("retry")}
+            <Button
+              size="sm"
+              disabled={busy || reconnecting || !known}
+              onClick={() => void prepareFullRun()}
+            >
+              开始打标
+            </Button>
+          </Tip>
+          <Tip
+            label={
+              busy
+                ? "上一个操作还在处理中"
+                : reconnecting
+                  ? "正在重新连接运行状态"
+                  : !known
+                    ? "正在确认运行状态…"
+                    : "将按重试列表的当前名单重新打标"
+            }
           >
-            开始重试
-          </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy || reconnecting || !known}
+              onClick={() => setRetryConfirming(true)}
+            >
+              开始重试
+            </Button>
+          </Tip>
         </>
       )}
+      {/* Q1（2026-09-21 复核定案）：名单发车不可撤销，顶栏「开始重试」必须过确认。 */}
+      <Dialog open={retryConfirming} onOpenChange={setRetryConfirming}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>开始重试？</DialogTitle>
+            <DialogDescription>
+              将按重试列表的当前名单逐条重新打标（名单在发车瞬间拍快照）。发车后不可撤销，
+              等它跑完或点「停止」前不能再发车。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRetryConfirming(false)}>
+              取消
+            </Button>
+            <Button
+              disabled={busy}
+              onClick={() => {
+                setRetryConfirming(false);
+                void start("retry");
+              }}
+            >
+              开始重试
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={confirming} onOpenChange={setConfirming}>
         <DialogContent>
           <DialogHeader>

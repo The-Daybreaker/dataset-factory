@@ -42,3 +42,24 @@ export function formatChars(count: number): string {
   }
   return `${count} 字`;
 }
+
+/**
+ * 毫秒时长 → 人读时长（V4，2026-09-21 审计定案）：人读时长靠「几分几秒」，不靠小数秒。
+ *
+ * 三档口径：1 分钟内 `12.4 秒`（保留一位小数——短时长里半秒之差有感）；1 小时内
+ * `34 分 39 秒`；超过 1 小时 `1 小时 12 分`（分钟以下不再展示）。
+ */
+export function formatDuration(ms: number): string {
+  const seconds = Math.max(0, ms) / 1000;
+  if (seconds < 60) {
+    return `${seconds.toFixed(1)} 秒`;
+  }
+  const total = Math.round(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const rest = total % 60;
+  if (hours >= 1) {
+    return `${hours} 小时 ${minutes} 分`;
+  }
+  return rest === 0 ? `${minutes} 分` : `${minutes} 分 ${rest} 秒`;
+}

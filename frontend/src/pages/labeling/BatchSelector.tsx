@@ -14,7 +14,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../../components/ui/dropdown-menu";
-import { Tip } from "../../components/ui/tooltip";
+import {
+  Tip,
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "../../components/ui/tooltip";
 
 export interface WorkdirBatches {
   id: string;
@@ -70,38 +76,47 @@ export function BatchSelector({
     (entry) => entry.id === value?.batchId && entry.active,
   );
   const badge = batch && runState ? RUN_STATE_BADGES[runState] : undefined;
+  // V14：全站提示走自研气泡（ui-spec :343）——完整路径悬停可查，不再用原生 title。
+  const fullLocation = directory?.path
+    ? `${directory.path}${batch ? ` / ${batch.name} · ${batch.id}` : ""}`
+    : "";
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          aria-label="选择工作目录与批次"
-          title={
-            directory?.path
-              ? `${directory.path}${batch ? ` / ${batch.name} · ${batch.id}` : ""}`
-              : undefined
-          }
-          className="flex h-8.5 w-full min-w-0 items-center gap-2 rounded-lg border border-border bg-card px-3 text-t-md text-foreground hover:bg-accent"
-        >
-          <span className="min-w-0 flex-1 truncate text-left font-medium">
-            {directory?.title ?? "选择工作目录"}
-          </span>
-          {batch && (
-            <span className="min-w-0 flex-1 truncate text-left text-t-sm text-muted-foreground">
-              {batch.name} · {batch.id}
-            </span>
-          )}
-          {badge && (
-            <span
-              className={`inline-flex h-4.5 shrink-0 items-center rounded-full px-2 text-t-xs font-medium ${badge.tone}`}
-            >
-              {badge.text}
-            </span>
-          )}
-          <ChevronDownIcon className="size-4 shrink-0" />
-        </button>
-      </DropdownMenuTrigger>
+      {/* V14：完整路径悬停可查（自研气泡）。Tooltip 在外、DropdownMenuTrigger 在内——
+          两个 asChild 触发器链式克隆同一个按钮（PromptWorkbench 同款已验证模式），
+          不能用 Tip 包住触发器：Tip 不透传 ref 会把 asChild 链打断、菜单打不开。 */}
+      <TooltipProvider delayDuration={320}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label="选择工作目录与批次"
+                className="flex h-8.5 w-full min-w-0 items-center gap-2 rounded-lg border border-border bg-card px-3 text-t-md text-foreground hover:bg-accent"
+              >
+                <span className="min-w-0 flex-1 truncate text-left font-medium">
+                  {directory?.title ?? "选择工作目录"}
+                </span>
+                {batch && (
+                  <span className="min-w-0 flex-1 truncate text-left text-t-sm text-muted-foreground">
+                    {batch.name} · {batch.id}
+                  </span>
+                )}
+                {badge && (
+                  <span
+                    className={`inline-flex h-4.5 shrink-0 items-center rounded-full px-2 text-t-xs font-medium ${badge.tone}`}
+                  >
+                    {badge.text}
+                  </span>
+                )}
+                <ChevronDownIcon className="size-4 shrink-0" />
+              </button>
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent>{fullLocation}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
       <DropdownMenuContent align="start" className="max-h-80 w-80 overflow-y-auto">
         {workdirs.length === 0 && (
           <p className="px-3 py-2 text-t-sm text-muted-foreground">还没有工作目录</p>

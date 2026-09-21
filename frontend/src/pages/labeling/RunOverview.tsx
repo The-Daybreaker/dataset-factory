@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "../../components/ui/dialog";
 import { Tip } from "../../components/ui/tooltip";
+import { formatDuration } from "../../lib/format";
 
 type History = components["schemas"]["RunHistoryView"];
 type RunLogTab = "run.log" | "items.jsonl";
@@ -70,7 +71,8 @@ function latestByItem(records: ItemRunRecord[]): ItemRunRecord[] {
 }
 
 function formatElapsed(ms: number | undefined): string {
-  return ms === undefined ? "—" : `${(ms / 1000).toFixed(1)}s`;
+  // V4：人读时长统一走 formatDuration（几分几秒，不靠小数秒）。
+  return ms === undefined ? "—" : formatDuration(ms);
 }
 
 function RunLogDialog({
@@ -352,7 +354,7 @@ export function RunOverview({ wid, batch, refreshKey, fallback }: Props) {
               {record.finished_at
                 ? new Date(record.finished_at).toLocaleTimeString()
                 : "未记录结束时间"}
-              {elapsed !== null ? ` · ${elapsed.toFixed(1)} 秒` : ""}
+              {elapsed !== null ? ` · ${formatDuration(elapsed * 1000)}` : ""}
             </span>
             <div className="ml-auto flex gap-2">
               <Button

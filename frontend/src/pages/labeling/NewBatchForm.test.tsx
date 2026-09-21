@@ -19,6 +19,7 @@ vi.mock("../../api", async (original) => ({
     createBatch: vi.fn(),
     listItems: vi.fn(),
     startRun: vi.fn(),
+    scanPreview: vi.fn(),
   },
 }));
 
@@ -39,6 +40,12 @@ const completed: TaskView = {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(api.scanPreview).mockResolvedValue({
+    total: 1,
+    images: 1,
+    videos: 0,
+    unimported: [],
+  });
   vi.mocked(api.listStrategies).mockResolvedValue([]);
   vi.mocked(api.listSkills).mockResolvedValue([]);
   vi.mocked(api.listPrompts).mockResolvedValue([{ name: "caption", description: "" }]);

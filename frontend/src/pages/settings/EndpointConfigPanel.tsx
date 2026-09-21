@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from "../../components/ui/select";
 import { Textarea } from "../../components/ui/textarea";
+import { Tip } from "../../components/ui/tooltip";
 import { type Feedback, reportError } from "../../lib/feedback";
 import { cn } from "../../lib/utils";
 import {
@@ -32,8 +33,18 @@ import {
   collectAdvParams,
   formToJson,
   paramsToJson,
+  setThinkingInJson,
   syncFormFromJson,
+  type ThinkingMode,
+  thinkingOfJson,
 } from "./adv-params";
+
+/** 思考模式三态的界面文案与说明（A1：一个开关，对话与跑批共用同一个值）。 */
+const THINKING_OPTIONS: ReadonlyArray<{ value: ThinkingMode; label: string }> = [
+  { value: "default", label: "跟随模型默认" },
+  { value: "on", label: "开启思考" },
+  { value: "off", label: "关闭思考" },
+];
 
 /** 一期唯一支持的调用格式；其余选项灰显「暂未支持」，未来补适配器即启用。 */
 const SUPPORTED_API_FORMAT = "openai-chat-completions";
@@ -77,6 +88,9 @@ export function EndpointConfigPanel(): ReactElement {
     kind: "ok",
     text: "已同步",
   });
+  // 思考模式三态（A1）：跟着 advJson 里的 extra_body 走——JSON 是唯一事实，
+  // 三态控件只是它的可视化快捷键（手写 reasoning_effort 等其他厂商字段走 JSON）。
+  const [thinking, setThinking] = useState<ThinkingMode>("default");
 
   /** 失败分流：连接类失败改弹浮层（不占界面位置），后端返回的业务错误仍就地展示。 */
   const failFeedback = useCallback((err: unknown): void => {
@@ -132,7 +146,9 @@ export function EndpointConfigPanel(): ReactElement {
       timeout_seconds: text(params.timeout_seconds),
       max_retries: text(params.max_retries),
     });
-    setAdvJson(paramsToJson(params));
+    const nextJson = paramsToJson(params);
+    setAdvJson(nextJson);
+    setThinking(thinkingOfJson(nextJson));
     setAdvState({ kind: "ok", text: "已同步" });
     setAdvOpen(false);
   }, [
@@ -162,6 +178,7 @@ export function EndpointConfigPanel(): ReactElement {
     setAdvForm({ temperature: "", top_p: "", max_tokens: "" });
     setAdvTransport({ timeout_seconds: "", max_retries: "" });
     setAdvJson("{}");
+    setThinking("default");
     setAdvState({ kind: "ok", text: "已同步" });
     setAdvOpen(false);
     setFeedback(null);
@@ -182,6 +199,8 @@ export function EndpointConfigPanel(): ReactElement {
   /** 粘贴 / 编辑 JSON → 同步回表单三键；无效时只改状态提示（不同步、不报错打断）。 */
   const onAdvJsonInput = (value: string): void => {
     setAdvJson(value);
+    // 思考三态跟着 JSON 走（JSON 是唯一事实）：手改 enable_thinking 也反映到控件。
+    setThinking(thinkingOfJson(value));
     const synced = syncFormFromJson(value);
     if (synced.state.kind !== "invalid") {
       setAdvForm(synced.form);
@@ -189,16 +208,38 @@ export function EndpointConfigPanel(): ReactElement {
     setAdvState(synced.state);
   };
 
+  /** 三态选择 → 写进 JSON 的 extra_body（其余透传键原样保留；JSON 无效不动原值）。 */
+  const onThinkingChange = (mode: ThinkingMode): void => {
+    setThinking(mode);
+    const nextJson = setThinkingInJson(advJson, mode);
+    if (nextJson === null) {
+      setAdvState({ kind: "invalid", text: "JSON 无效——修好后再设置思考模式" });
+      return;
+    }
+    setAdvJson(nextJson);
+    setAdvState({ kind: "ok", text: "已同步" });
+  };
+
   const testConnection = async (): Promise<void> => {
     setTesting(true);
     setTestResult(null);
     try {
+      // 高级参数一起随探测发出（A1：测试连接回显实际参数——思考开关带上没有、
+      // 透传写对没有，一眼可见）；本地校验不过就不带参数，仍测连通性。
+      const adv = collectAdvParams({
+        form: advForm,
+        transport: advTransport,
+        json: advJson,
+      });
       const result = await api.testEndpoint({
         base_url: draftBaseUrl,
         model: draftModel,
         api_format: draftFormat,
         ...(creating ? {} : { name: selected }),
         ...(draftKey.trim() === "" ? {} : { api_key: draftKey }),
+        ...(adv.error === null && Object.keys(adv.params).length > 0
+          ? { request_params: adv.params }
+          : {}),
       });
       setTestResult(result);
     } catch (err) {
@@ -311,17 +352,16 @@ export function EndpointConfigPanel(): ReactElement {
                   />
                 )}
                 <span className="flex items-center gap-2">
+                  <Tip label={item.is_active ? "当前使用" : ""}>
+                    <span
+                      className={
+                        "size-2 rounded-full " +
+                        (item.is_active ? "bg-success" : "bg-muted-foreground/30")
+                      }
+                    />
+                  </Tip>
                   <span
-                    className={
-                      "size-2 rounded-full " +
-                      (item.is_active ? "bg-success" : "bg-muted-foreground/30")
-                    }
-                    title={item.is_active ? "当前使用" : undefined}
-                  />
-                  <span
-                    className={
-                      "truncate text-t-md font-medium" + (active ? " text-primary" : "")
-                    }
+                    className={`truncate text-t-md font-medium${active ? " text-primary" : ""}`}
                   >
                     {item.name}
                   </span>
@@ -469,9 +509,7 @@ export function EndpointConfigPanel(): ReactElement {
               </Button>
               {testResult !== null && (
                 <span
-                  className={
-                    "text-t-sm " + (testResult.ok ? "text-success" : "text-destructive")
-                  }
+                  className={`text-t-sm ${testResult.ok ? "text-success" : "text-destructive"}`}
                   role="status"
                 >
                   {testResult.message}
@@ -479,6 +517,18 @@ export function EndpointConfigPanel(): ReactElement {
                 </span>
               )}
             </div>
+            {testResult?.ok && testResult.effective_params != null && (
+              <p className="text-t-xs text-muted-foreground">
+                本次实际发送：
+                {Object.entries(testResult.effective_params)
+                  .map(([key, value]) =>
+                    value !== null && typeof value === "object"
+                      ? `${key}=${JSON.stringify(value)}`
+                      : `${key}=${String(value)}`,
+                  )
+                  .join(" · ")}
+              </p>
+            )}
 
             {/* 高级参数（可选）：默认折叠；原型稿 ui-draft-05 为视觉事实源。 */}
             <div className="rounded-lg border border-border">
@@ -497,12 +547,46 @@ export function EndpointConfigPanel(): ReactElement {
                 />
                 高级参数（可选）
                 <span className="text-t-xs font-normal text-muted-foreground">
-                  temperature / top_p / max_tokens / 超时 / 重试 / extra_body——留空 =
-                  端点默认值
+                  思考模式 / temperature / top_p / max_tokens / 超时 / 重试 /
+                  extra_body——留空 = 端点默认值
                 </span>
               </button>
               {advOpen && (
                 <div className="space-y-4 border-t border-border px-3 py-3">
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-3">
+                      <Label
+                        htmlFor="adv-thinking"
+                        className="shrink-0 text-t-sm font-medium"
+                      >
+                        思考模式
+                      </Label>
+                      <Select
+                        value={thinking}
+                        onValueChange={(value) =>
+                          onThinkingChange(value as ThinkingMode)
+                        }
+                      >
+                        <SelectTrigger id="adv-thinking" className="w-44">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {THINKING_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <p className="text-t-xs text-muted-foreground">
+                      关闭思考可显著加快推理型模型的响应。对话试标与跑批共用这一个值——
+                      只影响新请求与**新建**的批次；已有批次想换参数，请新建一个批次
+                      （快照冻结在应用时刻）。默认写 Qwen 系的
+                      chat_template_kwargs.enable_thinking；其他厂商字段（如
+                      reasoning_effort）可直接手写进下方 JSON 的 extra_body。
+                    </p>
+                  </div>
                   <div className="space-y-2">
                     <p className="text-t-sm font-medium">
                       模型通用参数（JSON，与表单双向同步——可直接从厂商文档粘贴）

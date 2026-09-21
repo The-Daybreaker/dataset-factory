@@ -16,6 +16,25 @@ import { Tip } from "../../components/ui/tooltip";
 
 type Snapshot = components["schemas"]["BatchSnapshotView"];
 
+/** 内部参数键 → 可读名（B8）；白名单外的键（含透传键）原样展示不翻译。 */
+const PARAM_LABELS: Record<string, string> = {
+  temperature: "温度 temperature",
+  top_p: "多样性 top_p",
+  max_tokens: "输出上限 max_tokens",
+  timeout_seconds: "超时（秒）",
+  max_retries: "自动重试",
+  extra_body: "透传参数 extra_body",
+};
+
+function readableParam(key: string): string {
+  return PARAM_LABELS[key] ?? key;
+}
+
+/** 64 位哈希截断成「前 4…后 4」（悬停可看全文；原型 :1453-1466 同款呈现）。 */
+function shortHash(hash: string): string {
+  return hash.length <= 12 ? hash : `${hash.slice(0, 4)}…${hash.slice(-4)}`;
+}
+
 export function SnapshotDialog({
   wid,
   batch,
@@ -94,22 +113,37 @@ export function SnapshotDialog({
             )}
             <section className="min-w-0 border-b border-border pb-4">
               <h3 className="mb-2 text-t-md font-medium">端点与生成参数</h3>
+              {/* B8（2026-09-21 审计）：内部字段名换可读名、base_url / api_format
+                  收进「高级信息」折叠区——排查者仍能展开看全量，普通用户不用直视。 */}
               <dl className="flex flex-wrap gap-x-4 gap-y-2 text-t-sm">
                 {Object.entries({
                   配置名: snapshot.endpoint.name,
                   模型: snapshot.endpoint.model,
-                  api_format: snapshot.endpoint.api_format,
-                  ...snapshot.endpoint.request_params,
-                  base_url: snapshot.endpoint.base_url,
-                }).map(([label, value]) => (
-                  <div key={label} className="flex min-w-0 flex-wrap gap-2 break-all">
-                    <dt className="text-text-4">{label}</dt>
+                  ...(snapshot.endpoint.request_params ?? {}),
+                }).map(([key, value]) => (
+                  <div key={key} className="flex min-w-0 flex-wrap gap-2 break-all">
+                    <dt className="text-text-4">{readableParam(key)}</dt>
                     <dd className="text-text-2">
                       {typeof value === "string" ? value : JSON.stringify(value)}
                     </dd>
                   </div>
                 ))}
               </dl>
+              <details className="mt-2 text-t-sm">
+                <summary className="cursor-pointer text-text-4">
+                  高级信息（接口格式与端点地址）
+                </summary>
+                <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-2">
+                  <div className="flex min-w-0 flex-wrap gap-2 break-all">
+                    <dt className="text-text-4">api_format</dt>
+                    <dd className="text-text-2">{snapshot.endpoint.api_format}</dd>
+                  </div>
+                  <div className="flex min-w-0 flex-wrap gap-2 break-all">
+                    <dt className="text-text-4">base_url</dt>
+                    <dd className="text-text-2">{snapshot.endpoint.base_url}</dd>
+                  </div>
+                </dl>
+              </details>
             </section>
             {[
               { ...snapshot.prompt, kind: "基础提示词" },
@@ -124,7 +158,11 @@ export function SnapshotDialog({
                     {entry.kind} · {entry.name}
                   </span>
                   <span className="ml-auto break-all text-t-xs font-normal text-text-4">
-                    sha256 {entry.sha256}
+                    <Tip label={`sha256 ${entry.sha256}`}>
+                      <span className="cursor-help">
+                        sha256 {shortHash(entry.sha256)}
+                      </span>
+                    </Tip>
                   </span>
                 </h3>
                 <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 font-sans text-t-sm leading-loose">

@@ -374,7 +374,12 @@ export function App(): ReactElement {
               <PromptWorkbench onNavigateToSettings={openSettings} />
             )}
             {page === "settings" && <SettingsPage section={settingsSection} />}
-            {page === "labeling" && <LabelingPage />}
+            {page === "labeling" && (
+              <LabelingPage
+                onNavigateToSettings={openSettings}
+                onOpenWorkbench={() => setPage("prompts")}
+              />
+            )}
           </Suspense>
         </main>
       </div>

@@ -701,15 +701,16 @@ export function SkillsPanel(): ReactElement {
                 <Undo2Icon />
                 放弃更改
               </Button>
-              <Button
-                variant={dirty ? "default" : "ghost"}
-                title={dirty ? undefined : "没有未保存的修改"}
-                disabled={!dirty || saving || loadingPreview}
-                onClick={() => void save()}
-              >
-                <SaveIcon />
-                保存更改
-              </Button>
+              <Tip label={dirty ? "" : "没有未保存的修改"}>
+                <Button
+                  variant={dirty ? "default" : "ghost"}
+                  disabled={!dirty || saving || loadingPreview}
+                  onClick={() => void save()}
+                >
+                  <SaveIcon />
+                  保存更改
+                </Button>
+              </Tip>
             </div>
           </div>
         ) : (

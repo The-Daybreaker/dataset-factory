@@ -292,3 +292,54 @@
     height: 100%;
   }
 }
+
+/* --- 复选框唯一形态 .cb（V13，2026-09-21 审计）----------------------------
+   ui-spec :380 定 .cb 为复选框唯一形态（14×14、圆角 4px、选中黑底白勾、暗色自动
+   翻深勾），令牌实体在 context/design/ui-system.css:442-489。此前规范有定义、
+   构建里没有这个类——5 处 className="cb" 静默失效成了裸复选框。此份从 ui-system
+   同源搬运并适配本应用令牌（--r-* 等原型令牌在构建里不存在，圆角按规范写 4px）。 */
+.cb {
+  appearance: none;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  border: 1px solid hsl(var(--input));
+  border-radius: 4px;
+  background-color: hsl(var(--card));
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+.cb:hover {
+  border-color: hsl(var(--n-400));
+}
+.cb:checked {
+  background-color: hsl(var(--primary));
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.5l3 3 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 12px;
+  border-color: hsl(var(--primary));
+}
+.cb:indeterminate {
+  background-color: hsl(var(--primary));
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='M4 8h8'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 10px;
+  border-color: hsl(var(--primary));
+}
+.dark .cb:checked,
+.dark .cb:indeterminate {
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23131316' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.5l3 3 6-6'/%3E%3C/svg%3E");
+}
+.dark .cb:indeterminate {
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23131316' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='M4 8h8'/%3E%3C/svg%3E");
+}
+.cb:disabled {
+  background-color: hsl(var(--muted));
+  border-color: hsl(var(--border));
+  cursor: not-allowed;
+}

@@ -109,7 +109,7 @@ describe("PromptWorkbench", () => {
       );
 
       for (const name of ["first.png", "second.png"]) {
-        fireEvent.change(screen.getByLabelText("附图或视频"), {
+        fireEvent.change(screen.getByLabelText("附图或视频（最多 1 个）"), {
           target: { files: [new File([name], name, { type: "image/png" })] },
         });
       }
@@ -242,7 +242,8 @@ describe("PromptWorkbench", () => {
     await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("h3-video"));
 
     fireEvent.input(screen.getByLabelText("描述"), { target: { value: "新描述" } });
-    expect(screen.getByRole("button", { name: "切换策略" })).toBeDisabled();
+    // L9：策略切换锁定改为「列表照开、点了才提示」（StrategyToolbar 用例覆盖）；
+    // 这里只保留提示词切换钮的禁用断言。
     expect(screen.getByRole("button", { name: "切换提示词" })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() =>
@@ -430,10 +431,11 @@ describe("PromptWorkbench", () => {
           onDone: expect.any(Function),
           onError: expect.any(Function),
         }),
+        expect.anything(), // AbortSignal（N1④ 停止生成）
       );
     });
     expect(await screen.findByText("打标结果 caption")).toBeInTheDocument();
-    expect(screen.getByText(/model-a · \d+s/)).toBeInTheDocument();
+    expect(screen.getByText(/model-a · \d+\.\d+ 秒/)).toBeInTheDocument();
   });
 
   it("发送：流式增量在思考过程区与正文区逐段渲染，done 后上屏终稿", async () => {
@@ -488,7 +490,8 @@ describe("PromptWorkbench", () => {
     expect(await screen.findByText("打标结果")).toBeInTheDocument();
     expect(screen.queryByText("生成中…")).not.toBeInTheDocument();
     expect(screen.getByText("先想想构图")).toBeInTheDocument();
-    expect(screen.getByText("思考过程")).toBeInTheDocument();
+    // 摘要带思考耗时（V7）：用正则匹配前缀。
+    expect(screen.getByText(/思考过程/)).toBeInTheDocument();
   });
 
   it("提示词库为空时发送：labelStream 收到 null（后端给可操作错误）", async () => {
@@ -503,6 +506,7 @@ describe("PromptWorkbench", () => {
       expect(apiMock.labelStream).toHaveBeenCalledWith(
         expect.objectContaining({ prompt_name: null }),
         expect.anything(),
+        expect.anything(), // AbortSignal
       );
     });
   });
@@ -560,7 +564,7 @@ describe("PromptWorkbench", () => {
     await waitFor(() => {
       expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
     });
-    fireEvent.change(screen.getByLabelText("附图或视频"), {
+    fireEvent.change(screen.getByLabelText("附图或视频（最多 1 个）"), {
       target: {
         files: [new File(["fake-mp4"], "clip.mp4", { type: "video/mp4" })],
       },
@@ -584,6 +588,7 @@ describe("PromptWorkbench", () => {
       expect(apiMock.labelStream).toHaveBeenCalledWith(
         expect.objectContaining({ video_fps: 3, video_max_frames: 8 }),
         expect.anything(),
+        expect.anything(), // AbortSignal
       );
     });
     vi.unstubAllGlobals();

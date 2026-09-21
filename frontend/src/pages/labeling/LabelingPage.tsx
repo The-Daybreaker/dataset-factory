@@ -18,6 +18,7 @@ import type { components } from "../../api-types.gen";
 import { FormError } from "../../components/form-error";
 import { Button } from "../../components/ui/button";
 import { Tip } from "../../components/ui/tooltip";
+import { formatBytesAuto } from "../../lib/format";
 import { BatchConfiguration } from "./BatchConfiguration";
 import { BatchOverview } from "./BatchOverview";
 import {
@@ -100,6 +101,7 @@ const MaterialRow = memo(function MaterialRow({
         (row.status === "done" || row.status === "failed") && (
           <input
             type="checkbox"
+            className="cb"
             aria-label={`选择 ${row.name}`}
             checked={checked}
             disabled={!row.can_retry || row.in_retry || saving}
@@ -126,6 +128,14 @@ const MaterialRow = memo(function MaterialRow({
           {(row.message || row.reason) && (
             <span className="block break-words text-t-xs text-text-3">
               {row.message || row.reason}
+              {/* V2（2026-09-21 审计）：契约里一直带着 size / limit——超出大小上限
+                  这类拒绝要让用户看到具体数值（原型口径：412 MiB ＞ 100 MiB）。 */}
+              {row.status === "unimported" &&
+                row.size !== null &&
+                row.size !== undefined &&
+                row.limit !== null &&
+                row.limit !== undefined &&
+                ` · ${formatBytesAuto(row.size)} ＞ ${formatBytesAuto(row.limit)}`}
             </span>
           )}
           {row.in_retry && (
@@ -197,7 +207,15 @@ const MaterialRow = memo(function MaterialRow({
 });
 
 /** 目录与批次切换以成对身份取数，过期请求不能覆盖新选择。 */
-export function LabelingPage() {
+export function LabelingPage({
+  onNavigateToSettings,
+  onOpenWorkbench,
+}: {
+  /** 跳应用级设置页（V16：新建跑批的三个下拉要有「去设置」的出口）。 */
+  onNavigateToSettings?: () => void;
+  /** 跳对话工作台（V16：「拿不准效果？先试标」动线）。 */
+  onOpenWorkbench?: () => void;
+} = {}) {
   const [workdirs, setWorkdirs] = useState<WorkdirBatches[]>([]);
   const [selection, setSelection] = useState<BatchSelection | null>(null);
   const [items, setItems] = useState<ItemMap>(new Map());
@@ -234,6 +252,17 @@ export function LabelingPage() {
   const [directoriesRevision, setDirectoriesRevision] = useState(0);
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  // V3（2026-09-21 审计）：组内默认只展示 4 行，点开才全量——与分组折叠（collapsed）
+  // 是两个独立维度：collapsed 管「整个组收不收」，expanded 管「组内截断放不放开」。
+  const [expandedGroups, setExpandedGroups] = useState<ReadonlySet<string>>(new Set());
+  // L2：跑批中点条目会停跟随——给可见提示 + 「继续跟随」钮，不再静默停。
+  const [followPaused, setFollowPaused] = useState(false);
+  // V15 + A2：跑批中的「当前产出」逐字呈现（思考只展示不落盘，关掉页面即没）。
+  const [liveOutput, setLiveOutput] = useState<{
+    item: string;
+    reasoning: string;
+    content: string;
+  } | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const identity = `${selection?.workdirId}/${selection?.batchId}`;
@@ -300,6 +329,8 @@ export function LabelingPage() {
     setItems(new Map());
     setSelectedItem(null);
     followRun.current = true;
+    setFollowPaused(false);
+    setLiveOutput(null);
     setChecked(new Set());
     setSelectionMode(false);
     setRetryRequest(0);
@@ -323,6 +354,8 @@ export function LabelingPage() {
   }, [selection]);
 
   const filtered = useMemo(() => groupedItems(items, query), [items, query]);
+  // L11：搜索计数要能看出「一共多少条」——无过滤分组是总数基准。
+  const unfiltered = useMemo(() => groupedItems(items, ""), [items]);
 
   // 顶栏状态章的存量事实：进页面 / 换批次时回读磁盘上本批次最近一次运行的终态。
   // 运行中的状态不在这里轮询——由 RunControl 受理即报、SSE 终态也报（见其
@@ -346,6 +379,10 @@ export function LabelingPage() {
     };
   }, [selection]);
   const choose = useCallback((row: ItemRow) => {
+    if (followRun.current) {
+      // 从「跟随」切到「手动看」：跑批中这不是静默的——出可见提示（L2）。
+      setFollowPaused(true);
+    }
     followRun.current = false;
     setSelectedItem(itemKey(row));
   }, []);
@@ -465,24 +502,6 @@ export function LabelingPage() {
       />
     );
 
-  if (creating)
-    return (
-      <NewBatchForm
-        onBack={() => setCreating(false)}
-        onCreated={(value) => {
-          setCreating(false);
-          setSelection(value);
-          void loadWorkdirBatches()
-            .then((loaded) => {
-              if (mounted.current) setWorkdirs(loaded);
-            })
-            .catch((reason: unknown) => {
-              if (mounted.current) setError(errorMessage(reason));
-            });
-        }}
-      />
-    );
-
   return (
     <section className="flex h-full min-h-0 flex-col" aria-label="打标">
       {newStrategyWid && (
@@ -583,14 +602,35 @@ export function LabelingPage() {
               externalRun?.identity === identity ? externalRun.id : undefined
             }
             retryRequest={retryRequest}
-            onRunStatus={setBatchRunState}
+            onRunStatus={(status) => {
+              // "idle" = RunControl 探测到空闲（V15 连带的哨兵）：状态章复位，
+              // 不让上一轮的 running 永久卡住导出入口。
+              setBatchRunState(status === "idle" ? null : status);
+              // 终态 = 跟随提示与「当前产出」都收场（运行结束后回到普通概览）。
+              if (status !== "running" && status !== "pending") {
+                setFollowPaused(false);
+                setLiveOutput(null);
+              }
+            }}
             onFinish={() => refreshItems(true)}
             onCurrentItem={(item) => {
               if (followRun.current) setSelectedItem(item);
             }}
             onItemUpdate={(event) => {
               refreshVersion.current += 1;
+              if (event.status === "started") {
+                setLiveOutput({ item: event.item, reasoning: "", content: "" });
+              }
               setItems((previous) => withItemUpdate(previous, event));
+            }}
+            onItemDelta={(event) => {
+              setLiveOutput((current) =>
+                current === null || current.item !== event.item
+                  ? current
+                  : event.delta === "reasoning"
+                    ? { ...current, reasoning: current.reasoning + event.text }
+                    : { ...current, content: current.content + event.text },
+              );
             }}
             onImport={() => setImportOpen(true)}
           />
@@ -624,7 +664,7 @@ export function LabelingPage() {
                   disabled={saving || !checked.size}
                   onClick={() => setChecked(new Set())}
                 >
-                  清空
+                  清空选择
                 </Button>
                 <Button
                   variant="ghost"
@@ -689,7 +729,10 @@ export function LabelingPage() {
                       <span
                         className={`text-t-xs tabular-nums ${key === "queued" ? "text-primary" : key === "done" ? "text-ok-ink" : key === "failed" ? "text-bad-ink" : key === "retry" ? "text-info-ink" : "text-text-4"}`}
                       >
-                        {filtered[key]?.length ?? 0}
+                        {/* L11：搜索时给「命中 / 共 N」双口径，别让「剩 3 条」被读成「一共 3 条」。 */}
+                        {query.trim() !== ""
+                          ? `命中 ${filtered[key]?.length ?? 0} / 共 ${unfiltered[key]?.length ?? 0}`
+                          : (filtered[key]?.length ?? 0)}
                       </span>
                     </button>
                     {key === "retry" && !!filtered.retry?.length && (
@@ -701,7 +744,7 @@ export function LabelingPage() {
                           disabled={saving}
                           onClick={() => void removeRetry()}
                         >
-                          清空列表
+                          清空名单
                         </Button>
                         <Tip label="冻结本轮名单发车：名单里的条目转入排队中并打「重打」标记">
                           <Button
@@ -763,7 +806,13 @@ export function LabelingPage() {
                         type="button"
                         className="float-right text-t-xs"
                         disabled={saving}
-                        aria-label={`${label}全选`}
+                        aria-label={`${label}${
+                          (filtered[key] ?? [])
+                            .filter((row) => row.can_retry && !row.in_retry)
+                            .every((row) => checked.has(row.item))
+                            ? "清空本组"
+                            : "全选"
+                        }`}
                         onClick={(event) => {
                           event.preventDefault();
                           const eligible = (filtered[key] ?? []).filter(
@@ -782,28 +831,77 @@ export function LabelingPage() {
                           });
                         }}
                       >
-                        全选
+                        {/* L10（PRD F7 口径）：同一颗钮随态换文案——点下去是反选，
+                            文案就必须能预告结果；六种叫法收敛为「全选 / 清空本组」。 */}
+                        {(filtered[key] ?? [])
+                          .filter((row) => row.can_retry && !row.in_retry)
+                          .every((row) => checked.has(row.item))
+                          ? "清空本组"
+                          : "全选"}
                       </button>
                     )}
                   </div>
                   {(query || !collapsed.has(key)) && (
                     <div className="p-2">
-                      {(filtered[key] ?? []).map((row) => (
-                        <MaterialRow
-                          key={itemKey(row)}
-                          row={row}
-                          selected={selectedItem === itemKey(row)}
-                          onSelect={choose}
-                          selectionMode={selectionMode}
-                          checked={checked.has(row.item)}
-                          onCheck={toggleCheck}
-                          retryGroup={key === "retry"}
-                          saving={saving}
-                          onRemoveRetry={removeRetry}
-                          onRecover={recover}
-                          onRemoveUnimported={requestRemoval}
-                        />
-                      ))}
+                      {(() => {
+                        // V3（2026-09-21 审计 / PRD F6 不冲突）：全量渲染不虚拟化，
+                        // 但组内默认只呈现 4 行 + 「其余 N 条」展开钮——几百条时
+                        // 一屏滚不到头是呈现层问题，截断即可，不必上虚拟化。
+                        const rows = filtered[key] ?? [];
+                        const expanded = query.trim() !== "" || expandedGroups.has(key);
+                        const shown = expanded ? rows : rows.slice(0, 4);
+                        const rest = rows.length - shown.length;
+                        return (
+                          <>
+                            {shown.map((row) => (
+                              <MaterialRow
+                                key={itemKey(row)}
+                                row={row}
+                                selected={selectedItem === itemKey(row)}
+                                onSelect={choose}
+                                selectionMode={selectionMode}
+                                checked={checked.has(row.item)}
+                                onCheck={toggleCheck}
+                                retryGroup={key === "retry"}
+                                saving={saving}
+                                onRemoveRetry={removeRetry}
+                                onRecover={recover}
+                                onRemoveUnimported={requestRemoval}
+                              />
+                            ))}
+                            {rest > 0 && (
+                              <button
+                                type="button"
+                                className="w-full rounded-md px-2 py-2 text-left text-t-sm text-muted-foreground hover:bg-accent"
+                                onClick={() =>
+                                  setExpandedGroups((previous) => {
+                                    const next = new Set(previous);
+                                    next.add(key);
+                                    return next;
+                                  })
+                                }
+                              >
+                                … 其余 {rest} 条（点任意条目可预览）
+                              </button>
+                            )}
+                            {expandedGroups.has(key) && rows.length > 4 && (
+                              <button
+                                type="button"
+                                className="w-full rounded-md px-2 py-2 text-left text-t-sm text-muted-foreground hover:bg-accent"
+                                onClick={() =>
+                                  setExpandedGroups((previous) => {
+                                    const next = new Set(previous);
+                                    next.delete(key);
+                                    return next;
+                                  })
+                                }
+                              >
+                                收起
+                              </button>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                   )}
                 </section>
@@ -811,139 +909,184 @@ export function LabelingPage() {
           </div>
         </aside>
         <div className="flex min-w-0 shrink-0 flex-col lg:flex-1 lg:overflow-auto">
-          {!selected && selection && !loading && (
-            <BatchOverview
-              key={identity}
-              wid={selection.workdirId}
-              batch={selection.batchId}
-              items={items}
-              exportRevision={exportRevision}
-              onRunStarted={(id) => setExternalRun({ identity, id })}
-              onSelect={choose}
-              onImported={() => void refreshItems()}
-              onImport={() => setImportOpen(true)}
+          {creating ? (
+            // L1（2026-09-21 审计）：新建跑批改为画布内换块——顶栏与左列保留，
+            // 返回后选择、折叠与滚动位置都还在（不再整页卸载）。无选中批次时同样可用。
+            <NewBatchForm
+              onBack={() => setCreating(false)}
+              onNavigateToSettings={onNavigateToSettings}
+              onOpenWorkbench={onOpenWorkbench}
+              onCreated={(value) => {
+                setCreating(false);
+                setSelection(value);
+                void loadWorkdirBatches()
+                  .then((loaded) => {
+                    if (mounted.current) setWorkdirs(loaded);
+                  })
+                  .catch((reason: unknown) => {
+                    if (mounted.current) setError(errorMessage(reason));
+                  });
+              }}
             />
-          )}
-          {!selected && !selection && (
-            <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
-              <FileImageIcon className="size-6" />
-              <p>选择素材</p>
-            </div>
-          )}
-          {selected && (
+          ) : (
             <>
-              <div className="mb-3 flex min-w-0 items-center gap-3">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    followRun.current = false;
-                    setSelectedItem(null);
-                  }}
-                >
-                  <ArrowLeftIcon />
-                  返回概览
-                </Button>
-                <h2 className="min-w-0 truncate text-t-md font-medium">
-                  {selected.name}
-                </h2>
-                <span
-                  className={`shrink-0 text-t-sm ${selected.status === "done" ? "text-ok-ink" : selected.status === "failed" ? "text-bad-ink" : "text-text-3"}`}
-                >
-                  {ITEM_GROUPS.find(([key]) => key === selected.status)?.[1] ??
-                    selected.status}
-                </span>
-              </div>
-              {asset &&
-                selected.status !== "missing" &&
-                selected.status !== "unimported" && (
-                  <div
-                    className={`relative w-full shrink-0 overflow-hidden rounded-xl border border-border bg-muted/45 ${foldedItem === `${identity}/${selected.item}` ? "h-[76px]" : "h-96"}`}
+              {followPaused && batchRunState === "running" && (
+                // L2：停跟随从「静默停」改成「明说 + 一键恢复」。
+                <div className="mb-3 flex items-center gap-3 rounded-lg border border-border bg-muted/50 px-3 py-2 text-t-sm text-text-3">
+                  <span>已暂停跟随正在打标的条目。</span>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => {
+                      followRun.current = true;
+                      setFollowPaused(false);
+                      setSelectedItem(null);
+                    }}
                   >
-                    {selected.media === "video" ? (
-                      <video
-                        controls
-                        src={asset}
-                        aria-label={selected.name}
-                        className="h-full w-full object-contain"
-                        onLoadedMetadata={(event) => {
-                          const el = event.currentTarget;
-                          setMediaMeta({
-                            w: el.videoWidth,
-                            h: el.videoHeight,
-                            duration: el.duration,
-                          });
-                        }}
-                      >
-                        <track kind="captions" />
-                      </video>
-                    ) : (
-                      <img
-                        src={asset}
-                        alt={selected.name}
-                        className="h-full w-full object-contain"
-                        onLoad={(event) => {
-                          const el = event.currentTarget;
-                          setMediaMeta({ w: el.naturalWidth, h: el.naturalHeight });
-                        }}
-                      />
-                    )}
-                    <div
-                      className={`absolute right-3 flex items-center gap-1.5 rounded-md bg-card/95 py-1 pr-1 pl-2.5 text-t-xs text-text-3 shadow-(--sh-1) ${
-                        selected.media === "video" ? "bottom-14" : "bottom-3"
-                      }`}
-                    >
-                      {mediaMeta && (
-                        <span className="tabular-nums">
-                          {mediaMeta.w}×{mediaMeta.h}
-                          {mediaMeta.duration !== undefined
-                            ? ` · ${mediaMeta.duration.toFixed(1)} 秒`
-                            : ""}
-                          {` · ${(selected.name.split(".").pop() ?? "").toUpperCase()}`}
-                        </span>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label={
-                          foldedItem === `${identity}/${selected.item}`
-                            ? "展开素材"
-                            : "折叠为小图"
-                        }
-                        aria-expanded={foldedItem !== `${identity}/${selected.item}`}
-                        onClick={() =>
-                          setFoldedItem((previous) =>
-                            previous === `${identity}/${selected.item}`
-                              ? null
-                              : `${identity}/${selected.item}`,
-                          )
-                        }
-                      >
-                        {foldedItem === `${identity}/${selected.item}` ? (
-                          <Maximize2Icon />
-                        ) : (
-                          <Minimize2Icon />
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              {(selected.message || selected.reason) && (
-                <p className="mt-3 text-warn-ink">
-                  {selected.message || selected.reason}
-                </p>
+                    继续跟随
+                  </Button>
+                </div>
               )}
-              {selection && selected.status !== "unimported" && (
-                <CaptionPreview
-                  key={`${selection.workdirId}/${selection.batchId}/${selected.item}`}
+              {!selected && selection && !loading && (
+                <BatchOverview
+                  key={identity}
                   wid={selection.workdirId}
                   batch={selection.batchId}
-                  batches={
-                    workdirs.find((entry) => entry.id === selection.workdirId)?.batches
-                  }
-                  row={selected}
-                  onRetryChange={retryChanged}
+                  items={items}
+                  exportRevision={exportRevision}
+                  running={batchRunState === "running" || batchRunState === "pending"}
+                  liveOutput={liveOutput}
+                  onRunStarted={(id) => setExternalRun({ identity, id })}
+                  onSelect={choose}
+                  onImported={() => void refreshItems()}
+                  onImport={() => setImportOpen(true)}
                 />
+              )}
+              {!selected && !selection && (
+                <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
+                  <FileImageIcon className="size-6" />
+                  <p>选择素材</p>
+                </div>
+              )}
+              {selected && (
+                <>
+                  <div className="mb-3 flex min-w-0 items-center gap-3">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        followRun.current = false;
+                        setSelectedItem(null);
+                      }}
+                    >
+                      <ArrowLeftIcon />
+                      返回概览
+                    </Button>
+                    <h2 className="min-w-0 truncate text-t-md font-medium">
+                      {selected.name}
+                    </h2>
+                    <span
+                      className={`shrink-0 text-t-sm ${selected.status === "done" ? "text-ok-ink" : selected.status === "failed" ? "text-bad-ink" : "text-text-3"}`}
+                    >
+                      {ITEM_GROUPS.find(([key]) => key === selected.status)?.[1] ??
+                        selected.status}
+                    </span>
+                  </div>
+                  {asset &&
+                    selected.status !== "missing" &&
+                    selected.status !== "unimported" && (
+                      <div
+                        className={`relative w-full shrink-0 overflow-hidden rounded-xl border border-border bg-muted/45 ${foldedItem === `${identity}/${selected.item}` ? "h-[76px]" : "h-96"}`}
+                      >
+                        {selected.media === "video" ? (
+                          <video
+                            controls
+                            src={asset}
+                            aria-label={selected.name}
+                            className="h-full w-full object-contain"
+                            onLoadedMetadata={(event) => {
+                              const el = event.currentTarget;
+                              setMediaMeta({
+                                w: el.videoWidth,
+                                h: el.videoHeight,
+                                duration: el.duration,
+                              });
+                            }}
+                          >
+                            <track kind="captions" />
+                          </video>
+                        ) : (
+                          <img
+                            src={asset}
+                            alt={selected.name}
+                            className="h-full w-full object-contain"
+                            onLoad={(event) => {
+                              const el = event.currentTarget;
+                              setMediaMeta({ w: el.naturalWidth, h: el.naturalHeight });
+                            }}
+                          />
+                        )}
+                        <div
+                          className={`absolute right-3 flex items-center gap-1.5 rounded-md bg-card/95 py-1 pr-1 pl-2.5 text-t-xs text-text-3 shadow-(--sh-1) ${
+                            selected.media === "video" ? "bottom-14" : "bottom-3"
+                          }`}
+                        >
+                          {mediaMeta && (
+                            <span className="tabular-nums">
+                              {mediaMeta.w}×{mediaMeta.h}
+                              {mediaMeta.duration !== undefined
+                                ? ` · ${mediaMeta.duration.toFixed(1)} 秒`
+                                : ""}
+                              {` · ${(selected.name.split(".").pop() ?? "").toUpperCase()}`}
+                            </span>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label={
+                              foldedItem === `${identity}/${selected.item}`
+                                ? "展开素材"
+                                : "折叠为小图"
+                            }
+                            aria-expanded={
+                              foldedItem !== `${identity}/${selected.item}`
+                            }
+                            onClick={() =>
+                              setFoldedItem((previous) =>
+                                previous === `${identity}/${selected.item}`
+                                  ? null
+                                  : `${identity}/${selected.item}`,
+                              )
+                            }
+                          >
+                            {foldedItem === `${identity}/${selected.item}` ? (
+                              <Maximize2Icon />
+                            ) : (
+                              <Minimize2Icon />
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  {(selected.message || selected.reason) && (
+                    <p className="mt-3 text-warn-ink">
+                      {selected.message || selected.reason}
+                    </p>
+                  )}
+                  {selection && selected.status !== "unimported" && (
+                    <CaptionPreview
+                      key={`${selection.workdirId}/${selection.batchId}/${selected.item}`}
+                      wid={selection.workdirId}
+                      batch={selection.batchId}
+                      batches={
+                        workdirs.find((entry) => entry.id === selection.workdirId)
+                          ?.batches
+                      }
+                      row={selected}
+                      onRetryChange={retryChanged}
+                    />
+                  )}
+                </>
               )}
             </>
           )}

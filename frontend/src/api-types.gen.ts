@@ -65,7 +65,12 @@ export interface paths {
         put?: never;
         /**
          * Test Connection
-         * @description 测试端点连通性：用表单当前值发一个极小的真实请求，不必先保存。
+         * @description 测试端点连通性：用表单当前值两档探测，不必先保存。
+         *
+         *     密钥三通道（2026-09-21 审计定案，与实调的 resolve_api_key 对齐）：表单值 > 环境变量
+         *     DSF_API_KEY > 该配置已存密钥——之前探测不认环境变量通道，会出现「实调能通、测试
+         *     连接却报无密钥」的假故障。api_format 是真校验不是摆设：与受支持格式不符时直接给出
+         *     可操作失败，不留「改了以为生效」的假字段。
          */
         post: operations["test_connection_api_endpoints_test_post"];
         delete?: never;
@@ -421,6 +426,29 @@ export interface paths {
          * @description 某会话快照（设置 + 对话历史）。
          */
         get: operations["get_session_api_sessions__session_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/attachments/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Session Attachment
+         * @description 取会话附件的文件字节（B5，2026-09-21 审计）：历史缩略图不再依赖内存 dataURL。
+         *
+         *     安全口径与素材域的 /asset 同源：附件名经 sessions 域的单段安全名校验（路径穿越
+         *     与非法字符在数据域拦下），只读、越界即 404。
+         */
+        get: operations["session_attachment_api_sessions__session_id__attachments__name__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1061,6 +1089,9 @@ export interface paths {
         /**
          * Current Run
          * @description 当前运行进度快照（轮询用；SSE 断线重连后的全量刷新同款数据）。
+         *
+         *     没有进行中的跑批时返回 200 + null（2026-09-21 审计定案 L3/B6）：空闲轮询是
+         *     前端的合法问询，报 404 会把日志刷成错误流、把真错误淹掉。
          */
         get: operations["current_run_api_workdirs__wid__batches__sN__runs_current_get"];
         put?: never;
@@ -1532,6 +1563,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workdirs/{wid}/scan-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Scan Preview
+         * @description 扫描素材目录的发车前摘要（新建跑批表单的「扫描到 N 项」行，V16）。
+         *
+         *     只读现算不落任何状态：total / images / videos 数「登记在册且在盘」的素材
+         *     （本次跑批会逐张处理的部分）；unimported 列出不会成为条目的文件与原因。
+         */
+        get: operations["scan_preview_api_workdirs__wid__scan_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workdirs/{wid}/stats": {
         parameters: {
             query?: never;
@@ -1979,13 +2033,13 @@ export interface components {
         EndpointTestRequest: {
             /**
              * Api Format
-             * @description API 调用格式（一期仅 OpenAI Chat Completions）
+             * @description API 调用格式（一期仅 OpenAI Chat Completions；与受支持格式不符直接判失败）
              * @default openai-chat-completions
              */
             api_format: string;
             /**
              * Api Key
-             * @description 密钥；缺省回落该配置已存密钥
+             * @description 密钥；缺省先回落环境变量 DSF_API_KEY，再回落该配置已存密钥
              */
             api_key?: string | null;
             /**
@@ -2003,12 +2057,21 @@ export interface components {
              * @description 配置名（回落已存密钥时用它定位）
              */
             name?: string | null;
+            /** @description 表单当前的高级参数（生成参数随探测一起发；传输参数由探测专用值覆盖） */
+            request_params?: components["schemas"]["EndpointRequestParams"] | null;
         };
         /**
          * EndpointTestResult
          * @description POST /api/endpoints/test 的响应体：探测结果（HTTP 恒 200，成败看 ok）。
          */
         EndpointTestResult: {
+            /**
+             * Effective Params
+             * @description 本次探测实际发出的关键参数回显（model/stream/max_tokens/生成参数；探测专用传输参数不在此列）
+             */
+            effective_params?: {
+                [key: string]: unknown;
+            } | null;
             /**
              * Latency Ms
              * @description 请求耗时（毫秒；未发出请求时为 0）
@@ -2227,10 +2290,26 @@ export interface components {
             /** Attachment */
             attachment: string | null;
             /**
+             * Elapsed Ms
+             * @description 本轮整轮耗时毫秒（恢复历史后仍可显示；缺省 null）
+             */
+            elapsed_ms?: number | null;
+            /**
+             * Partial
+             * @description True = 断流 / 报错时落盘的半截回复（界面标注「未完成」）
+             * @default false
+             */
+            partial: boolean;
+            /**
              * Reasoning
              * @description 助手消息的思考过程全文（流式打标落盘；无思考为 null）
              */
             reasoning?: string | null;
+            /**
+             * Reasoning Ms
+             * @description 本轮思考耗时毫秒（缺省 null）
+             */
+            reasoning_ms?: number | null;
             /** Role */
             role: string;
             /** Text */
@@ -2798,6 +2877,66 @@ export interface components {
             path: string;
             /** Text */
             text: string;
+        };
+        /**
+         * ScanPreviewItem
+         * @description 扫描预览里一个「不会成为条目」的文件（与条目视图的未导入行同源同形）。
+         */
+        ScanPreviewItem: {
+            /**
+             * Limit
+             * @description 该档大小上限；只有超限那一类有值
+             */
+            limit?: number | null;
+            /**
+             * Media
+             * @description 媒体形态：image / video / file
+             */
+            media: string;
+            /**
+             * Name
+             * @description 文件名
+             */
+            name: string;
+            /**
+             * Reason
+             * @description 不会成为条目的原因（标准措辞）
+             */
+            reason: string;
+            /**
+             * Size
+             * @description 文件字节数
+             */
+            size: number;
+        };
+        /**
+         * ScanPreviewView
+         * @description GET /api/workdirs/{wid}/scan-preview 的响应体：新建跑批的发车前摘要（V16）。
+         *
+         *     回答「这一跑会吃多少、收哪些、不收哪些、为什么」：total / images / videos 数的是
+         *     登记在册且在盘的素材（会被逐张打标的部分）；unimported 是不会成为条目的文件清单。
+         */
+        ScanPreviewView: {
+            /**
+             * Images
+             * @description 其中图片数
+             */
+            images: number;
+            /**
+             * Total
+             * @description 将被打标的素材总数（登记在册且在盘）
+             */
+            total: number;
+            /**
+             * Unimported
+             * @description 不会成为条目的文件清单
+             */
+            unimported: components["schemas"]["ScanPreviewItem"][];
+            /**
+             * Videos
+             * @description 其中视频数
+             */
+            videos: number;
         };
         /**
          * ServiceLogs
@@ -4349,6 +4488,54 @@ export interface operations {
                 };
             };
             /** @description 会话不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    session_attachment_api_sessions__session_id__attachments__name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 附件名非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description 会话或附件不存在 */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -6043,10 +6230,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RunStatusView"];
+                    "application/json": components["schemas"]["RunStatusView"] | null;
                 };
             };
-            /** @description 该批次当前没有进行中的跑批（problem+json: run-not-active） */
+            /** @description wid 或批次不存在（workdir-not-found / batch-not-found） */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -7544,6 +7731,46 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Problem"];
                     "application/problem+json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    scan_preview_api_workdirs__wid__scan_preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanPreviewView"];
+                };
+            };
+            /** @description 工作目录不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
                 };
             };
             /** @description Validation Error */

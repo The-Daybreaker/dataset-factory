@@ -35,6 +35,11 @@ import { SnapshotDialog } from "./SnapshotDialog";
 type Batch = components["schemas"]["BatchView"];
 type Directory = components["schemas"]["WorkdirInfo"];
 
+/** L15：稳定的 ref 回调——只在元素挂载时聚焦一次，重渲染不抢焦点。 */
+function autoFocusRef(element: HTMLInputElement | null): void {
+  element?.focus();
+}
+
 function localDate(seconds: number): string {
   const date = new Date(seconds * 1000);
   return [
@@ -106,11 +111,16 @@ export function WorkdirSettings({
     async function poll() {
       const next: Record<string, boolean> = {};
       let failure = "";
+      let anyRunning = false;
       await Promise.all(
         batches.map(async (batch) => {
           try {
             const state = await api.currentRun(wid, batch.id);
-            next[batch.id] = state.status === "pending" || state.status === "running";
+            // 空闲 = 200 + null（L3 后端语义）：不是错误，照常记 false。
+            next[batch.id] =
+              state !== null &&
+              (state.status === "pending" || state.status === "running");
+            if (next[batch.id]) anyRunning = true;
           } catch (reason) {
             if (reason instanceof ApiError && reason.status === 404)
               next[batch.id] = false;
@@ -121,7 +131,9 @@ export function WorkdirSettings({
       if (disposed) return;
       setRunStates(next);
       setRunError(failure);
-      timer = setTimeout(() => void poll(), 3000);
+      // L4/B9（2026-09-21 审计）：有运行才 3 秒紧轮询；全部空闲时降到 15 秒——
+      // 空闲页面的高频全批次轮询是无谓请求，还把真错误淹在日志里。
+      timer = setTimeout(() => void poll(), anyRunning ? 3000 : 15000);
     }
     void poll();
     return () => {
@@ -285,8 +297,13 @@ export function WorkdirSettings({
     (batch) => !batch.active && cleanupBatches.has(batch.seq),
   ).length;
   const runDates = cleanupSummary?.runs.map((entry) => entry.modified_at) ?? [];
+  // Q7（2026-09-21 审计）：同一份运行时两端点相同 → 压缩成单日期，跨天才写区间。
   const runDateRange = runDates.length
-    ? `${localDate(Math.min(...runDates))} → ${localDate(Math.max(...runDates))}`
+    ? (() => {
+        const min = localDate(Math.min(...runDates));
+        const max = localDate(Math.max(...runDates));
+        return min === max ? min : `${min} → ${max}`;
+      })()
     : "";
 
   return (
@@ -320,7 +337,7 @@ export function WorkdirSettings({
       {!loading && directory && !error && (
         <>
           <section
-            className="mt-4 border-b border-border bg-card p-4"
+            className="mt-4 rounded-xl border border-border bg-card p-4"
             aria-label="基本信息"
           >
             <h2 className="mb-2 text-t-md font-medium">基本信息</h2>
@@ -353,7 +370,7 @@ export function WorkdirSettings({
               <span className="w-[76px] shrink-0 text-text-4">统计</span>
               <span>
                 策略 {batches.length}（活跃{" "}
-                {batches.filter((batch) => batch.active).length} · 已隐藏{" "}
+                {batches.filter((batch) => batch.active).length} · 已停用{" "}
                 {batches.filter((batch) => !batch.active).length}）
                 {stats && ` · 素材 ${stats.asset_count}`} · 产物{" "}
                 {batches.reduce((total, batch) => total + batch.product_count, 0)}
@@ -371,7 +388,7 @@ export function WorkdirSettings({
             </div>
           </section>
           <section
-            className="mt-4 border-b border-border bg-card p-4"
+            className="mt-4 rounded-xl border border-border bg-card p-4"
             aria-label="清理"
           >
             <h2 className="mb-2 text-t-md font-medium">清理</h2>
@@ -388,7 +405,7 @@ export function WorkdirSettings({
               {cleanupSummary && (
                 <span className="text-text-3">
                   {cleanupSummary.products.products.length} 个 txt（
-                  {cleanupBatches.size} 套策略，含 {hiddenCleanupBatches} 套已隐藏）·{" "}
+                  {cleanupBatches.size} 套策略，含 {hiddenCleanupBatches} 套已停用）·{" "}
                   {formatBytes(cleanupSummary.products.total_bytes, "KiB", 1)}
                 </span>
               )}
@@ -458,7 +475,7 @@ export function WorkdirSettings({
             ))}
           </section>
           <section
-            className="mt-4 border-b border-border bg-card p-4"
+            className="mt-4 rounded-xl border border-border bg-card p-4"
             aria-label="目录策略"
           >
             <div className="mb-2 flex items-center justify-between gap-3">
@@ -497,9 +514,11 @@ export function WorkdirSettings({
                     />
                   </Button>
                   <span
-                    className={`text-t-sm ${runStates[batch.id] ? "text-info-ink" : batch.active ? "text-ok-ink" : "text-text-4"}`}
+                    className={`inline-flex h-4.5 shrink-0 items-center rounded-full px-2 text-t-xs font-medium ${runStates[batch.id] ? "bg-info-ink text-on-ink" : batch.active ? "bg-ok-ink text-on-ink" : "bg-muted text-text-3"}`}
                   >
-                    {runStates[batch.id] ? "运行中" : batch.active ? "活跃" : "已隐藏"}
+                    {/* Q3/Q7（ui-spec §5.2）：状态章一律实底彩色 + 白字——
+                        此前的带色文字是与原型 shell.css 同源的规范漂移。 */}
+                    {runStates[batch.id] ? "运行中" : batch.active ? "活跃" : "已停用"}
                   </span>
                   {action?.kind === "rename" && action.batch.id === batch.id ? (
                     <Input
@@ -507,7 +526,9 @@ export function WorkdirSettings({
                       className="h-(--h-sm) w-48 max-w-full"
                       value={name}
                       disabled={busy}
-                      ref={(element) => element?.focus()}
+                      // L15（2026-09-21 审计）：稳定的 ref 回调只在挂载时聚焦一次——
+                      // 内联箭头每次渲染重建会把光标反复拉回输入框。
+                      ref={autoFocusRef}
                       onChange={(event) => setName(event.currentTarget.value)}
                       onBlur={() => {
                         if (name.trim()) void apply();
@@ -558,25 +579,30 @@ export function WorkdirSettings({
                     size="sm"
                     onClick={() => requestAction(batch, "hide")}
                   >
-                    {batch.active ? "隐藏" : "显示"}
+                    {/* Q3：同一动作统一为「停用 / 启用」（PRD F3/F9 与后端 docstring 同口径），
+                        不再与「隐藏 / 显示」三种写法并存。 */}
+                    {batch.active ? "停用" : "启用"}
                   </Button>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    className="w-(--h-sm) p-0"
-                    aria-label={`删除策略 ${batch.id}`}
-                    disabled={runStates[batch.id] !== false || busy}
-                    title={
+                  <Tip
+                    label={
                       runStates[batch.id]
                         ? "运行中不可删除"
                         : runStates[batch.id] === false
-                          ? "删除"
+                          ? ""
                           : "正在确认运行状态"
                     }
-                    onClick={() => requestAction(batch, "delete")}
                   >
-                    <Trash2Icon />
-                  </Button>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="w-(--h-sm) p-0"
+                      aria-label={`删除策略 ${batch.id}`}
+                      disabled={runStates[batch.id] !== false || busy}
+                      onClick={() => requestAction(batch, "delete")}
+                    >
+                      <Trash2Icon />
+                    </Button>
+                  </Tip>
                 </div>
                 {action?.kind === "rename" &&
                   action.batch.id === batch.id &&
@@ -595,7 +621,7 @@ export function WorkdirSettings({
       )}
       {!loading && directory && !error && (
         <section
-          className="mt-4 border-b border-border bg-card p-4"
+          className="mt-4 rounded-xl border border-border bg-card p-4"
           aria-label="危险操作"
         >
           <h2 className="mb-2 text-t-md font-medium">危险操作</h2>
@@ -686,8 +712,8 @@ export function WorkdirSettings({
                 {action.kind === "delete"
                   ? "删除策略？"
                   : action.batch.active
-                    ? "隐藏策略？"
-                    : "显示策略？"}
+                    ? "停用策略？"
+                    : "启用策略？"}
               </DialogTitle>
               <DialogDescription>
                 {action.batch.name} · {action.batch.id}
@@ -697,8 +723,8 @@ export function WorkdirSettings({
               {action.kind === "delete"
                 ? `将删除本策略的 ${action.batch.product_count} 个产物、快照和重试记录，素材保留。`
                 : action.batch.active
-                  ? "若此策略正在运行，确认后将停止本次运行；已完成条目与产物保留。隐藏后可在此处重新显示。"
-                  : "重新显示后可在打标页选择此策略。"}
+                  ? "若此策略正在运行，确认后将停止本次运行；已完成条目与产物保留。停用后可在此处重新启用。"
+                  : "重新启用后可在打标页选择此策略。"}
             </p>
             {actionError && (
               <FormError className="text-bad-ink">{actionError}</FormError>

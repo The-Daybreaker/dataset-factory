@@ -1,5 +1,5 @@
-/** 输入区：打标指令文本框 + 附件选择 + 视频抽帧参数 + 发送按钮。 */
-import { ArrowUpIcon, FilmIcon, PaperclipIcon, XIcon } from "lucide-react";
+/** 输入区：打标指令文本框 + 附件选择 + 视频抽帧参数 + 发送按钮 + 停止生成。 */
+import { ArrowUpIcon, FilmIcon, PaperclipIcon, SquareIcon, XIcon } from "lucide-react";
 import {
   type ChangeEvent,
   type KeyboardEvent,
@@ -42,6 +42,7 @@ export function InputArea({
   sending,
   waitSeconds,
   onSend,
+  onStop,
   actions,
   selectedSkills,
 }: {
@@ -57,6 +58,8 @@ export function InputArea({
   sending: boolean;
   waitSeconds: number;
   onSend: () => void;
+  /** 停止生成（N1④）：发送期间展示；点击中止本轮，已收到的部分留痕。 */
+  onStop?: () => void;
   actions?: ReactNode;
   selectedSkills?: ReactNode;
 }): ReactElement {
@@ -71,6 +74,12 @@ export function InputArea({
                 className="size-10 shrink-0 rounded-sm object-cover"
                 src={media.dataUrl}
                 alt={`待打标图片 ${media.name}`}
+              />
+            ) : media.posterUrl !== undefined ? (
+              <img
+                className="size-10 shrink-0 rounded-sm object-cover"
+                src={media.posterUrl}
+                alt={`待打标视频 ${media.name}`}
               />
             ) : (
               <FilmIcon className="size-10 shrink-0 rounded-sm bg-muted p-2" />
@@ -144,40 +153,55 @@ export function InputArea({
                 <Button
                   variant="ghost"
                   size="icon"
-                  aria-label="附件"
+                  aria-label="附图片或视频（最多 1 个）"
                   onClick={() => fileInput.current?.click()}
                 >
                   <PaperclipIcon />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>附图片或视频</TooltipContent>
+              <TooltipContent>附图片或视频（最多 1 个）</TooltipContent>
             </Tooltip>
             <input
               ref={fileInput}
               type="file"
               accept="image/*,video/mp4,video/quicktime,video/webm,video/x-msvideo,video/x-matroska,video/x-m4v"
               className="sr-only"
-              aria-label="附图或视频"
+              aria-label="附图或视频（最多 1 个）"
               onChange={onPickMedia}
             />
             {actions}
           </div>
           {selectedSkills}
           {sending && (
-            <span role="status" className="text-t-xs text-text-4">
-              等待模型 · {waitSeconds}s
-            </span>
+            <>
+              <span role="status" className="text-t-xs text-text-4">
+                等待模型 · {waitSeconds}s
+              </span>
+              {onStop !== undefined && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  onClick={onStop}
+                  aria-label="停止生成"
+                >
+                  <SquareIcon className="size-3" /> 停止生成
+                </Button>
+              )}
+            </>
           )}
           <span className="ml-auto shrink-0 text-t-sm text-muted-foreground">
             Enter 发送 · Shift+Enter 换行
           </span>
           <Tooltip>
             <TooltipTrigger asChild>
+              {/* N2（2026-09-21 审计）：主行动用实底档——可发态白图标压浅底的
+                  1.2:1 对比度曾让「能不能发」比禁用态更难分辨。 */}
               <Button
                 type="button"
                 size="icon"
-                variant="ghost"
-                className="shrink-0 rounded-full bg-n-200 text-primary-foreground hover:bg-n-300"
+                variant="default"
+                className="shrink-0 rounded-full"
                 aria-label="发送"
                 disabled={!canSend}
                 onClick={onSend}

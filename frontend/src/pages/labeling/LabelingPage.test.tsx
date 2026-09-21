@@ -163,7 +163,7 @@ describe("打标页读取流程", () => {
   it("顶栏展示批次快照的只读端点、提示词与技能上下文", async () => {
     render(<LabelingPage />);
     const context = await screen.findByRole("region", { name: "策略配置" });
-    expect(context).toHaveTextContent("Mock endpoint · mock-model");
+    expect(context).toHaveTextContent("Example · mock-model");
     expect(context).toHaveTextContent("Mock prompt");
     expect(context).toHaveTextContent("Mock skill");
   });
@@ -446,9 +446,9 @@ describe("打标页读取流程", () => {
       screen.queryByRole("button", { name: "移出重试 first.jpg" }),
     ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "刷新条目" }));
-    await user.click(await screen.findByRole("button", { name: "清空列表" }));
+    await user.click(await screen.findByRole("button", { name: "清空名单" }));
     expect(api.clearRetryItems).toHaveBeenCalledWith("one", "s1");
-    expect(screen.queryByRole("button", { name: "清空列表" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "清空名单" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "first.jpg" })).toBeInTheDocument();
   });
 
@@ -463,7 +463,7 @@ describe("打标页读取流程", () => {
     vi.mocked(api.clearRetryItems).mockRejectedValue(new Error("暂时不可写"));
     render(<LabelingPage />);
 
-    await user.click(await screen.findByRole("button", { name: "清空列表" }));
+    await user.click(await screen.findByRole("button", { name: "清空名单" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("暂时不可写");
     expect(

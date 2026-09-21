@@ -78,3 +78,14 @@ describe("设计令牌", () => {
     ]);
   });
 });
+
+describe("设计系统类门禁", () => {
+  it("ui-spec 定义的 .cb 复选框形态必须存在于构建（V13：规范有、构建无 = 死类名）", () => {
+    // 门禁判据：规范里声明过的设计系统类名，globals.css 里必须有对应实体——
+    // .cb 曾静默溜过（5 处 className 写了它、CSS 零命中），新类名进规范时同步加进这份清单。
+    const required = [".cb"];
+    for (const selector of required) {
+      expect(css.includes(selector)).toBe(true);
+    }
+  });
+});

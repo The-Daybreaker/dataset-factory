@@ -100,7 +100,13 @@ it("删除失败的原因在确认弹窗内可见，重试仍使用原策略", a
   expect(mocks.deleteStrategy).toHaveBeenNthCalledWith(2, "a1");
 });
 
-it("编辑策略后锁定切换，保存失败保留草稿，重试成功才解锁", async () => {
+it("编辑策略后锁定切换：列表照开、点了才提示；保存失败保留草稿，重试成功才解锁", async () => {
+  const second: components["schemas"]["StrategyView"] = {
+    ...strategy,
+    id: "a2",
+    name: "极简描述",
+  };
+  mocks.listStrategies.mockResolvedValue([strategy, second]);
   mocks.updateStrategy
     .mockRejectedValueOnce(new Error("写入失败"))
     .mockResolvedValueOnce({ ...strategy, name: "新名字" });
@@ -116,7 +122,16 @@ it("编辑策略后锁定切换，保存失败保留草稿，重试成功才解�
   );
 
   fireEvent.change(screen.getByLabelText("策略名称"), { target: { value: "新名字" } });
-  expect(screen.getByRole("button", { name: "切换策略" })).toBeDisabled();
+  // L9（2026-09-21 审计 / 原型 :1084-1093）：锁定时列表照常打开，选中**非当前项**
+  // 才就地提示原因——不再是「按钮灰掉、列表也打不开」。重开菜单点另一套策略。
+  await userEvent.click(screen.getByRole("button", { name: "切换策略" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: /极简描述.*训练用/ }),
+  );
+  expect(await screen.findByText(/先点「保存」，才能切换策略/)).toBeVisible();
+  // 菜单开着时外部元素被 aria-hidden（浮层陷阱），用 Escape 收起再继续。
+  await userEvent.keyboard("{Escape}");
+
   await userEvent.click(screen.getByRole("button", { name: "保存策略" }));
   expect(await screen.findByText("写入失败")).toBeInTheDocument();
   expect(screen.getByLabelText("策略名称")).toHaveValue("新名字");

@@ -23,6 +23,10 @@ interface Props {
   batch: string;
   items: ItemMap;
   exportRevision?: number;
+  /** 跑批进行中（V15）：导出入口收起，避免导出半批产物（PRD F8 口径）。 */
+  running?: boolean;
+  /** 跑批中的「当前产出」逐字流（A2）；null = 没有正在产出的条目。 */
+  liveOutput?: { item: string; reasoning: string; content: string } | null;
   onSelect: (row: components["schemas"]["ItemRowView"]) => void;
   onImported?: () => void;
   onImport?: () => void;
@@ -41,6 +45,8 @@ export function BatchOverview({
   batch,
   items,
   exportRevision = 0,
+  running = false,
+  liveOutput = null,
   onSelect,
   onImported,
   onImport,
@@ -254,6 +260,47 @@ export function BatchOverview({
           failed: failed.length,
         }}
       />
+      {running && liveOutput !== null && (
+        // A2（2026-09-21 审计定案）：跑批中的「当前产出」——逐字正文 + 思考折叠区。
+        // 思考只展示不落盘：这里的内容全部来自 SSE 内存态，关掉页面再打开就没有。
+        <section
+          className="mt-4 rounded-xl border border-border bg-card p-4"
+          aria-label="当前产出"
+        >
+          <div className="mb-2 flex items-center gap-2">
+            <h3 className="text-t-md font-medium">当前产出</h3>
+            <span className="min-w-0 truncate text-t-sm text-text-3">
+              {liveOutput.item}
+            </span>
+            <img
+              src={`/api/workdirs/${encodeURIComponent(wid)}/items/${encodeURIComponent(liveOutput.item)}/asset`}
+              alt=""
+              className="ml-auto h-12 w-16 rounded-md object-cover"
+            />
+          </div>
+          {liveOutput.reasoning !== "" && (
+            <details open className="mb-2 rounded-lg border border-border bg-muted/40">
+              <summary className="cursor-pointer px-3 py-2 text-t-sm text-text-3">
+                思考过程（生成中展开 · 不保存）
+              </summary>
+              <p className="px-3 pb-3 text-t-md leading-(--lh-loose) text-text-3 whitespace-pre-wrap">
+                {liveOutput.reasoning}
+              </p>
+            </details>
+          )}
+          {liveOutput.content === "" ? (
+            <p className="text-t-sm text-text-4">正在组装请求…</p>
+          ) : (
+            <p className="text-t-md leading-(--lh-loose) whitespace-pre-wrap">
+              {liveOutput.content}
+              <span
+                className="ml-0.5 inline-block h-[14px] w-[7px] bg-primary align-[-2px]"
+                aria-hidden
+              />
+            </p>
+          )}
+        </section>
+      )}
       <section className="mt-4 border-t border-border pt-4" aria-label="素材完整性">
         <div className="mb-3 flex min-w-0 items-center gap-3">
           <Button
@@ -441,12 +488,25 @@ export function BatchOverview({
           </div>
         )}
       </section>
-      <ExportPanel
-        wid={wid}
-        batch={batch}
-        refreshKey={`${exportRevision}/${exclusionRevision}`}
-        onImport={onImport}
-      />
+      {running ? (
+        // V15（2026-09-21 审计 / PRD F8）：导出只属于「已完成批次」——
+        // 跑批中给入口等于邀请用户导出半批产物。
+        <p className="mt-4 border-t border-border pt-4 text-t-sm text-text-4">
+          跑批进行中——打包导出在本批完成后开放。
+        </p>
+      ) : (
+        <ExportPanel
+          wid={wid}
+          batch={batch}
+          refreshKey={`${exportRevision}/${exclusionRevision}`}
+          onImport={onImport}
+          mediaSummary={{
+            images: members.filter((row) => row.media === "image").length,
+            videos: members.filter((row) => row.media === "video").length,
+            changed: changed.length,
+          }}
+        />
+      )}
       {!!failed.length && (
         <section className="mt-4 border-t border-border pt-4" aria-label="未完成清单">
           <h3 className="mb-3 text-t-md font-medium">

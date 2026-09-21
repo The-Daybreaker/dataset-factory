@@ -144,7 +144,7 @@ describe("产物与重试预览", () => {
     );
 
     await screen.findByText("A detailed caption.");
-    await user.click(screen.getByRole("button", { name: "加入重试列表" }));
+    await user.click(screen.getByRole("button", { name: "加入重试" }));
 
     expect(api.addRetryItems).toHaveBeenCalledExactlyOnceWith("work", "s1", ["frame"]);
     expect(onRetryChange).toHaveBeenCalledExactlyOnceWith(["frame"]);
@@ -158,7 +158,7 @@ describe("产物与重试预览", () => {
       <CaptionPreview wid="work" batch="s1" row={row} onRetryChange={onRetryChange} />,
     );
 
-    await user.click(screen.getByRole("button", { name: "加入重试列表" }));
+    await user.click(screen.getByRole("button", { name: "加入重试" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("该条目不可重试");
     expect(onRetryChange).not.toHaveBeenCalled();
@@ -177,7 +177,7 @@ describe("产物与重试预览", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "移出重试列表" }));
+    await user.click(screen.getByRole("button", { name: "移出重试" }));
 
     expect(api.removeRetryItem).toHaveBeenCalledExactlyOnceWith("work", "s1", "frame");
     expect(onRetryChange).toHaveBeenCalledExactlyOnceWith([]);
@@ -197,7 +197,7 @@ describe("产物与重试预览", () => {
     );
 
     expect(await screen.findByText("暂无产物")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "加入重试列表" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "加入重试" })).toBeDisabled();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 

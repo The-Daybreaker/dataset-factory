@@ -44,7 +44,7 @@ it("隐藏策略等待确认，失败保留活跃状态并可重试成功", asyn
   vi.mocked(api.setBatchActive).mockRejectedValueOnce(new Error("目录暂时被占用"));
   render(<WorkdirSettings wid="w1" onBack={vi.fn()} onChanged={changed} />);
 
-  await user.click(await screen.findByRole("button", { name: "隐藏" }));
+  await user.click(await screen.findByRole("button", { name: "停用" }));
   const dialog = within(screen.getByRole("dialog", { name: "隐藏策略？" }));
   expect(dialog.getByText(/已完成条目与产物保留/)).toBeVisible();
   expect(api.setBatchActive).not.toHaveBeenCalled();
@@ -59,7 +59,7 @@ it("隐藏策略等待确认，失败保留活跃状态并可重试成功", asyn
   vi.mocked(api.listBatches).mockResolvedValue([{ ...batch, active: false }]);
   await user.click(dialog.getByRole("button", { name: "确认" }));
 
-  expect(await screen.findByRole("button", { name: "显示" })).toBeVisible();
+  expect(await screen.findByRole("button", { name: "启用" })).toBeVisible();
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(changed).toHaveBeenCalledOnce();
 });
@@ -95,7 +95,7 @@ it("运行中的策略显示运行状态并禁止删除，仍可请求隐藏", a
 
   expect(await screen.findByText("运行中")).toBeVisible();
   expect(screen.getByRole("button", { name: "删除策略 s1" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "隐藏" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "停用" })).toBeEnabled();
 });
 
 it("取消就地改名不写盘", async () => {
@@ -220,7 +220,7 @@ it("点击策略名就地编辑，失败保留输入，回车重试成功后更�
   expect(changed).toHaveBeenCalledOnce();
 });
 
-it("清理摘要按策略去重统计，并区分已隐藏策略", async () => {
+it("清理摘要按策略去重统计，并区分已停用策略", async () => {
   vi.mocked(api.getWorkdir).mockResolvedValue({
     id: "w1",
     path: "/srv/dataset",
@@ -272,7 +272,7 @@ it("清理摘要按策略去重统计，并区分已隐藏策略", async () => {
 
   const cleanup = within(await screen.findByRole("region", { name: "清理" }));
   expect(
-    cleanup.getByText("3 个 txt（2 套策略，含 1 套已隐藏）· 3.0 KiB"),
+    cleanup.getByText("3 个 txt（2 套策略，含 1 套已停用）· 3.0 KiB"),
   ).toBeVisible();
   expect(screen.getByRole("region", { name: "基本信息" })).toHaveTextContent(
     "素材 4 · 产物 3 · 2.00 MiB",

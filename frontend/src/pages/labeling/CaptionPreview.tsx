@@ -122,19 +122,29 @@ export function CaptionPreview({
     <section className="mt-4 min-w-0" aria-label="产物预览">
       <div className="mb-3 flex items-center gap-3">
         <h3 className="text-t-md font-medium">已产出 txt · {batch}</h3>
-        <Button
-          className="ml-auto"
-          variant="outline"
-          size="sm"
-          disabled={saving || (!row.in_retry && !row.can_retry)}
-          onClick={() => void toggleRetry()}
+        <Tip
+          label={
+            saving
+              ? "正在保存"
+              : !row.in_retry && !row.can_retry
+                ? "不可加入重试——排队中无需重试、缺失要先补回素材、格式类失败要先解决格式问题"
+                : ""
+          }
         >
-          {saving ? "正在保存" : row.in_retry ? "移出重试列表" : "加入重试列表"}
-        </Button>
+          <Button
+            className="ml-auto"
+            variant={row.in_retry ? "outline" : "default"}
+            size="sm"
+            disabled={saving || (!row.in_retry && !row.can_retry)}
+            onClick={() => void toggleRetry()}
+          >
+            {saving ? "正在保存" : row.in_retry ? "移出重试" : "加入重试"}
+          </Button>
+        </Tip>
       </div>
       {!!available.length && (
         <section
-          className="mb-2 ml-auto flex max-w-[304px] gap-2 overflow-x-auto pb-2"
+          className="mb-2 ml-auto flex max-w-[304px] justify-end gap-2 overflow-x-auto pb-2 [scrollbar-width:thin]"
           aria-label="策略对比"
         >
           {[
@@ -201,7 +211,8 @@ export function CaptionPreview({
             className="whitespace-pre-wrap break-words rounded-md bg-muted p-4 text-t-md leading-loose"
             aria-busy={loading}
           >
-            {loading ? "正在读取" : caption || "暂无产物"}
+            {/* A3 显示层兜底：老产物可能带前导空行，展示前去掉（产物文件本身不动）。 */}
+            {loading ? "正在读取" : caption.trim() || "暂无产物"}
           </div>
         </section>
         {compared.map((id) => (

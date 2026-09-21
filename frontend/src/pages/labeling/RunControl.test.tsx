@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api } from "../../api";
@@ -178,8 +178,9 @@ describe("运行控制", () => {
     const onFinish = vi.fn();
     render(<RunControl wid="work" batch="s1" onFinish={onFinish} />);
 
+    // L3：空闲慢轮从 5 秒放宽到 15 秒（发现 CLI 外部运行是它唯一的职责）。
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(5000);
+      await vi.advanceTimersByTimeAsync(15000);
     });
 
     expect(screen.getByRole("button", { name: "停止" })).toBeInTheDocument();
@@ -220,6 +221,12 @@ describe("运行控制", () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
 
+    // B9 契约：全量刷新挂在「SSE 建连」上、每个运行一次——SSE 断着时重连本身
+    // 不再触发全量重扫，建连成功后才刷。
+    await act(async () => {
+      await FakeEventSource.last?.onopen?.();
+    });
+
     expect(onFinish).toHaveBeenCalledOnce();
     expect(screen.getByText("正在处理：image")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "停止" })).toBeEnabled();
@@ -243,6 +250,8 @@ describe("运行控制", () => {
         onItemUpdate={onItemUpdate}
       />,
     );
+    // 等初始探测落定（空闲 → 按钮可用），点击不再赌冲刷时序。
+    await act(async () => {});
     await user.click(screen.getByRole("button", { name: "开始打标" }));
     const update = {
       batch: 1,
@@ -272,6 +281,8 @@ describe("运行控制", () => {
     const user = userEvent.setup();
     const onFinish = vi.fn();
     render(<RunControl wid="work" batch="s1" onFinish={onFinish} />);
+    // 等初始探测落定（空闲 → 按钮可用），点击不再赌冲刷时序。
+    await act(async () => {});
     await user.click(screen.getByRole("button", { name: "开始打标" }));
     const oldSource = FakeEventSource.last;
     expect(oldSource).toBeDefined();
@@ -289,6 +300,10 @@ describe("运行控制", () => {
     });
     const newSource = FakeEventSource.last;
     expect(newSource).not.toBe(oldSource);
+    // B9 契约：全量刷新挂在「SSE 建连」上、每个运行一次。
+    await act(async () => {
+      await newSource?.onopen?.();
+    });
     expect(onFinish).toHaveBeenCalledOnce();
     onFinish.mockClear();
     act(() => {
@@ -329,6 +344,8 @@ describe("运行控制", () => {
       },
     });
     render(<RunControl wid="work" batch="s1" onFinish={onFinish} />);
+    // 等初始探测落定（空闲 → 按钮可用），点击不再赌冲刷时序。
+    await act(async () => {});
 
     await user.click(screen.getByRole("button", { name: "开始打标" }));
     expect(
@@ -344,6 +361,8 @@ describe("运行控制", () => {
     const user = userEvent.setup();
     const onFinish = vi.fn();
     render(<RunControl wid="work" batch="s1" onFinish={onFinish} />);
+    // 等初始探测落定（空闲 → 按钮可用），点击不再赌冲刷时序。
+    await act(async () => {});
 
     await user.click(screen.getByRole("button", { name: "开始打标" }));
     act(() => {
@@ -371,11 +390,18 @@ describe("运行控制", () => {
     expect(screen.getByRole("button", { name: "开始打标" })).toBeEnabled();
   });
 
-  it("重试模式直接启动，不再弹未导入确认", async () => {
+  it("重试模式经确认弹窗启动（名单发车不可撤销）", async () => {
     const user = userEvent.setup();
     render(<RunControl wid="work" batch="s1" onFinish={vi.fn()} />);
+    // 初始探测（404 → 空闲）落定后按钮才可用；显式等待而非赌冲刷时序。
+    await act(async () => {});
 
     await user.click(screen.getByRole("button", { name: "开始重试" }));
+    const dialog = screen.getByRole("dialog");
+    expect(
+      within(dialog).getByText(/按重试列表的当前名单逐条重新打标/),
+    ).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "开始重试" }));
 
     expect(api.startRun).toHaveBeenCalledWith("work", "s1", "retry");
     expect(screen.getByText("运行中")).toBeInTheDocument();
@@ -385,6 +411,9 @@ describe("运行控制", () => {
     const user = userEvent.setup();
     vi.mocked(api.startRun).mockRejectedValue(new Error("已有跑批在运行"));
     render(<RunControl wid="work" batch="s1" onFinish={vi.fn()} />);
+    // 等初始探测落定（空闲 → 按钮可用），再点开始。
+    await act(async () => {});
+    expect(screen.getByRole("button", { name: "开始打标" })).toBeEnabled();
 
     await user.click(screen.getByRole("button", { name: "开始打标" }));
 

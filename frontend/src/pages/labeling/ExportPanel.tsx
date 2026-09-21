@@ -21,6 +21,15 @@ interface Props {
   batch: string;
   refreshKey: unknown;
   onImport?: () => void;
+  /**
+   * 发车前摘要的媒体维度（V5）：plan 响应里没有图片 / 视频计数（契约如此），
+   * 这些只能由父组件从条目列表与完整性报告汇出后传入——export/plan 不为此扩契约。
+   */
+  mediaSummary?: {
+    images: number;
+    videos: number;
+    changed: number;
+  };
 }
 
 function ExportList({
@@ -77,7 +86,8 @@ function ExportList({
                   )
                 }
               >
-                全选
+                {/* L10：随态换文案（与打标页左列同一口径）。 */}
+                {chosen.length === eligible.length ? "清空本组" : "全选"}
               </Button>
               <Button
                 variant="ghost"
@@ -185,7 +195,7 @@ function ExportList({
   );
 }
 
-export function ExportPanel({ wid, batch, refreshKey, onImport }: Props) {
+export function ExportPanel({ wid, batch, refreshKey, onImport, mediaSummary }: Props) {
   const sequentialId = useId();
   const [sequential, setSequential] = useState(true);
   const [expanded, setExpanded] = useState(true);
@@ -416,7 +426,17 @@ export function ExportPanel({ wid, batch, refreshKey, onImport }: Props) {
         <h3 className="text-t-md font-medium">打包与导出</h3>
         {plan && (
           <span className="ml-auto text-t-xs text-text-4 tabular-nums">
-            {plan.included.length} 条 · {formatBytes(plan.total_bytes, "MiB", 2)}
+            {/* V5（2026-09-21 审计）：发车前最该核对的维度一次给全——
+                将入包 N 条 · 图片 N · 视频 N · 含变更素材 N · 共 X MiB。 */}
+            {[
+              `${plan.included.length} 条`,
+              mediaSummary !== undefined
+                ? `图片 ${mediaSummary.images} · 视频 ${mediaSummary.videos} · 含变更素材 ${mediaSummary.changed}`
+                : null,
+              formatBytes(plan.total_bytes, "MiB", 2),
+            ]
+              .filter((part) => part !== null)
+              .join(" · ")}
           </span>
         )}
       </div>

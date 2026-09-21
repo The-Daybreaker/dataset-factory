@@ -7,6 +7,79 @@ import type { EndpointRequestParams } from "../../api";
 /** 「模型通用参数」的表单键——JSON ⇄ 表单双向同步只发生在这些键上。 */
 const ADV_STANDARD_KEYS: readonly string[] = ["temperature", "top_p", "max_tokens"];
 
+/**
+ * 思考模式三态（A1，2026-09-21 审计定案）：
+ * - default「跟随模型默认」= 不主动发思考参数（行为与不设置完全一致）；
+ * - on / off = 写 `extra_body.chat_template_kwargs.enable_thinking`（Qwen 系口径）。
+ *
+ * 走 extra_body 是刻意的：它是端点配置白名单里现成的透传通道（llm/endpoints.py），
+ * 新增白名单键要动后端契约，而透传对象零契约变更、对其他厂商字段同样适用——
+ * 其他推理模型（reasoning_effort 等）直接手写进 extra_body JSON 即可（逃生门）。
+ * 一个开关对话与跑批共用：值存进端点配置后，对话页实时读、建批次时随快照复制，
+ * 「先试标再跑批」的口径天然一致。
+ */
+export type ThinkingMode = "default" | "on" | "off";
+
+interface ThinkingExtraBody {
+  chat_template_kwargs?: { enable_thinking?: unknown } | unknown;
+  [key: string]: unknown;
+}
+
+/** 从参数 JSON 读思考模式（JSON 无效 / 缺失按「跟随模型默认」）。 */
+export function thinkingOfJson(json: string): ThinkingMode {
+  try {
+    const parsed = JSON.parse(json) as {
+      extra_body?: ThinkingExtraBody;
+    };
+    const kwargs = parsed?.extra_body?.chat_template_kwargs;
+    if (typeof kwargs === "object" && kwargs !== null) {
+      const flag = (kwargs as { enable_thinking?: unknown }).enable_thinking;
+      if (flag === true) return "on";
+      if (flag === false) return "off";
+    }
+  } catch {
+    // JSON 无效：按默认处理（调用方另有 invalid 提示，不在这里报错打断）。
+  }
+  return "default";
+}
+
+/**
+ * 把思考模式写进参数 JSON，返回新 JSON（全空 = 空串，与 paramsToJson 同一口径）。
+ * JSON 无效返回 null——调用方不动原值、给 invalid 提示，绝不静默清空用户内容。
+ */
+export function setThinkingInJson(json: string, mode: ThinkingMode): string | null {
+  let obj: Record<string, unknown>;
+  try {
+    const text = json.trim() === "" ? "{}" : json;
+    obj = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  if (mode === "default") {
+    // 回到「跟随模型默认」：只摘掉开关本身，extra_body 里其余透传键原样保留。
+    const extra = { ...(obj.extra_body as ThinkingExtraBody | undefined) };
+    const kwargs = {
+      ...((extra.chat_template_kwargs ?? {}) as Record<string, unknown>),
+    };
+    delete kwargs.enable_thinking;
+    if (Object.keys(kwargs).length === 0) delete extra.chat_template_kwargs;
+    else extra.chat_template_kwargs = kwargs;
+    if (Object.keys(extra).length === 0) delete obj.extra_body;
+    else obj.extra_body = extra;
+  } else {
+    const extra = { ...(obj.extra_body as ThinkingExtraBody | undefined) };
+    extra.chat_template_kwargs = {
+      ...((extra.chat_template_kwargs ?? {}) as Record<string, unknown>),
+      enable_thinking: mode === "on",
+    };
+    obj.extra_body = extra;
+  }
+  if (Object.keys(obj).length === 0) {
+    return "";
+  }
+  return JSON.stringify(obj, null, 2);
+}
+
 /** JSON 同步状态（原型稿 advJsonState 同款三态）。 */
 export interface AdvJsonState {
   kind: "ok" | "invalid" | "ignored";

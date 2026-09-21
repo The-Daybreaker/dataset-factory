@@ -78,6 +78,12 @@ export function errorMessage(error: unknown): string {
 /** 管理操作的请求超时：都该秒回（打标走流式 labelStream，自带增量反馈、不设硬超时）。 */
 const DEFAULT_TIMEOUT_MS = 15_000;
 
+/**
+ * 端点探测的前端超时（B2，2026-09-21 审计定案）：必须**大于**后端探测的 8 秒——
+ * 前端先掐的话，用户永远看不到后端那句可操作的解释，只会得到一句通用超时文案。
+ */
+const PROBE_TIMEOUT_MS = 12_000;
+
 /** 带上下文的 API 错误：界面上不止一句话，还能拿到「哪一层」与「请求 id」。 */
 export class ApiError extends Error {
   /** HTTP 状态码；请求根本没到服务器（网络断 / 超时）时为 null。 */
@@ -412,9 +418,16 @@ export const api = {
     ),
 
   currentRun: (wid: string, batch: string) =>
-    request<components["schemas"]["RunStatusView"]>(
+    request<components["schemas"]["RunStatusView"] | null>(
       "GET",
       `/api/workdirs/${encodeURIComponent(wid)}/batches/${encodeURIComponent(batch)}/runs/current`,
+    ),
+
+  /** 发车前扫描摘要（V16）：这一跑吃多少、收哪些、不收哪些、为什么。 */
+  scanPreview: (wid: string) =>
+    request<components["schemas"]["ScanPreviewView"]>(
+      "GET",
+      `/api/workdirs/${encodeURIComponent(wid)}/scan-preview`,
     ),
 
   stopRun: (wid: string, batch: string) =>
@@ -536,6 +549,13 @@ export const api = {
   /** 取最新会话快照（重启后恢复界面的入口）。 */
   latestSession: () => request<SessionSnapshotResponse>("GET", "/api/sessions/latest"),
 
+  /**
+   * 会话附件的字节地址（B5）：历史缩略图直接指向它，刷新 / 重开页面仍能显示。
+   * 图片走 <img src>，不需要请求封装；名字与 id 都经 URL 编码防注入。
+   */
+  sessionAttachmentUrl: (sessionId: string, name: string) =>
+    `/api/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(name)}`,
+
   /** 列出提示词（名称 + 描述）。 */
   listPrompts: () => request<PromptInfo[]>("GET", "/api/prompts"),
 
@@ -626,7 +646,12 @@ export const api = {
 
   /** 测试端点连通性（用表单当前值发极小真实请求；密钥缺省回落该配置已存密钥）。 */
   testEndpoint: (payload: EndpointTestRequest) =>
-    request<EndpointTestResult>("POST", "/api/endpoints/test", payload),
+    request<EndpointTestResult>(
+      "POST",
+      "/api/endpoints/test",
+      payload,
+      PROBE_TIMEOUT_MS,
+    ),
 
   /** 列出技能包内文件（角色标注：SKILL.md / references 可预览，assets / scripts 不可）。 */
   listSkillFiles: (name: string) =>
@@ -669,6 +694,8 @@ export const api = {
    *
    * POST + fetch 流式读取（EventSource 不支持 POST）；HTTP 层错误（预备段 4xx/5xx）
    * 直接抛 ApiError，流中的模型错误走 onError 回调（SSE 已开始、状态码改不了）。
+   * `signal` 用于「停止生成」（N1，2026-09-21 审计）：用户主动中止，ApiError 的
+   * message 是「已停止生成」，调用方按用户动作处理、不当失败展示。
    */
   labelStream: async (
     payload: LabelRequest,
@@ -678,6 +705,7 @@ export const api = {
       onDone: (sessionId: string, caption: string) => void;
       onError: (message: string) => void;
     },
+    signal?: AbortSignal,
   ): Promise<void> => {
     let response: Response;
     try {
@@ -685,8 +713,12 @@ export const api = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        ...(signal ? { signal } : {}),
       });
     } catch {
+      if (signal?.aborted) {
+        throw new ApiError("timeout", "已停止生成。", null, null);
+      }
       throw new ApiError(
         "network",
         "无法连接后端服务——请确认 dsf serve 已启动、端口没有填错",
@@ -709,7 +741,11 @@ export const api = {
     for (;;) {
       // 读流中途断掉 = 服务在生成途中退了（外部脚本杀进程最常见）。归入连接类失败，让界面
       // 按「连不上后端」统一提示，而不是把 `Failed to fetch` 这种原话丢给用户。
+      // 用户主动停止（signal 已 abort）按「已停止生成」说，不当失败。
       const chunk = await reader.read().catch((): never => {
+        if (signal?.aborted) {
+          throw new ApiError("timeout", "已停止生成。", null, null);
+        }
         throw new ApiError(
           "network",
           "与后端的连接中断，本轮没有完成——请确认服务在运行后重发",

@@ -23,6 +23,13 @@ import {
   DropdownMenuTrigger,
 } from "../../components/ui/dropdown-menu";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../components/ui/select";
+import {
   Tip,
   Tooltip,
   TooltipContent,
@@ -70,6 +77,8 @@ export function StrategyToolbar({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [open, setOpen] = useState(false);
+  // L9：锁定状态下点了非当前项 → 在列表内给出原因（不弹全局 toast，就地可见）。
+  const [switchNotice, setSwitchNotice] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -202,26 +211,33 @@ export function StrategyToolbar({
           <DropdownMenu open={open} onOpenChange={setOpen}>
             <Tooltip>
               <TooltipTrigger asChild>
+                {/* L9（2026-09-21 审计 / 原型 :1084-1093）：未保存时列表照常打开、
+                    选中非当前项时才提示——「点不动但看不见有什么」改成「点得动但会告诉你」。 */}
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="ghost"
                     size="icon"
                     className="absolute right-0 size-6"
                     aria-label="切换策略"
-                    disabled={switchLocked}
                   >
                     <ChevronDownIcon />
                   </Button>
                 </DropdownMenuTrigger>
               </TooltipTrigger>
-              <TooltipContent>
-                {switchLocked ? "请先保存当前修改" : "切换策略"}
-              </TooltipContent>
+              <TooltipContent>切换策略</TooltipContent>
             </Tooltip>
             <DropdownMenuContent
               align="start"
               className="w-96 max-w-[calc(100vw-32px)] p-1"
             >
+              {switchNotice !== null && (
+                <p
+                  role="status"
+                  className="rounded-md bg-warn-bg px-2 py-1.5 text-t-xs text-warn-ink"
+                >
+                  {switchNotice}
+                </p>
+              )}
               <div className="flex items-center justify-between px-2 py-1 text-t-xs text-text-4">
                 <span>策略库 · 共 {entries.length} 条</span>
                 <Tooltip>
@@ -262,9 +278,19 @@ export function StrategyToolbar({
                       <span className="min-w-0 flex-1">
                         <button
                           type="button"
-                          disabled={busy || loading || locked}
+                          disabled={busy || loading}
                           className={`w-full min-w-0 text-left ${entry.available ? "text-text-2" : "text-text-4"}`}
-                          onClick={() => void choose(entry)}
+                          onClick={() => {
+                            if (switchLocked && selected?.id !== entry.id) {
+                              // L9：锁着的时候点了要说清为什么（原型 :1093 文案）。
+                              setSwitchNotice(
+                                "当前有未保存的改动——先点「保存」，才能切换策略。",
+                              );
+                              return;
+                            }
+                            setSwitchNotice(null);
+                            void choose(entry);
+                          }}
                         >
                           <span className="flex items-baseline gap-2">
                             <span className="block min-w-0 truncate text-t-md font-medium">
@@ -335,23 +361,24 @@ export function StrategyToolbar({
           className="min-w-24 max-w-full field-sizing-content rounded-md border border-transparent bg-transparent px-2 py-1 text-t-md text-text-3 hover:border-border hover:bg-card focus:border-input"
         />
         <span className="hidden flex-1 sm:block" />
-        <Button
-          size="sm"
-          variant={actionable ? "default" : "ghost"}
-          aria-label="保存策略"
-          disabled={
-            busy ||
-            locked ||
-            !actionable ||
-            !name.trim() ||
-            !references.prompt ||
-            !references.endpoint
-          }
-          title={actionable ? undefined : "没有未保存的修改"}
-          onClick={save}
-        >
-          保存
-        </Button>
+        <Tip label={actionable ? "" : "没有未保存的修改"}>
+          <Button
+            size="sm"
+            variant={actionable ? "default" : "ghost"}
+            aria-label="保存策略"
+            disabled={
+              busy ||
+              locked ||
+              !actionable ||
+              !name.trim() ||
+              !references.prompt ||
+              !references.endpoint
+            }
+            onClick={save}
+          >
+            保存
+          </Button>
+        </Tip>
       </div>
       {error && !remove && !repair && (
         <Alert variant="destructive" className="mt-2">
@@ -433,52 +460,57 @@ export function StrategyToolbar({
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
-          <label className="grid gap-2 text-t-sm">
+          <div className="grid gap-2 text-t-sm">
             端点
-            <select
-              aria-label="重新指定端点"
+            {/* L12（2026-09-21 审计）：全站唯一的原生 select 破口 → Radix Select。 */}
+            <Select
               value={bindings.endpoint}
               disabled={busy}
-              onChange={(event) =>
-                setBindings({ ...bindings, endpoint: event.currentTarget.value })
-              }
-              className="h-(--h-lg) rounded-md border border-input bg-card px-3"
+              onValueChange={(value) => setBindings({ ...bindings, endpoint: value })}
             >
-              <option value="">选择端点</option>
-              {!endpoints.some((entry) => entry.name === bindings.endpoint) &&
-                bindings.endpoint && (
-                  <option value={bindings.endpoint} disabled>
-                    {bindings.endpoint}（缺失）
-                  </option>
-                )}
-              {endpoints.map((entry) => (
-                <option key={entry.name}>{entry.name}</option>
-              ))}
-            </select>
-          </label>
-          <label className="grid gap-2 text-t-sm">
+              <SelectTrigger aria-label="重新指定端点" className="h-(--h-lg)">
+                <SelectValue placeholder="选择端点" />
+              </SelectTrigger>
+              <SelectContent>
+                {!endpoints.some((entry) => entry.name === bindings.endpoint) &&
+                  bindings.endpoint !== "" && (
+                    <SelectItem value={bindings.endpoint} disabled>
+                      {bindings.endpoint}（缺失）
+                    </SelectItem>
+                  )}
+                {endpoints.map((entry) => (
+                  <SelectItem key={entry.name} value={entry.name}>
+                    {entry.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-2 text-t-sm">
             提示词
-            <select
-              aria-label="重新指定提示词"
+            <Select
               value={bindings.prompt}
               disabled={busy}
-              onChange={(event) =>
-                setBindings({ ...bindings, prompt: event.currentTarget.value })
-              }
-              className="h-(--h-lg) rounded-md border border-input bg-card px-3"
+              onValueChange={(value) => setBindings({ ...bindings, prompt: value })}
             >
-              <option value="">选择提示词</option>
-              {!prompts.some((entry) => entry.name === bindings.prompt) &&
-                bindings.prompt && (
-                  <option value={bindings.prompt} disabled>
-                    {bindings.prompt}（缺失）
-                  </option>
-                )}
-              {prompts.map((entry) => (
-                <option key={entry.name}>{entry.name}</option>
-              ))}
-            </select>
-          </label>
+              <SelectTrigger aria-label="重新指定提示词" className="h-(--h-lg)">
+                <SelectValue placeholder="选择提示词" />
+              </SelectTrigger>
+              <SelectContent>
+                {!prompts.some((entry) => entry.name === bindings.prompt) &&
+                  bindings.prompt !== "" && (
+                    <SelectItem value={bindings.prompt} disabled>
+                      {bindings.prompt}（缺失）
+                    </SelectItem>
+                  )}
+                {prompts.map((entry) => (
+                  <SelectItem key={entry.name} value={entry.name}>
+                    {entry.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <fieldset disabled={busy} className="grid gap-2">
             <legend className="mb-2 text-t-sm">Skill</legend>
             {Array.from(
@@ -490,6 +522,7 @@ export function StrategyToolbar({
               <label key={skill} className="flex items-center gap-2 text-t-sm">
                 <input
                   type="checkbox"
+                  className="cb"
                   checked={bindings.skills.includes(skill)}
                   onChange={(event) =>
                     setBindings({

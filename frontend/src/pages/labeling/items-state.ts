@@ -80,6 +80,37 @@ export function withItemUpdate(items: ItemMap, event: ItemUpdate): ItemMap {
   return next;
 }
 
+/** item-delta 流式增量（A2）：只服务「当前产出」逐字呈现，不落任何盘。 */
+export interface ItemDelta {
+  batch: number;
+  item: string;
+  delta: "reasoning" | "content";
+  text: string;
+}
+
+export function parseItemDelta(value: unknown): ItemDelta {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    !("batch" in value) ||
+    typeof value.batch !== "number" ||
+    !Number.isInteger(value.batch) ||
+    !("item" in value) ||
+    typeof value.item !== "string" ||
+    !("delta" in value) ||
+    (value.delta !== "reasoning" && value.delta !== "content") ||
+    !("text" in value) ||
+    typeof value.text !== "string"
+  )
+    throw new Error("流式增量事件格式异常");
+  return {
+    batch: value.batch,
+    item: value.item,
+    delta: value.delta,
+    text: value.text,
+  };
+}
+
 export const ITEM_GROUPS = [
   ["queued", "排队中"],
   ["done", "已完成"],

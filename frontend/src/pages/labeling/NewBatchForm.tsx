@@ -1,4 +1,4 @@
-import { ArrowLeftIcon, FolderIcon } from "lucide-react";
+import { ArrowLeftIcon, FolderIcon, SettingsIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import {
   ApiError,
@@ -39,9 +39,18 @@ type Batch = components["schemas"]["BatchView"];
 interface Props {
   onBack: () => void;
   onCreated: (selection: BatchSelection) => void;
+  /** 跳应用级设置页（V16：下拉的齿轮出口——想加端点 / 启用 Skill 不必自己摸路）。 */
+  onNavigateToSettings?: () => void;
+  /** 跳对话工作台（V16：「拿不准效果？先在对话中用单张试标」动线）。 */
+  onOpenWorkbench?: () => void;
 }
 
-export function NewBatchForm({ onBack, onCreated }: Props) {
+export function NewBatchForm({
+  onBack,
+  onCreated,
+  onNavigateToSettings,
+  onOpenWorkbench,
+}: Props) {
   const id = useId();
   const [mode, setMode] = useState<"copy" | "inplace">("copy");
   const [path, setPath] = useState("");
@@ -79,6 +88,30 @@ export function NewBatchForm({ onBack, onCreated }: Props) {
   const pending = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const wake = useRef<(() => void) | undefined>(undefined);
+  // V16 发车前摘要：登记完成后（拿到 wid）拉一次扫描预览——
+  // 「这一跑会吃多少、收哪些、不收哪些、为什么」在发车按钮上方一眼可读。
+  const [scan, setScan] = useState<components["schemas"]["ScanPreviewView"] | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (workdir === null) {
+      setScan(null);
+      return;
+    }
+    let current = true;
+    api
+      .scanPreview(workdir.id)
+      .then((value) => {
+        if (current) setScan(value);
+      })
+      .catch(() => {
+        // 摘要读不到不挡发车（主流程自己会报错），留空即可。
+      });
+    return () => {
+      current = false;
+    };
+  }, [workdir]);
 
   useEffect(() => {
     let current = true;
@@ -94,7 +127,9 @@ export function NewBatchForm({ onBack, onCreated }: Props) {
         setStrategies(libraryItems);
         setEndpoints(endpointItems);
         setPrompts(promptItems);
-        setSkills(skillItems.filter((skill) => skill.enabled));
+        // V16：全部技能都列出来（含已停用）——只列已启用时，用户在表单里根本
+        // 看不见「还有什么可用」，想启用只能自己切去设置页猜。
+        setSkills(skillItems);
         setEndpoint(
           endpointItems.find((entry) => entry.is_active)?.name ??
             endpointItems[0]?.name ??
@@ -248,9 +283,31 @@ export function NewBatchForm({ onBack, onCreated }: Props) {
     value: string,
     change: (value: string) => void,
     options: { value: string; label: string; disabled?: boolean }[],
+    options_?: { count?: number; onManage?: () => void },
   ) => (
     <div className="space-y-2">
-      <span className="text-t-sm text-muted-foreground">{label}</span>
+      {/* V16：计数头 + 右上角齿轮跳设置——下拉空着的时候，用户看得见「这里有多少
+          可选、去哪里加」。 */}
+      <div className="flex items-center gap-2">
+        <span className="text-t-sm text-muted-foreground">
+          {label}
+          {options_?.count !== undefined ? ` · 共 ${options_.count} 条` : ""}
+        </span>
+        {options_?.onManage !== undefined && (
+          <Tip label={`管理${label}`}>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label={`管理${label}`}
+              className="ml-auto"
+              onClick={options_.onManage}
+            >
+              <SettingsIcon className="size-3.5" />
+            </Button>
+          </Tip>
+        )}
+      </div>
       <Select value={value} onValueChange={change} disabled={busy || !!batch}>
         <SelectTrigger aria-label={label}>
           <SelectValue placeholder="请选择" />
@@ -298,7 +355,7 @@ export function NewBatchForm({ onBack, onCreated }: Props) {
           }}
         />
       )}
-      <div className="mx-auto max-w-2xl space-y-4">
+      <div className="space-y-4">
         <div className="flex items-center gap-3">
           <Button
             variant="ghost"
@@ -313,24 +370,41 @@ export function NewBatchForm({ onBack, onCreated }: Props) {
         </div>
         <fieldset disabled={busy || !!workdir} className="space-y-4">
           <legend className="mb-3 text-t-sm text-muted-foreground">素材来源</legend>
-          <div className="flex gap-4">
-            <label className="flex items-center gap-2">
+          {/* V16：来源两张卡带副说明——「复制 / 就地」各自意味着什么，选择前读得到。 */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label
+              className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 ${mode === "copy" ? "border-primary/50 bg-primary/5" : "border-border bg-card"}`}
+            >
               <input
                 type="radio"
                 name={`${id}-mode`}
+                className="mt-1"
                 checked={mode === "copy"}
                 onChange={() => setMode("copy")}
               />
-              复制导入
+              <span>
+                <span className="block text-t-md font-medium">复制导入</span>
+                <span className="mt-1 block text-t-xs text-muted-foreground">
+                  把素材复制进独立的工作目录，源目录保持原样（推荐——试标、重跑互不干扰）。
+                </span>
+              </span>
             </label>
-            <label className="flex items-center gap-2">
+            <label
+              className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 ${mode === "inplace" ? "border-primary/50 bg-primary/5" : "border-border bg-card"}`}
+            >
               <input
                 type="radio"
                 name={`${id}-mode`}
+                className="mt-1"
                 checked={mode === "inplace"}
                 onChange={() => setMode("inplace")}
               />
-              就地采用
+              <span>
+                <span className="block text-t-md font-medium">就地采用</span>
+                <span className="mt-1 block text-t-xs text-muted-foreground">
+                  直接把素材目录登记为工作目录——.dsf 与产物 txt 会写进这个目录。
+                </span>
+              </span>
             </label>
           </div>
           {mode === "copy" && (
@@ -381,6 +455,7 @@ export function NewBatchForm({ onBack, onCreated }: Props) {
             <label className="flex items-start gap-2 rounded-md border border-warn-bd bg-warn-bg p-3 text-t-sm text-warn-ink">
               <input
                 type="checkbox"
+                className="cb mt-1"
                 checked={acknowledged}
                 onChange={(event) => setAcknowledged(event.currentTarget.checked)}
               />
@@ -403,6 +478,7 @@ export function NewBatchForm({ onBack, onCreated }: Props) {
               disabled: !entry.available,
             })),
           ],
+          { count: strategies.length },
         )}
         <div className="space-y-2">
           <label htmlFor={`${id}-name`}>策略名</label>
@@ -423,19 +499,47 @@ export function NewBatchForm({ onBack, onCreated }: Props) {
                 value: entry.name,
                 label: `${entry.name} · ${entry.model}`,
               })),
+              {
+                count: endpoints.length,
+                onManage: onNavigateToSettings,
+              },
             )}
             {picker(
               "基础提示词",
               prompt,
               setPrompt,
-              prompts.map((entry) => ({ value: entry.name, label: entry.name })),
+              prompts.map((entry) => ({
+                value: entry.name,
+                label: `${entry.name} · ${entry.description}`,
+              })),
+              { count: prompts.length, onManage: onNavigateToSettings },
             )}
-            <fieldset disabled={busy || !!batch} className="flex flex-wrap gap-3">
-              <legend className="mb-2 text-t-sm text-muted-foreground">Skill</legend>
+            <fieldset disabled={busy || !!batch} className="space-y-2">
+              <div className="flex items-center gap-2">
+                <legend className="text-t-sm text-muted-foreground">
+                  Skill · 共 {skills.length} 条
+                </legend>
+                {onNavigateToSettings !== undefined && (
+                  <Tip label="管理 Skill">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label="管理 Skill"
+                      className="ml-auto"
+                      onClick={onNavigateToSettings}
+                    >
+                      <SettingsIcon className="size-3.5" />
+                    </Button>
+                  </Tip>
+                )}
+              </div>
               {skills.map((skill) => (
-                <label key={skill.name} className="flex items-center gap-2">
+                <label key={skill.name} className="flex items-center gap-2 text-t-sm">
                   <input
                     type="checkbox"
+                    className="cb"
+                    disabled={!skill.enabled}
                     checked={selectedSkills.includes(skill.name)}
                     onChange={(event) => {
                       const checked = event.currentTarget.checked;
@@ -447,10 +551,26 @@ export function NewBatchForm({ onBack, onCreated }: Props) {
                     }}
                   />
                   {skill.name}
+                  {!skill.enabled && (
+                    <span className="text-t-xs text-text-4">（已停用）</span>
+                  )}
                 </label>
               ))}
             </fieldset>
           </>
+        )}
+        {scan !== null && (
+          // V16 扫描摘要行（原型 :713-716）：登记完成后、发车之前，先告诉用户
+          // 这一跑会吃多少、收哪些、不收哪些、为什么。
+          <div className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-t-sm">
+            <span className="font-medium">
+              扫描到 {scan.total} 项：图片 {scan.images} · 视频 {scan.videos}
+            </span>
+            <span className="text-muted-foreground">
+              ；未导入 {scan.unimported.length} 项
+              {scan.unimported.length > 0 ? "（明细在发车前确认里）" : ""}
+            </span>
+          </div>
         )}
         {error && !unimported && (
           <FormError className="text-bad-ink">{error}</FormError>
@@ -501,10 +621,31 @@ export function NewBatchForm({ onBack, onCreated }: Props) {
           </DialogContent>
         </Dialog>
         {!unimported && (
-          <div className="flex justify-end border-t border-border pt-4">
-            <Button disabled={!valid || busy} onClick={() => void run()}>
-              {busy ? "正在处理" : "开始打标"}
-            </Button>
+          <div className="space-y-3 border-t border-border pt-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                className="ml-auto"
+                disabled={!valid || busy}
+                onClick={() => void run()}
+              >
+                {busy ? "正在处理" : "开始打标"}
+              </Button>
+            </div>
+            {/* V16 底部动线与体积预告（原型 :780 / :783）。 */}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-t-xs text-muted-foreground">
+              {onOpenWorkbench !== undefined && (
+                <button
+                  type="button"
+                  className="text-primary underline underline-offset-4"
+                  onClick={onOpenWorkbench}
+                >
+                  拿不准效果？先在对话中用单张试标
+                </button>
+              )}
+              <span className="ml-auto">
+                体积上限：单图 ≤ 20 MiB · 单视频 ≤ 100 MiB
+              </span>
+            </div>
           </div>
         )}
       </div>

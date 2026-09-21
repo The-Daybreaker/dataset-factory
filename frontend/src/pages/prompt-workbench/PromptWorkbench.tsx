@@ -31,6 +31,7 @@ import {
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import {
+  Tip,
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -48,6 +49,50 @@ import type { ChatMessage, PendingMedia } from "./types";
 
 /** 基础提示词的字节护栏（对齐 Codex project_doc_max_bytes，后端同值校验）。 */
 const PROMPT_BYTE_BUDGET = 32 * 1024;
+
+/** 抽视频首帧与时长（L26/V8）：本地 <video> 解码，失败静默降级为图标（不打扰发送）。 */
+function captureVideoMeta(
+  dataUrl: string,
+): Promise<{ posterUrl?: string; durationSec?: number }> {
+  return new Promise((resolve) => {
+    const video = document.createElement("video");
+    let settled = false;
+    const finish = (meta: { posterUrl?: string; durationSec?: number }): void => {
+      if (settled) return;
+      settled = true;
+      video.removeAttribute("src");
+      resolve(meta);
+    };
+    const timer = window.setTimeout(() => finish({}), 3000);
+    video.preload = "metadata";
+    video.muted = true;
+    video.onloadedmetadata = () => {
+      const duration = Number.isFinite(video.duration) ? video.duration : undefined;
+      video.onseeked = () => {
+        window.clearTimeout(timer);
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = video.videoWidth || 160;
+          canvas.height = video.videoHeight || 90;
+          const context = canvas.getContext("2d");
+          context?.drawImage(video, 0, 0, canvas.width, canvas.height);
+          finish({
+            posterUrl: canvas.toDataURL("image/jpeg", 0.7),
+            durationSec: duration,
+          });
+        } catch {
+          finish({ durationSec: duration });
+        }
+      };
+      video.currentTime = Math.min(0.1, duration ?? 0.1);
+    };
+    video.onerror = () => {
+      window.clearTimeout(timer);
+      finish({});
+    };
+    video.src = dataUrl;
+  });
+}
 
 export function PromptWorkbench({
   onNavigateToSettings,
@@ -100,6 +145,8 @@ export function PromptWorkbench({
   const activatingEndpointRef = useRef(false);
   const sendingRef = useRef(false);
   const mediaRequestRef = useRef(0);
+  // 「停止生成」（N1④）：发送期间持有的 AbortController，停止钮触发即中止本轮。
+  const abortRef = useRef<AbortController | null>(null);
 
   /** 失败分流：连接类失败改弹浮层（不占界面位置），后端返回的业务错误仍就地展示。 */
   const failEditor = useCallback((err: unknown): void => {
@@ -108,7 +155,7 @@ export function PromptWorkbench({
   }, []);
 
   const selectPrompt = useCallback(
-    async (name: string): Promise<void> => {
+    async (name: string, options?: { resetSession?: boolean }): Promise<void> => {
       const request = ++promptRequestRef.current;
       const interaction = interactionRef.current;
       try {
@@ -125,6 +172,13 @@ export function PromptWorkbench({
         setSavedPrompt(full);
         setIsNewDraft(false);
         setEditorFeedback(null);
+        if (options?.resetSession === true) {
+          // 切提示词 = 下一轮换 system 底座（N1 同源③）：旧对话接着新配置只会
+          // 让产出来源混乱——直接重开会话，界面上的清空就是最直白的告知。
+          setSessionId(null);
+          setMessages([]);
+          setChatError("");
+        }
       } catch (err) {
         if (
           request !== promptRequestRef.current ||
@@ -195,7 +249,21 @@ export function PromptWorkbench({
         restoredPromptRef.current = true;
         setSessionId(snapshot.session_id);
         setSkillNames(snapshot.settings.skill_names);
-        setMessages(snapshot.messages.map((item, index) => ({ ...item, id: index })));
+        // 历史附件直连会话附件端点（B5）：缩略图不再依赖内存 dataURL，刷新不丢。
+        setMessages(
+          snapshot.messages.map((item, index) => ({
+            ...item,
+            id: index,
+            ...(item.attachment !== null
+              ? {
+                  attachmentUrl: api.sessionAttachmentUrl(
+                    snapshot.session_id,
+                    item.attachment,
+                  ),
+                }
+              : {}),
+          })),
+        );
         if (snapshot.settings.prompt_name !== null) {
           await selectPrompt(snapshot.settings.prompt_name);
         }
@@ -342,14 +410,26 @@ export function PromptWorkbench({
     const reader = new FileReader();
     reader.onload = () => {
       if (request !== mediaRequestRef.current) return;
-      setMedia({
+      const dataUrl = String(reader.result);
+      const base = {
         name: file.name,
-        dataUrl: String(reader.result),
-        kind: isVideo ? "video" : "image",
+        dataUrl,
+        kind: (isVideo ? "video" : "image") as "video" | "image",
         mime: file.type,
         byteSize: file.size,
         fps: 2,
         maxFrames: 16,
+      };
+      // 附件卡先上屏（视频封面 / 时长异步后补，不挡操作）。
+      setMedia(base);
+      if (!isVideo) return;
+      void captureVideoMeta(dataUrl).then((meta) => {
+        if (request !== mediaRequestRef.current) return;
+        setMedia((current) =>
+          current !== null && current.dataUrl === dataUrl
+            ? { ...current, posterUrl: meta.posterUrl, durationSec: meta.durationSec }
+            : current,
+        );
       });
     };
     reader.onerror = () => {
@@ -375,40 +455,81 @@ export function PromptWorkbench({
     setSending(true);
     setChatError("");
     const startedAt = Date.now();
+    // 发送前取定值，随后立刻清输入（N1①，2026-09-21 审计：输入框不再等模型说完才清，
+    // 失败路径同样清——失败的那句话已进气泡，输入框里挂着旧话只会诱发重复发送）。
+    const sentInstruction = instruction;
+    const sentMedia = media;
     const sentAttachment = media?.name ?? null;
+    const controller = new AbortController();
+    abortRef.current = controller;
     // 用户消息先上屏（乐观更新）；回复走流式增量，done 后再落终稿消息。
     setMessages((current) => [
       ...current,
       {
         id: current.length,
         role: "user",
-        text: instruction,
+        partial: false,
+        text: sentInstruction,
         attachment: sentAttachment,
-        ...(media !== null ? { attachmentDataUrl: media.dataUrl } : {}),
+        ...(sentMedia !== null
+          ? {
+              attachmentDataUrl: sentMedia.dataUrl,
+              ...(sentMedia.kind === "video"
+                ? { attachmentDurationSec: sentMedia.durationSec }
+                : {}),
+            }
+          : {}),
       },
     ]);
+    setInstruction("");
+    setMedia(null);
     setStreaming({ reasoning: "", content: "" });
     let reasoningText = "";
+    let contentText = "";
+    let firstContentAt: number | null = null;
+    /** 断流 / 报错 / 主动停止：已收到的半截也留痕（B5 + N1 同源①），不整段丢弃。 */
+    const keepPartial = (): void => {
+      if (contentText === "" && reasoningText === "") {
+        return;
+      }
+      setMessages((current) => [
+        ...current,
+        {
+          id: current.length,
+          role: "assistant",
+          partial: true,
+          text: contentText,
+          attachment: null,
+          ...(reasoningText === "" ? {} : { reasoning: reasoningText }),
+        },
+      ]);
+    };
     try {
       await api.labelStream(
         {
           session_id: sessionId,
           prompt_name: selectedName === "" ? null : selectedName,
           skill_names: skillNames,
-          instruction,
-          image_base64: media?.kind === "image" ? media.dataUrl : null,
-          image_name: media?.kind === "image" ? media.name : "image.png",
-          video_base64: media?.kind === "video" ? media.dataUrl : null,
-          video_name: media?.kind === "video" ? media.name : "video.mp4",
-          video_fps: media?.kind === "video" ? media.fps : 2,
-          video_max_frames: media?.kind === "video" ? media.maxFrames : 16,
+          instruction: sentInstruction,
+          image_base64: sentMedia?.kind === "image" ? sentMedia.dataUrl : null,
+          image_name: sentMedia?.kind === "image" ? sentMedia.name : "image.png",
+          video_base64: sentMedia?.kind === "video" ? sentMedia.dataUrl : null,
+          video_name: sentMedia?.kind === "video" ? sentMedia.name : "video.mp4",
+          video_fps: sentMedia?.kind === "video" ? sentMedia.fps : 2,
+          video_max_frames: sentMedia?.kind === "video" ? sentMedia.maxFrames : 16,
         },
         {
           onStart: (id) => setSessionId(id),
           onDelta: (kind, text) => {
-            // 思考增量另存一份到局部变量：done 时挂到消息上（结束后保留可回看）。
+            // 思考增量另存一份到局部变量：done 时挂到消息上（结束后保留可回看）；
+            // 首个正文增量的时刻 = 思考耗时（V7 的本地口径）。
             if (kind === "reasoning") {
               reasoningText += text;
+            } else {
+              contentText += text;
+              if (firstContentAt === null) {
+                firstContentAt = Date.now();
+              }
             }
             setStreaming((current) =>
               current === null
@@ -424,38 +545,61 @@ export function PromptWorkbench({
               {
                 id: current.length,
                 role: "assistant",
+                partial: false,
                 text: caption,
                 attachment: null,
                 model: activeModel || undefined,
                 durationSeconds: Math.round((Date.now() - startedAt) / 1000),
+                reasoningSeconds:
+                  firstContentAt !== null
+                    ? Math.max(1, Math.round((firstContentAt - startedAt) / 1000))
+                    : undefined,
                 createdAt: new Date(),
                 ...(reasoningText === "" ? {} : { reasoning: reasoningText }),
               },
             ]);
             setSessionId(id);
-            setInstruction("");
-            setMedia(null);
             // 与追加消息同一同步块里清流式面板：合并成一次提交，避免「终稿 + 流式面板」
             // 短暂同屏一帧（e2e 严格模式抓到过）。finally 的清算是错误路径兜底。
             setStreaming(null);
           },
-          onError: (message) => setChatError(message),
+          onError: (message) => {
+            keepPartial();
+            setChatError(message);
+          },
         },
+        controller.signal,
       );
     } catch (err) {
-      setChatError(reportError(err) ?? "");
+      keepPartial();
+      // 用户主动停止不当失败展示（停止本身就是那轮的结局）。
+      if (!controller.signal.aborted) {
+        setChatError(reportError(err) ?? "");
+      }
     } finally {
+      abortRef.current = null;
       sendingRef.current = false;
       setSending(false);
       setStreaming(null);
     }
   };
 
+  /** 停止生成（N1④）：中止当前请求；已收到的部分按半截消息留痕。 */
+  const stopGeneration = (): void => {
+    abortRef.current?.abort();
+  };
+
+  /** 清空当前会话（Q4 改名）：只清内存与界面——旧会话仍完整保存在磁盘上。 */
   const newSession = (): void => {
     interactionRef.current += 1;
+    mediaRequestRef.current += 1;
     setSessionId(null);
     setMessages([]);
     setChatError("");
+    // 旧输入 / 旧附件 / 旧 Skill 不带进新会话（N1 同源②）。
+    setInstruction("");
+    setMedia(null);
+    setSkillNames([]);
   };
 
   const copyCaption = (message: ChatMessage): void => {
@@ -533,13 +677,20 @@ export function PromptWorkbench({
                 endpoints.find((entry) => entry.name === strategy.endpoint)?.model ??
                   "",
               );
+              // 切策略 = 换端点 + 提示词 + Skill 的整套口径（N1 同源③）：旧对话的
+              // 产出来自旧配置，接着聊只会混淆出处——直接重开会话。
+              setSessionId(null);
+              setMessages([]);
+              setChatError("");
             } finally {
               setStrategyBusy(false);
             }
           }}
         />
         <fieldset
-          disabled={controlsBusy}
+          // N1④（2026-09-21 审计）：发送中只锁配置类操作、不锁整页——「能打字 /
+          // 能挂附件 / 能切端点」是等待 125 秒时最基本的自由；sending 不再参与禁用。
+          disabled={endpointBusy || strategyBusy || promptBusy}
           className="grid min-h-0 min-w-0 flex-1 grid-cols-1 overflow-auto lg:grid-cols-2 lg:overflow-hidden"
         >
           <section
@@ -606,7 +757,7 @@ export function PromptWorkbench({
                               onClick={() => {
                                 interactionRef.current += 1;
                                 setPromptMenuOpen(false);
-                                void selectPrompt(prompt.name);
+                                void selectPrompt(prompt.name, { resetSession: true });
                               }}
                             >
                               <span className="block truncate text-t-md font-medium">
@@ -641,16 +792,17 @@ export function PromptWorkbench({
                   </DropdownMenu>
                 </div>
                 <span className="flex-1" />
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={promptDirty ? "default" : "ghost"}
-                  disabled={byteOver || !promptDirty}
-                  title={promptDirty ? undefined : "没有未保存的修改"}
-                  onClick={() => void saveDraft()}
-                >
-                  保存
-                </Button>
+                <Tip label={promptDirty ? "" : "没有未保存的修改"}>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={promptDirty ? "default" : "ghost"}
+                    disabled={byteOver || !promptDirty}
+                    onClick={() => void saveDraft()}
+                  >
+                    保存
+                  </Button>
+                </Tip>
               </div>
               <div className="mt-4">
                 <Label htmlFor="prompt-desc" className="mb-2 block">
@@ -729,7 +881,7 @@ export function PromptWorkbench({
               <h2 className="shrink-0 text-t-xl font-semibold">对话</h2>
               <EndpointSwitcher
                 endpoints={endpoints}
-                disabled={controlsBusy}
+                disabled={endpointBusy || strategyBusy || promptBusy}
                 onActivate={(name) => void activateEndpoint(name)}
                 onManage={onNavigateToSettings}
               />
@@ -739,14 +891,14 @@ export function PromptWorkbench({
                     type="button"
                     variant="ghost"
                     size="icon-sm"
-                    aria-label="新会话"
+                    aria-label="清空当前会话"
                     className="ml-auto"
                     onClick={newSession}
                   >
                     <PlusIcon />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>新会话</TooltipContent>
+                <TooltipContent>清空当前会话（旧会话仍保存在磁盘上）</TooltipContent>
               </Tooltip>
             </div>
 
@@ -842,6 +994,7 @@ export function PromptWorkbench({
               sending={sending}
               waitSeconds={waitSeconds}
               onSend={() => void send()}
+              onStop={stopGeneration}
             />
           </section>
         </fieldset>

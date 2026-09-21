@@ -11,6 +11,10 @@ export interface PendingMedia {
   byteSize: number;
   fps: number;
   maxFrames: number;
+  /** 视频首帧封面（data URL，L26/V8）：挑选附件时本地抽帧，气泡与卡片共用。 */
+  posterUrl?: string;
+  /** 视频时长秒数（气泡时长角标用；拿不到时缺省）。 */
+  durationSec?: number;
 }
 
 /** 界面里的消息 = 后端历史消息 + 渲染用稳定 id + 新增消息才有的 meta。 */
@@ -18,7 +22,13 @@ export interface ChatMessage extends HistoryMessageView {
   id: number;
   model?: string;
   durationSeconds?: number;
+  /** 本轮思考耗时秒数（V7：思考开关的仪表盘；本地计时，仅新消息有）。 */
+  reasoningSeconds?: number;
   createdAt?: Date;
-  /** 本轮发送的附件字节（data URL，仅当轮消息有；历史恢复只有文件名、渲染图标占位）。 */
+  /** 本轮发送的附件字节（data URL，仅当轮消息有）。 */
   attachmentDataUrl?: string;
+  /** 历史附件的字节地址（B5：直连会话附件端点，刷新后仍能显示）。 */
+  attachmentUrl?: string;
+  /** 视频附件的时长秒数（仅当轮消息有，时长角标用）。 */
+  attachmentDurationSec?: number;
 }
