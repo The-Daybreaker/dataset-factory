@@ -18,6 +18,7 @@ import type { components } from "../../api-types.gen";
 import { FormError } from "../../components/form-error";
 import { Button } from "../../components/ui/button";
 import { Tip } from "../../components/ui/tooltip";
+import { usePersistedState } from "../../hooks/use-persisted-state";
 import { formatBytesAuto } from "../../lib/format";
 import { BatchConfiguration } from "./BatchConfiguration";
 import { BatchOverview } from "./BatchOverview";
@@ -44,6 +45,16 @@ import { RunControl } from "./RunControl";
 import { WorkdirSettings } from "./WorkdirSettings";
 
 type ItemRow = components["schemas"]["ItemRowView"];
+
+/** localStorage 里恢复的 selection 要过形状检查：脏 JSON 不许流进取数链路。 */
+function isBatchSelection(value: unknown): value is BatchSelection {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as BatchSelection).workdirId === "string" &&
+    typeof (value as BatchSelection).batchId === "string"
+  );
+}
 
 async function loadWorkdirBatches(): Promise<WorkdirBatches[]> {
   const directories = await api.listWorkdirs();
@@ -217,7 +228,15 @@ export function LabelingPage({
   onOpenWorkbench?: () => void;
 } = {}) {
   const [workdirs, setWorkdirs] = useState<WorkdirBatches[]>([]);
-  const [selection, setSelection] = useState<BatchSelection | null>(null);
+  // 本页是条件渲染 + lazy 加载（App 层切页即整页卸载重挂）：selection 与左列的折叠 /
+  // 组内展开状态都靠 localStorage 活过卸载——否则每次从别的页回来都被重置成默认选择，
+  // 用户看到「策略名错位、状态徽标丢失」。恢复的旧批次若已被删 / 停用，由
+  // loadWorkdirBatches 完成后的既有校验回退默认选择，无需新增分支。
+  const [selection, setSelection] = usePersistedState<BatchSelection | null>(
+    "dsf-labeling-selection",
+    null,
+    isBatchSelection,
+  );
   const [items, setItems] = useState<ItemMap>(new Map());
   const [exportRevision, setExportRevision] = useState(0);
   const [externalRun, setExternalRun] = useState<{
@@ -236,6 +255,9 @@ export function LabelingPage({
   const [selectionMode, setSelectionMode] = useState(false);
   const [retryRequest, setRetryRequest] = useState(0);
   const [batchRunState, setBatchRunState] = useState<string | null>(null);
+  // 状态章重读令牌：RunControl 的空闲上报（挂载探测 / 15 秒慢轮）让它递增，
+  // 触发下面的 latestRun 重读——「空闲」的正确语义是回读磁盘终态，不是抹空。
+  const [runStateRevision, setRunStateRevision] = useState(0);
   const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -251,10 +273,16 @@ export function LabelingPage({
   const [newStrategyWid, setNewStrategyWid] = useState<string | null>(null);
   const [directoriesRevision, setDirectoriesRevision] = useState(0);
   const [query, setQuery] = useState("");
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const [collapsed, setCollapsed] = usePersistedState<ReadonlySet<string>>(
+    "dsf-labeling-collapsed",
+    new Set(),
+  );
   // V3（2026-09-21 审计）：组内默认只展示 4 行，点开才全量——与分组折叠（collapsed）
   // 是两个独立维度：collapsed 管「整个组收不收」，expanded 管「组内截断放不放开」。
-  const [expandedGroups, setExpandedGroups] = useState<ReadonlySet<string>>(new Set());
+  const [expandedGroups, setExpandedGroups] = usePersistedState<ReadonlySet<string>>(
+    "dsf-labeling-expanded-groups",
+    new Set(),
+  );
   // L2：跑批中点条目会停跟随——给可见提示 + 「继续跟随」钮，不再静默停。
   const [followPaused, setFollowPaused] = useState(false);
   // V15 + A2：跑批中的「当前产出」逐字呈现（思考只展示不落盘，关掉页面即没）。
@@ -360,6 +388,7 @@ export function LabelingPage({
   // 顶栏状态章的存量事实：进页面 / 换批次时回读磁盘上本批次最近一次运行的终态。
   // 运行中的状态不在这里轮询——由 RunControl 受理即报、SSE 终态也报（见其
   // onRunStatus），避免两处各轮一份。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runStateRevision is a deliberate re-read token bumped by RunControl's idle reports.
   useEffect(() => {
     if (!selection) {
       setBatchRunState(null);
@@ -377,7 +406,7 @@ export function LabelingPage({
     return () => {
       current = false;
     };
-  }, [selection]);
+  }, [selection, runStateRevision]);
   const choose = useCallback((row: ItemRow) => {
     if (followRun.current) {
       // 从「跟随」切到「手动看」：跑批中这不是静默的——出可见提示（L2）。
@@ -603,9 +632,12 @@ export function LabelingPage({
             }
             retryRequest={retryRequest}
             onRunStatus={(status) => {
-              // "idle" = RunControl 探测到空闲（V15 连带的哨兵）：状态章复位，
-              // 不让上一轮的 running 永久卡住导出入口。
-              setBatchRunState(status === "idle" ? null : status);
+              // "idle" = RunControl 探测到空闲（V15 连带的哨兵）：不抹状态章，改触发
+              // latestRun 重读——抹空会把刚从磁盘读到的「已完成」等终态一并抹掉
+              //（挂载探测与 15 秒慢轮每次空闲都会报一次 idle，徽标最多活 15 秒）；
+              // 回读拿到的就是真实终态，V15 要防的「卡 running」照样被复位，语义更准。
+              if (status === "idle") setRunStateRevision((value) => value + 1);
+              else setBatchRunState(status);
               // 终态 = 跟随提示与「当前产出」都收场（运行结束后回到普通概览）。
               if (status !== "running" && status !== "pending") {
                 setFollowPaused(false);

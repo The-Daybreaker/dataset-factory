@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../../api";
@@ -58,6 +58,8 @@ function view(name: string): components["schemas"]["ItemListView"] {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // 切页记忆走 localStorage：清档防止用例间串状态。
+  localStorage.clear();
   vi.mocked(api.currentRun).mockResolvedValue({
     run_id: "old",
     status: "completed",
@@ -519,5 +521,154 @@ describe("打标页读取流程", () => {
     render(<LabelingPage />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent("服务不可用");
+  });
+});
+
+describe("切页记忆与状态章", () => {
+  function twoBatches(): void {
+    vi.mocked(api.listBatches).mockResolvedValue([
+      {
+        id: "s1",
+        seq: 1,
+        name: "策略",
+        active: true,
+        created_at: "",
+        description: "",
+        product_count: 1,
+      },
+      {
+        id: "s2",
+        seq: 2,
+        name: "策略二",
+        active: true,
+        created_at: "",
+        description: "",
+        product_count: 1,
+      },
+    ]);
+  }
+
+  it("切页重挂载后恢复上次的批次选择而非回退默认", async () => {
+    twoBatches();
+    const user = userEvent.setup();
+    const first = render(<LabelingPage />);
+    await first.findByRole("button", { name: "first.jpg" });
+
+    await user.click(screen.getByRole("button", { name: "选择工作目录与批次" }));
+    // twoBatches 对两个目录都生效，菜单里有两个 /s2/——限定在目录一组内点。
+    await user.click(
+      within(screen.getByRole("group", { name: "目录一" })).getByRole("menuitem", {
+        name: /s2/,
+      }),
+    );
+    await screen.findByRole("button", { name: "first.jpg" });
+    first.unmount();
+
+    render(<LabelingPage />);
+    await screen.findByRole("button", { name: "first.jpg" });
+    expect(api.listItems).toHaveBeenLastCalledWith("one", "s2");
+    await user.click(screen.getByRole("button", { name: "选择工作目录与批次" }));
+    expect(
+      within(screen.getByRole("group", { name: "目录一" }))
+        .getByRole("menuitem", {
+          name: /s2/,
+        })
+        .querySelector('[data-testid="batch-is-current"]'),
+    ).toBeInTheDocument();
+  });
+
+  it("localStorage 里的失效批次回退到默认选择", async () => {
+    twoBatches();
+    localStorage.setItem(
+      "dsf-labeling-selection",
+      JSON.stringify({ workdirId: "ghost", batchId: "g1" }),
+    );
+    render(<LabelingPage />);
+
+    await screen.findByRole("button", { name: "first.jpg" });
+    expect(api.listItems).toHaveBeenLastCalledWith("one", "s1");
+  });
+
+  it("空闲上报回读磁盘终态而不是抹掉状态章", async () => {
+    vi.mocked(api.currentRun).mockResolvedValue(null);
+    vi.mocked(api.latestRun).mockResolvedValue({
+        record: {
+          run_id: "r1",
+          batch: 1,
+          mode: "full",
+          status: "completed",
+          started_at: "2026-09-22T00:00:00Z",
+          finished_at: "2026-09-22T00:01:00Z",
+          counters: {
+            attempted: 0,
+            failed: 0,
+            planned: 0,
+            skipped: 0,
+            succeeded: 0,
+          },
+          dsf_version: "0.1.0",
+          snapshot: "",
+          strategy_hash: "",
+          trigger: "manual",
+        },
+      log_path: null,
+      items_path: null,
+    });
+    render(<LabelingPage />);
+
+    // 挂载后先由 latestRun 读到终态，随后 RunControl 探测空闲报 idle——
+    // idle 必须触发重读而不是把刚显示的「已完成」抹掉。（重读是幂等轻量磁盘读，
+    // 测试环境下 idle 上报可能与 selection 校验重设交织出多轮，只断言下界。
+    // 「已完成」与左列组头同名，徽标断言限定在胶囊内。）
+    const capsule = (): HTMLElement =>
+      screen.getByRole("button", { name: "选择工作目录与批次" });
+    await waitFor(() =>
+      expect(within(capsule()).getByText("已完成")).toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(vi.mocked(api.latestRun).mock.calls.length).toBeGreaterThanOrEqual(2),
+    );
+    await waitFor(() =>
+      expect(within(capsule()).getByText("已完成")).toBeInTheDocument(),
+    );
+  });
+
+  it("左列分组折叠状态重挂载后保留", async () => {
+    const user = userEvent.setup();
+    const first = render(<LabelingPage />);
+    await first.findByRole("button", { name: "first.jpg" });
+    const header = screen.getByRole("button", { name: /已完成/ });
+    expect(header).toHaveAttribute("aria-expanded", "true");
+    await user.click(header);
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    first.unmount();
+
+    render(<LabelingPage />);
+    const restored = await screen.findByRole("button", { name: /已完成/ });
+    expect(restored).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: "first.jpg" })).not.toBeInTheDocument();
+  });
+
+  it("组内展开状态重挂载后保留", async () => {
+    const initial = view("first");
+    initial.groups.done = Array.from({ length: 5 }, (_, index) => ({
+      item: `n${index}`,
+      name: `n${index}.jpg`,
+      status: "done" as const,
+      media: "image" as const,
+      in_retry: false,
+      can_retry: true,
+    }));
+    vi.mocked(api.listItems).mockResolvedValue(initial);
+    const user = userEvent.setup();
+    const first = render(<LabelingPage />);
+    await first.findByRole("button", { name: "n0.jpg" });
+
+    await user.click(screen.getByRole("button", { name: /其余 1 条/ }));
+    expect(screen.getByRole("button", { name: "n4.jpg" })).toBeInTheDocument();
+    first.unmount();
+
+    render(<LabelingPage />);
+    expect(await screen.findByRole("button", { name: "n4.jpg" })).toBeInTheDocument();
   });
 });

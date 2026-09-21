@@ -88,4 +88,15 @@ describe("设计系统类门禁", () => {
       expect(css.includes(selector)).toBe(true);
     }
   });
+
+  it("color-scheme 与滚动条定式随主题落进构建（深色滚动条适配）", () => {
+    // ui-system.css §15（默认隐形、悬停显形、拇指色随 --n-300 翻转）曾漏搬进实现侧，
+    // 深色模式下亮色原生滚动条贴深底；color-scheme 让系统级渲染（滚动条底槽、表单
+    // 控件）跟随主题。这份断言防止两处再次静默缺失。
+    expect(declarations(":root").get("color-scheme")).toBe("light");
+    expect(declarations(".dark").get("color-scheme")).toBe("dark");
+    expect(css.includes("scrollbar-width: thin")).toBe(true);
+    expect(css.includes("*:hover::-webkit-scrollbar-thumb")).toBe(true);
+    expect(css.includes("background-clip: content-box")).toBe(true);
+  });
 });

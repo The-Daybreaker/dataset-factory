@@ -18,6 +18,8 @@
    1 · 原始刻度（primitive）——与 ui-system.css §1 一字不差
    ========================================================================== */
 :root {
+  color-scheme: light; /* 滚动条底槽与表单控件的系统渲染随主题（深色不再按亮色画） */
+
   /* 中性阶（静白蓝灰，色相 213~220、低饱和）16 档：三层底 = --background(#F8F8F8) /
      --n-75(#ECECEE 侧栏) / --card(纯白)；层级靠明度阶梯 + hairline */
   --n-0: 0 0% 100%;
@@ -123,6 +125,8 @@
 /* 暗色：刻度整体翻转（与 ui-system.css .dark 一字不差）；槽位随指向自动翻转，
    只有亮色字面值的三处在此重定义。 */
 .dark {
+  color-scheme: dark;
+
   --n-0: 220 6% 8%;
   --n-25: 220 6% 10%;
   --n-50: 220 7% 5.5%;
@@ -342,4 +346,33 @@
   background-color: hsl(var(--muted));
   border-color: hsl(var(--border));
   cursor: not-allowed;
+}
+
+/* --- 滚动条定式（ui-system.css §15 的实现侧同步，T30 漏搬）------------------
+   默认隐形、滚动或悬停才显形；拇指色 --n-300 指向中性刻度，随 .dark 自动翻转——
+   此前实现侧裸用浏览器原生滚动条，深色模式下亮色滚动条贴深底刺眼。原型用
+   var(--r-full)，本仓无 --r-* 令牌，圆角写等价值（.cb 同款适配）。 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+*:hover {
+  scrollbar-color: hsl(var(--n-300)) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*:hover::-webkit-scrollbar-thumb {
+  background: hsl(var(--n-300));
+  background-clip: content-box;
 }
