@@ -5,7 +5,8 @@
 立即返回 202 + run_id。真正的运行锁在后台线程里抢（「锁归调度线程」纪律不变；
 跨进程并发由磁盘锁兜底——线程里抢锁失败的失败原因经 SSE / current 呈现）。
 
-- current：运行中或最近失败的进度快照；无运行且无失败快照 → 404。
+- current：运行中或最近失败的进度快照；没有进行中的跑批 → 200 + null（轮询是
+  空闲态的合法问询，不是错误——2026-09-21 审计定案，404 只留给 wid / 批次不存在）。
 - stop：找到运行中 runner 置位协作取消信号即返回（停止是异步的——当前条目跑完
   本轮尝试后在条目边界停下）；没有运行 → 404。
 - stream：订阅该 runner 的业务事件转 SSE 帧（与一期 /label/stream 帧同构），
@@ -93,23 +94,22 @@ def latest_run(wid: str, sN: str, request: Request) -> RunHistoryView:
     runs_dir = workdir / ".dsf" / "runs"
     record = load_latest_run(runs_dir, seq)
     if record is not None and record.status == RUN_STATUS_RUNNING:
-        try:
-            progress = current_run(wid, sN, request)
-        except RunNotActiveError:
-            # 活性检查期间可能刚好收尾，先回读终态再判断是否异常中断。
+        # current_run 空闲时返回 None（L3 语义，2026-09-21 起）——磁盘记录停在
+        # running 而活性查询为空 = 活性检查期间刚好收尾，回读终态判定是否异常中断。
+        progress = current_run(wid, sN, request)
+        if progress is None:
             record = load_latest_run(runs_dir, seq)
             if record is not None and record.status == RUN_STATUS_RUNNING:
                 record = record.model_copy(update={"status": RUN_STATUS_INTERRUPTED})
+        elif progress.run_id == record.run_id:
+            record = record.model_copy(
+                update={
+                    "status": progress.status,
+                    "counters": RunCounters.model_validate(progress.counters),
+                }
+            )
         else:
-            if progress.run_id == record.run_id:
-                record = record.model_copy(
-                    update={
-                        "status": progress.status,
-                        "counters": RunCounters.model_validate(progress.counters),
-                    }
-                )
-            else:
-                record = record.model_copy(update={"status": RUN_STATUS_INTERRUPTED})
+            record = record.model_copy(update={"status": RUN_STATUS_INTERRUPTED})
     directory = runs_dir / record.run_id if record else None
     return RunHistoryView(
         record=record,
@@ -247,19 +247,26 @@ def start_run(
 
 @router.get(
     "/current",
-    response_model=RunStatusView,
+    response_model=RunStatusView | None,
     responses={
-        404: problem("该批次当前没有进行中的跑批（problem+json: run-not-active）"),
+        404: problem("wid 或批次不存在（workdir-not-found / batch-not-found）"),
     },
 )
-def current_run(wid: str, sN: str, request: Request) -> RunStatusView:
-    """当前运行进度快照（轮询用；SSE 断线重连后的全量刷新同款数据）。"""
+def current_run(wid: str, sN: str, request: Request) -> RunStatusView | None:
+    """当前运行进度快照（轮询用；SSE 断线重连后的全量刷新同款数据）。
+
+    没有进行中的跑批时返回 200 + null（2026-09-21 审计定案 L3/B6）：空闲轮询是
+    前端的合法问询，报 404 会把日志刷成错误流、把真错误淹掉。
+    """
     seq = parse_seq(sN)  # sN 不合法按批次不存在处理（与 batch 端点同口径）
     workdir = workdir_root(wid)
     try:
         runner = _active_runner(request, workdir, seq)
     except RunNotActiveError:
-        return RunStatusView(**read_current_run(workdir, seq))
+        try:
+            return RunStatusView(**read_current_run(workdir, seq))
+        except RunNotActiveError:
+            return None
     else:
         if runner.snapshot()["status"] == "failed":
             try:

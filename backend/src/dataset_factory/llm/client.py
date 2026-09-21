@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import Protocol, cast
 
+import httpx
 import openai
 from openai.types.chat import (
     ChatCompletion,
@@ -207,6 +208,10 @@ def build_completer(config: EndpointConfig) -> Completer:
     超时与重试次数取自 config.request（可被 config.json 覆盖）——硬编码的 120 秒对默认
     带思考模式的推理型模型可能不够。
 
+    底层 httpx 客户端显式 ``trust_env=False``（2026-09-21 审计定案）：系统代理在不在线
+    取决于用户当时开没开，不该让「有时快有时慢」的不稳定源混进模型请求。每套 completer
+    自带一个连接池——跑批整批共用一个 completer，池化收益落在热路径上。
+
     Args:
         config: 端点配置（base_url / model / api_key / 请求参数）。
 
@@ -218,12 +223,17 @@ def build_completer(config: EndpointConfig) -> Completer:
         api_key=config.api_key.reveal(),
         timeout=config.request.timeout_seconds,
         max_retries=config.request.max_retries,
+        http_client=openai.DefaultHttpxClient(
+            trust_env=False, timeout=config.request.timeout_seconds
+        ),
     )
     return OpenAIChatClient(client, config.model, config.request, config.api_key)
 
 
-# 连通性探测的传输参数：比正式打标更急——15 秒等不到就报超时、不重试（用户在等结果）。
-_PROBE_TIMEOUT_SECONDS = 15.0
+# 连通性探测的传输参数：比正式打标更急——8 秒等不到就报超时、不重试（用户在等结果）。
+# 后端 8 秒必须小于前端探测超时 12 秒：前端先掐的话，用户永远看不到后端那句可操作的
+# 解释（2026-09-21 审计定案 B2）。
+_PROBE_TIMEOUT_SECONDS = 8.0
 _PROBE_MAX_TOKENS = 1
 
 
@@ -243,36 +253,109 @@ class ProbeResult:
 
 
 def probe_endpoint(config: EndpointConfig) -> ProbeResult:
-    """发一个极小的真实请求探测端点连通性（Web「测试连接」与 CLI ``dsf config test`` 共用）。
+    """两档探测端点连通性（Web「测试连接」与 CLI ``dsf config test`` 共用）。
 
-    传输参数固定为探测专用（15 秒超时、不重试、``max_tokens=1``），覆盖调用方传入的
-    request——探测要的是「快进快出」，正式打标参数（长超时 / 重试）在这里只会拖慢反馈。
+    两档分工（2026-09-21 审计定案）：
+
+    1. **预检**：``GET {base_url}/models``——毫秒级、几乎免费，只判「网络可达 + 密钥
+       有效」，证明不了模型名可用；端点不可达时 2~3 秒内给出网络级原因，不再发第二枪。
+    2. **流式实检**：发一个流式最小请求（``max_tokens=1``），**收到第一个增量立刻断开
+       判「通」**——思考型模型同样适用（思考增量也算增量），可用端点亚秒级出结果，
+       且天然区分「连不上」（第一档拦下）与「模型慢」（第二档只等首字）。
+
+    生成参数（temperature / top_p / extra_body）保留调用方传入的值——探测发出的就是
+    正式请求的形状；传输参数固定为探测专用（8 秒超时、不重试、``max_tokens=1``）。
     失败不抛异常：连通性成败是业务结果，翻译成 ``ProbeResult`` 由入口层呈现。
 
     Args:
-        config: 待探测的端点配置（base_url / model / api_key；request 被探测参数覆盖）。
+        config: 待探测的端点配置（base_url / model / api_key / request；传输参数被
+            探测参数覆盖）。
 
     Returns:
-        ProbeResult：成败 + 可操作消息 + 耗时。
+        ProbeResult：成败 + 可操作消息 + 耗时（成功时即首字耗时）。
     """
+    start = perf_counter()
+    # 第一档：/models 预检——只判可达与密钥；端点不提供该路（404 等）不算失败，继续实检。
+    precheck_failure = _precheck_models(config)
+    if precheck_failure is not None:
+        return ProbeResult(
+            ok=False, message=precheck_failure, latency_ms=ms_since(start)
+        )
+    # 第二档：流式实检——首个增量到手即判「通」。
     test_config = replace(
         config,
-        request=RequestConfig(
+        request=replace(
+            config.request,
             timeout_seconds=_PROBE_TIMEOUT_SECONDS,
             max_retries=0,
             max_tokens=_PROBE_MAX_TOKENS,
         ),
     )
-    start = perf_counter()
     try:
-        build_completer(test_config).complete(
-            [Message(role="user", parts=(TextPart(text="ping"),))]
-        )
+        _consume_first_delta(test_config)
     except LLMError as exc:
         return ProbeResult(ok=False, message=str(exc), latency_ms=ms_since(start))
     return ProbeResult(
         ok=True, message="连接成功，模型应答正常。", latency_ms=ms_since(start)
     )
+
+
+def _precheck_models(
+    config: EndpointConfig, *, transport: httpx.BaseTransport | None = None
+) -> str | None:
+    """第一档预检：GET ``{base_url}/models``。
+
+    Args:
+        config: 待探测的端点配置。
+        transport: httpx 传输层（仅测试注入 MockTransport 用；生产恒 None = 默认传输）。
+
+    Returns:
+        None = 预检通过（或端点不提供该路，交给第二档定论）；字符串 = 失败原因
+        （网络不可达 / 密钥被拒），可直接呈现给用户。
+    """
+    headers = {"Authorization": f"Bearer {config.api_key.reveal()}"}
+    url = config.base_url.rstrip("/") + "/models"
+    try:
+        # trust_env=False 同 build_completer：探测走直连，不吃系统代理。
+        with httpx.Client(
+            trust_env=False, timeout=_PROBE_TIMEOUT_SECONDS, transport=transport
+        ) as client:
+            response = client.get(url, headers=headers)
+    except httpx.HTTPError as exc:
+        detail = " ".join(str(exc).split())[:200]
+        return (
+            f"无法连接到端点：{detail or type(exc).__name__}——请检查 base_url 与网络。"
+        )
+    if response.status_code in (401, 403):
+        return (
+            f"端点可达，但密钥被拒绝（HTTP {response.status_code}）——"
+            "请检查密钥是否有效。"
+        )
+    return None
+
+
+def _consume_first_delta(config: EndpointConfig) -> None:
+    """第二档流式实检：发出流式最小请求，取到第一个增量即返回（随即断开）。
+
+    Raises:
+        LLMError: 建流失败 / 流中途失败；流正常结束却没有任何增量也按失败处理
+            （模型名不对、空响应等在这一档现形）。
+    """
+    deltas = build_completer(config).stream(
+        [Message(role="user", parts=(TextPart(text="ping"),))]
+    )
+    try:
+        first = next(deltas, None)
+    finally:
+        # 显式断开：剩余增量与底层连接立即释放，不等 GC。（生成器必有 close；
+        # 对手写迭代器等无 close 的实现按「无连接可断」跳过。）
+        close = getattr(deltas, "close", None)
+        if close is not None:
+            close()
+    if first is None:
+        raise LLMUnexpectedError(
+            "端点已连通，但流式响应未产出任何增量——请检查模型名是否正确。"
+        )
 
 
 def _endpoint_error_summary(exc: openai.APIError, secret: str | None = None) -> str:
@@ -386,7 +469,9 @@ def _extract_text(response: ChatCompletion) -> str:
     content = response.choices[0].message.content
     if content is None:
         raise LLMError("模型未返回文本内容（content 为空）；请重试或检查模型。")
-    return content
+    # 抽文本层兜一道 strip（A3，2026-09-21 审计）：部分端点的正文带前导空行，
+    # 会原样写进产物与对话气泡；收口在唯一取文本出口，调用方不必各自处理。
+    return content.strip()
 
 
 def _extract_retry_after(exc: openai.APIError) -> float | None:

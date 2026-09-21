@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from dataset_factory.llm import create_config
+from dataset_factory.llm import StreamDelta, create_config
 from dataset_factory.llm.errors import LLMBadRequestError
 from dataset_factory.prompts import Prompt, save_prompt
 from dataset_factory.runs import (
@@ -55,8 +55,11 @@ class ScriptedCompleter:
         return action
 
     def stream(self, messages: object) -> object:
-        """批量跑批不走流式路径——走到即测试失败。"""
-        raise AssertionError("批量跑批不走流式路径")
+        """批量跑批走流式路径（A2，2026-09-21 起）：按脚本逐段产出正文增量。"""
+        action = self._script.pop(0) if self._script else "打标结果"
+        if isinstance(action, Exception):
+            raise action
+        return iter([StreamDelta(kind="content", text=action)])
 
 
 @pytest.fixture

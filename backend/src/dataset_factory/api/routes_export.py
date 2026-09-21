@@ -20,7 +20,7 @@ from ..strategies import get_batch, parse_seq
 from ..strategies.batches import read_exclusions
 from ..tasks import RETRY_AFTER_SECONDS, TaskManager, TaskResult
 from ..workdir import AssetNotFoundError, WorkdirStore
-from ..workdir.assets import confine_to_workdir
+from ..workdir.assets import confine_to_workdir, registered_origins
 from ..workdir.locks import RunLock, import_guard
 from .deps import workdir_root
 from .problems import problem
@@ -48,11 +48,16 @@ def _plan(
     if not get_batch(workdir, seq).active:
         raise BatchInactiveError("该批次已停用，请先显示该批次再导出。")
     store = WorkdirStore(workdir)
-    latest = load_latest_item_records(store.runs_dir, seq)
+    known_stems = {
+        Path(origin.name).stem for origin in registered_origins(store).values()
+    }
+    latest = load_latest_item_records(store.runs_dir, seq, known_items=known_stems)
     return build_export_plan(
         workdir,
         seq,
-        labeling_hashes=load_recent_success_hashes(store.runs_dir, seq),
+        labeling_hashes=load_recent_success_hashes(
+            store.runs_dir, seq, known_items=known_stems
+        ),
         failed_items={item for item, row in latest.items() if row.status == "failed"},
         excluded_items=set(read_exclusions(workdir, seq)),
         sequential=sequential,

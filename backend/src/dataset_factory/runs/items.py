@@ -149,7 +149,8 @@ def build_item_view(workdir: Path, seq: int, *, query: str = "") -> ItemView:
     origins = registered_origins(store)
     assets = scan_assets(workdir)
     present_names = {path.name for path in assets.values()}
-    latest = load_latest_item_records(store.runs_dir, seq)
+    known_stems = {Path(origin.name).stem for origin in origins.values()}
+    latest = load_latest_item_records(store.runs_dir, seq, known_items=known_stems)
     retry_list = read_retry_list(workdir, seq)
     retry_set = set(retry_list)
 

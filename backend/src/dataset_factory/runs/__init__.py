@@ -2,7 +2,8 @@
 
 对外接口：
 - 执行器：BatchRunner（run 跑一批 / stop 协作停止 / subscribe 订阅事件）
-- 报告与事件：RunReport / RunStartedEvent / ItemUpdatedEvent / RunFinishedEvent
+- 报告与事件：RunReport / RunStartedEvent / ItemUpdatedEvent / ItemDeltaEvent（流式增量，
+  只走 SSE 不落盘）/ RunFinishedEvent
 - 条目视图（打标页左列六分组的读模型，状态不落库、每次现算）：build_item_view /
   ItemView / ItemRow / 六分组键
 - 运行流水回读：load_recent_success_hashes（续跑跳过判定的哈希锚点）/
@@ -55,6 +56,7 @@ from .progress import (
 from .runner import (
     RETRYABLE_REASON_CODES,
     BatchRunner,
+    ItemDeltaEvent,
     ItemUpdatedEvent,
     RunEvent,
     RunFinishedEvent,
@@ -83,6 +85,7 @@ __all__ = [
     "TERMINAL_RUN_STATUSES",
     "BatchInactiveError",
     "BatchRunner",
+    "ItemDeltaEvent",
     "ItemRecord",
     "ItemRow",
     "ItemUpdatedEvent",

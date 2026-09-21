@@ -92,6 +92,16 @@ class HistoryMessageView(BaseModel):
         default=None,
         description="助手消息的思考过程全文（流式打标落盘；无思考为 null）",
     )
+    partial: bool = Field(
+        default=False,
+        description="True = 断流 / 报错时落盘的半截回复（界面标注「未完成」）",
+    )
+    elapsed_ms: int | None = Field(
+        default=None, description="本轮整轮耗时毫秒（恢复历史后仍可显示；缺省 null）"
+    )
+    reasoning_ms: int | None = Field(
+        default=None, description="本轮思考耗时毫秒（缺省 null）"
+    )
 
 
 class ServiceStatus(BaseModel):
@@ -112,31 +122,6 @@ class ServiceLogs(BaseModel):
         description="日志文件是否已存在（服务启动后首次写日志前为 false）"
     )
     content: str = Field(description="日志尾部内容（最近若干行，换行拼接）")
-
-
-class EndpointTestRequest(BaseModel):
-    """POST /api/endpoints/test 的请求体：用表单当前值探测连通性（不必先保存）。"""
-
-    base_url: str = Field(description="端点根地址")
-    model: str = Field(description="模型名")
-    api_format: str = Field(
-        default=SUPPORTED_API_FORMAT,
-        description="API 调用格式（一期仅 OpenAI Chat Completions）",
-    )
-    api_key: str | None = Field(
-        default=None, description="密钥；缺省回落该配置已存密钥"
-    )
-    name: str | None = Field(
-        default=None, description="配置名（回落已存密钥时用它定位）"
-    )
-
-
-class EndpointTestResult(BaseModel):
-    """POST /api/endpoints/test 的响应体：探测结果（HTTP 恒 200，成败看 ok）。"""
-
-    ok: bool = Field(description="是否连通")
-    message: str = Field(description="结果说明（失败时为分类后的可操作提示）")
-    latency_ms: float = Field(description="请求耗时（毫秒；未发出请求时为 0）")
 
 
 class SessionSnapshotResponse(BaseModel):
@@ -288,6 +273,40 @@ class EndpointRequestParams(BaseModel):
     )
 
 
+class EndpointTestRequest(BaseModel):
+    """POST /api/endpoints/test 的请求体：用表单当前值探测连通性（不必先保存）。"""
+
+    base_url: str = Field(description="端点根地址")
+    model: str = Field(description="模型名")
+    api_format: str = Field(
+        default=SUPPORTED_API_FORMAT,
+        description="API 调用格式（一期仅 OpenAI Chat Completions；与受支持格式不符直接判失败）",
+    )
+    api_key: str | None = Field(
+        default=None,
+        description="密钥；缺省先回落环境变量 DSF_API_KEY，再回落该配置已存密钥",
+    )
+    name: str | None = Field(
+        default=None, description="配置名（回落已存密钥时用它定位）"
+    )
+    request_params: EndpointRequestParams | None = Field(
+        default=None,
+        description="表单当前的高级参数（生成参数随探测一起发；传输参数由探测专用值覆盖）",
+    )
+
+
+class EndpointTestResult(BaseModel):
+    """POST /api/endpoints/test 的响应体：探测结果（HTTP 恒 200，成败看 ok）。"""
+
+    ok: bool = Field(description="是否连通")
+    message: str = Field(description="结果说明（失败时为分类后的可操作提示）")
+    latency_ms: float = Field(description="请求耗时（毫秒；未发出请求时为 0）")
+    effective_params: dict[str, object] | None = Field(
+        default=None,
+        description="本次探测实际发出的关键参数回显（model/stream/max_tokens/生成参数；探测专用传输参数不在此列）",
+    )
+
+
 class EndpointConfigSummary(BaseModel):
     """端点配置概要——列表 / 创建 / 更新的响应体，密钥只报有无、绝不回内容。"""
 
@@ -347,6 +366,31 @@ class Problem(BaseModel):
     title: str = Field(description="人读的短语概括")
     status: int = Field(description="HTTP 状态码（与响应状态一致）")
     detail: str = Field(description="中文可操作消息——下一步该做什么")
+
+
+class ScanPreviewItem(BaseModel):
+    """扫描预览里一个「不会成为条目」的文件（与条目视图的未导入行同源同形）。"""
+
+    name: str = Field(description="文件名")
+    media: str = Field(description="媒体形态：image / video / file")
+    reason: str = Field(description="不会成为条目的原因（标准措辞）")
+    size: int = Field(description="文件字节数")
+    limit: int | None = Field(
+        default=None, description="该档大小上限；只有超限那一类有值"
+    )
+
+
+class ScanPreviewView(BaseModel):
+    """GET /api/workdirs/{wid}/scan-preview 的响应体：新建跑批的发车前摘要（V16）。
+
+    回答「这一跑会吃多少、收哪些、不收哪些、为什么」：total / images / videos 数的是
+    登记在册且在盘的素材（会被逐张打标的部分）；unimported 是不会成为条目的文件清单。
+    """
+
+    total: int = Field(description="将被打标的素材总数（登记在册且在盘）")
+    images: int = Field(description="其中图片数")
+    videos: int = Field(description="其中视频数")
+    unimported: list[ScanPreviewItem] = Field(description="不会成为条目的文件清单")
 
 
 class WorkdirInfo(BaseModel):

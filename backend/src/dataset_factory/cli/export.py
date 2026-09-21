@@ -15,6 +15,7 @@ from ..runs.journal import load_latest_item_records, load_recent_success_hashes
 from ..strategies import get_batch
 from ..strategies.batches import read_exclusions
 from ..workdir import WorkdirStore
+from ..workdir.assets import registered_origins
 from ..workdir.locks import RunLock, import_guard
 from .batch import batch_location
 from .errors import handle_domain_errors
@@ -27,11 +28,16 @@ def _plan(root: Path, seq: int, sequential: bool, stop: Event) -> ExportPlan:
     if not get_batch(root, seq).active:
         raise BatchInactiveError("该批次已停用，请先显示该批次再导出。")
     store = WorkdirStore(root)
-    latest = load_latest_item_records(store.runs_dir, seq)
+    known_stems = {
+        Path(origin.name).stem for origin in registered_origins(store).values()
+    }
+    latest = load_latest_item_records(store.runs_dir, seq, known_items=known_stems)
     return build_export_plan(
         root,
         seq,
-        labeling_hashes=load_recent_success_hashes(store.runs_dir, seq),
+        labeling_hashes=load_recent_success_hashes(
+            store.runs_dir, seq, known_items=known_stems
+        ),
         failed_items={item for item, row in latest.items() if row.status == "failed"},
         excluded_items=set(read_exclusions(root, seq)),
         sequential=sequential,

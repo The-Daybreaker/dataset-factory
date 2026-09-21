@@ -42,6 +42,12 @@ from ..workdir import (
     mime_for_suffix,
     resolve_asset,
 )
+from ..workdir.assets import (
+    media_kind,
+    registered_origins,
+    scan_assets,
+    unimported_files,
+)
 from ..workdir.cleanup import (
     CleanupResult,
     OrphanProduct,
@@ -72,6 +78,8 @@ from .schemas import (
     ImportAccepted,
     ImportRecord,
     Problem,
+    ScanPreviewItem,
+    ScanPreviewView,
     WorkdirCleanupRetryRequest,
     WorkdirCleanupRetryResult,
     WorkdirCreateAccepted,
@@ -301,6 +309,42 @@ def verify_integrity(wid: str, batch: str | None = None) -> IntegrityReport:
             )
             for entry in entries
             if entry.active
+        ],
+    )
+
+
+@router.get(
+    "/{wid}/scan-preview",
+    response_model=ScanPreviewView,
+    responses={404: {"model": Problem, "description": "工作目录不存在"}},
+)
+def scan_preview(wid: str) -> ScanPreviewView:
+    """扫描素材目录的发车前摘要（新建跑批表单的「扫描到 N 项」行，V16）。
+
+    只读现算不落任何状态：total / images / videos 数「登记在册且在盘」的素材
+    （本次跑批会逐张处理的部分）；unimported 列出不会成为条目的文件与原因。
+    """
+    workdir = workdir_root(wid)
+    if not workdir.is_dir():
+        raise WorkdirPathError("工作目录不存在，请检查路径后重试。")
+    store = WorkdirStore(workdir)
+    registered = {origin.name for origin in registered_origins(store).values()}
+    assets = scan_assets(workdir)
+    handled = [path for path in assets.values() if path.name in registered]
+    unimported = unimported_files(workdir, registered)
+    return ScanPreviewView(
+        total=len(handled),
+        images=sum(1 for path in handled if media_kind(path.name) == "image"),
+        videos=sum(1 for path in handled if media_kind(path.name) == "video"),
+        unimported=[
+            ScanPreviewItem(
+                name=entry.name,
+                media=media_kind(entry.name),
+                reason=entry.reason,
+                size=entry.size,
+                limit=entry.limit,
+            )
+            for entry in unimported
         ],
     )
 

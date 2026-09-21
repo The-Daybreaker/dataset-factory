@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -34,6 +34,7 @@ from ..llm import (
     VIDEO_MIME_BY_SUFFIX,
     Completer,
     ImagePart,
+    LLMError,
     Message,
     Role,
     StreamDelta,
@@ -98,12 +99,18 @@ class HistoryMessage:
         text: 消息文本。
         attachment: 附件在会话 attachments/ 下的文件名；无图为 None。
         reasoning: 助手消息的思考过程全文（落盘的会话才有；只供界面回看）。
+        partial: True = 断流 / 报错时落盘的半截回复（B5；界面标注「未完成」）。
+        elapsed_ms: 本轮整轮耗时毫秒（V7；恢复历史后仍可显示）。
+        reasoning_ms: 本轮思考耗时毫秒（V7；思考开关的仪表盘）。
     """
 
     role: str
     text: str
     attachment: str | None
     reasoning: str | None = None
+    partial: bool = False
+    elapsed_ms: int | None = None
+    reasoning_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -346,17 +353,53 @@ class LabelingEngine:
 
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
-        for delta in self._completer.stream(messages):
-            if delta.kind == "content":
-                content_parts.append(delta.text)
-            else:
-                reasoning_parts.append(delta.text)
-            yield delta
+        trimmer = _LeadingBlankTrimmer()
+        llm_start = perf_counter()
+        try:
+            for delta in self._completer.stream(messages):
+                if delta.kind == "content":
+                    # 前导空白在源头丢弃（A3）：正文首字之前的空行不产帧、不进气泡、
+                    # 不进落盘——工作台气泡上方那 42px 空洞与产物前导空行同源。
+                    text = trimmer.trim(delta.text)
+                    if not text:
+                        continue
+                    content_parts.append(text)
+                    yield StreamDelta(kind="content", text=text)
+                else:
+                    reasoning_parts.append(delta.text)
+                    yield delta
+        except LLMError:
+            # B5（2026-09-21 审计）：断流 / 超时的半截回复也落盘并标 partial——
+            # 会话历史不因失败整条消失（PRD-0001 验收 10 / 11：失败不丢历史、
+            # append-only）；重发那句话也不会变成两条重复 user 气泡。
+            partial_text = "".join(content_parts)
+            partial_reasoning = "".join(reasoning_parts)
+            if partial_text or partial_reasoning:
+                append_message(
+                    session_id,
+                    "assistant",
+                    partial_text,
+                    reasoning=partial_reasoning or None,
+                    partial=True,
+                    elapsed_ms=int(ms_since(start)),
+                    reasoning_ms=int(ms_since(llm_start)),
+                )
+            raise
         caption = "".join(content_parts)
-        # 思考过程随终稿一起落盘（2026-09-20 用户定夺）：恢复会话可回看；
-        # 回放下一轮请求装配仍只取正文，思考不进请求（见 _replay_history）。
+        if not caption.strip():
+            # 空稿护栏，与跑批路径同口径（B5；runner 对空白 caption 同样判失败）。
+            raise LLMError("模型返回了空白描述；请重试或调整输入。")
+        # 思考过程随终稿一起落盘（2026-09-20 用户定夺，2026-09-21 用户再次确认）：
+        # 恢复会话可回看；回放下一轮请求装配仍只取正文，思考不进请求（见 _replay_history）。
         reasoning = "".join(reasoning_parts)
-        append_message(session_id, "assistant", caption, reasoning=reasoning or None)
+        append_message(
+            session_id,
+            "assistant",
+            caption,
+            reasoning=reasoning or None,
+            elapsed_ms=int(ms_since(start)),
+            reasoning_ms=int(ms_since(llm_start)),
+        )
         logger.info(
             "一轮流式打标完成：合计 %.0fms（会话 %s）", ms_since(start), session_id
         )
@@ -403,28 +446,13 @@ class LabelingEngine:
             LLMError: 模型调用失败（本路径不落盘，异常直接冒泡给调用方按运行流水处置）。
         """
         start = perf_counter()
-        if not prompt_body.strip():
-            raise ValueError(
-                "prompt_body 不能为空白——一轮打标必须有一个基础提示词作 system 底座；"
-                "请检查策略快照的基础提示词是否为空。"
-            )
-        sent_bytes = _read_material(material)
-        asset_hash = hashlib.sha256(sent_bytes).hexdigest()
-
-        suffix = material.suffix.lower()
-        is_video = suffix in VIDEO_EXTENSIONS
-        # 信封视图在本路径弃用（runs 的运行流水只记结果与哈希，无信封落盘）。
-        messages, _ = _assemble(
+        messages, asset_hash = _prepare_material_messages(
+            material,
             prompt_body=prompt_body,
             skill_texts=skill_texts,
-            history=(),
             instruction=instruction,
-            image_bytes=None if is_video else sent_bytes,
-            video_bytes=sent_bytes if is_video else None,
-            video_mime=VIDEO_MIME_BY_SUFFIX.get(suffix, "video/mp4"),
             video_fps=video_fps,
             video_max_frames=video_max_frames,
-            attachment=material.name,
         )
         assemble_ms = ms_since(start)
 
@@ -439,6 +467,83 @@ class LabelingEngine:
         logger.info(
             "纯素材打标完成：组装 %.0fms、模型 %.0fms、合计 %.0fms（素材 %s）",
             assemble_ms,
+            llm_ms,
+            ms_since(start),
+            material.name,
+        )
+        return MaterialLabelResult(caption=caption, asset_hash=asset_hash)
+
+    def label_material_stream(
+        self,
+        material: Path,
+        *,
+        prompt_body: str,
+        skill_texts: Sequence[str] = (),
+        instruction: str = "",
+        video_fps: int = 2,
+        video_max_frames: int = 16,
+        on_delta: Callable[[StreamDelta], None],
+    ) -> MaterialLabelResult:
+        """纯素材打标的**流式**变体：逐段产出思考 / 正文增量，终稿语义与 complete 同。
+
+        跑批执行器用本路径替代 complete()（2026-09-21 审计 A2）：没有逐字输出，
+        用户判断不了「在跑」还是「卡住」。增量经 ``on_delta`` 回调实时交给调用方
+        （SSE 逐字转发给界面）；**思考增量只转发不落盘**——打标产物只有 caption
+        （PRD F4「txt 只含 caption 本身」），思考不进产物 txt、不进运行流水，
+        关掉前端再打开就不显示。正文增量同时累积，流结束拼成终稿 caption。
+
+        Args:
+            material: 素材文件路径（图片或视频）。
+            prompt_body: 基础提示词全文（来自策略快照）。
+            skill_texts: 要注入的 skill 全文序列（来自策略快照）。
+            instruction: 附加指令（批量打标通常为空）。
+            video_fps: 视频抽帧 fps（素材是视频时生效）。
+            video_max_frames: 视频抽帧帧数上限（素材是视频时生效）。
+            on_delta: 每个思考 / 正文增量的实时回调（在模型流式线程上同步执行）。
+
+        Returns:
+            MaterialLabelResult：caption 终稿 + 素材哈希（与非流式完全同形）。
+
+        Raises:
+            与 :meth:`label_material` 同一套（含流中途失败的 LLMError——此时增量
+            已转发，调用方按失败处置，半截内容只活内存、不落盘）。
+        """
+        start = perf_counter()
+        messages, asset_hash = _prepare_material_messages(
+            material,
+            prompt_body=prompt_body,
+            skill_texts=skill_texts,
+            instruction=instruction,
+            video_fps=video_fps,
+            video_max_frames=video_max_frames,
+        )
+
+        llm_start = perf_counter()
+        content_parts: list[str] = []
+        trimmer = _LeadingBlankTrimmer()
+        try:
+            for delta in self._completer.stream(messages):
+                if delta.kind == "content":
+                    # 前导空白在源头丢弃（A3）：跑批界面逐字区与产物都不吃空行。
+                    text = trimmer.trim(delta.text)
+                    if not text:
+                        continue
+                    content_parts.append(text)
+                    on_delta(StreamDelta(kind="content", text=text))
+                else:
+                    on_delta(delta)
+        except LLMError:
+            logger.info(
+                "纯素材流式打标失败：%.0fms（素材 %s）",
+                ms_since(llm_start),
+                material.name,
+            )
+            raise
+        llm_ms = ms_since(llm_start)
+        caption = "".join(content_parts)
+        logger.info(
+            "纯素材流式打标完成：组装 %.0fms、模型 %.0fms、合计 %.0fms（素材 %s）",
+            ms_since(start),
             llm_ms,
             ms_since(start),
             material.name,
@@ -466,6 +571,9 @@ class LabelingEngine:
                 text=event.text,
                 attachment=event.attachment,
                 reasoning=event.reasoning,
+                partial=event.partial,
+                elapsed_ms=event.elapsed_ms,
+                reasoning_ms=event.reasoning_ms,
             )
             for event in events
             if isinstance(event, MessageEvent) and event.role in ("user", "assistant")
@@ -595,6 +703,74 @@ def _read_attachment(session_id: str, name: str) -> bytes:
         raise AttachmentReadError(
             f"无法读取会话 {session_id!r} 的附件 {name!r}：{exc.strerror or exc}"
         ) from exc
+
+
+class _LeadingBlankTrimmer:
+    """流式正文的前导空白修剪器（A3）：首个非空白字符之前的空白增量整体丢弃。
+
+    部分端点的正文以空行开头——非流式路径在 ``_extract_text`` strip 掉了，流式路径
+    的增量到达即转发、事后 strip 救不了已发出去的帧，所以在源头丢弃：不进气泡、
+    不产帧、不进落盘。首个非空白字符出现后原样放行（正文内部与结尾的空白不动）。
+    """
+
+    def __init__(self) -> None:
+        self._started = False
+
+    def trim(self, text: str) -> str:
+        """修剪一段正文增量：前导空白阶段返回空串（调用方整段丢弃），之后原样返回。"""
+        if self._started:
+            return text
+        trimmed = text.lstrip()
+        if trimmed:
+            self._started = True
+        return trimmed
+
+
+def _prepare_material_messages(
+    material: Path,
+    *,
+    prompt_body: str,
+    skill_texts: Sequence[str],
+    instruction: str,
+    video_fps: int,
+    video_max_frames: int,
+) -> tuple[list[Message], str]:
+    """纯素材两条调用路径（``label_material`` / ``label_material_stream``）共用的装配段。
+
+    校验（提示词非空白）→ 运行时护栏读取素材 → 拼一轮消息；「一轮怎么拼」仍只有
+    ``_assemble`` 一处，本函数只负责把纯素材路径的取材与拼装收敛成一段。
+
+    Returns:
+        (消息序列, 素材字节哈希)。
+
+    Raises:
+        ValueError: prompt_body 为空白；或素材扩展名不在白名单内。
+        MaterialReadError: 素材不存在、不是文件或读取失败。
+        MaterialOversizeError: 素材超出大小上限。
+    """
+    if not prompt_body.strip():
+        raise ValueError(
+            "prompt_body 不能为空白——一轮打标必须有一个基础提示词作 system 底座；"
+            "请检查策略快照的基础提示词是否为空。"
+        )
+    sent_bytes = _read_material(material)
+    asset_hash = hashlib.sha256(sent_bytes).hexdigest()
+    suffix = material.suffix.lower()
+    is_video = suffix in VIDEO_EXTENSIONS
+    # 信封视图在本路径弃用（runs 的运行流水只记结果与哈希，无信封落盘）。
+    messages, _ = _assemble(
+        prompt_body=prompt_body,
+        skill_texts=skill_texts,
+        history=(),
+        instruction=instruction,
+        image_bytes=None if is_video else sent_bytes,
+        video_bytes=sent_bytes if is_video else None,
+        video_mime=VIDEO_MIME_BY_SUFFIX.get(suffix, "video/mp4"),
+        video_fps=video_fps,
+        video_max_frames=video_max_frames,
+        attachment=material.name,
+    )
+    return messages, asset_hash
 
 
 def _read_material(material: Path) -> bytes:

@@ -7,7 +7,13 @@ from typing import Annotated
 
 import typer
 
-from ..runs import RUN_STATUS_INTERRUPTED, BatchRunner, RunEvent, completer_for_snapshot
+from ..runs import (
+    RUN_STATUS_INTERRUPTED,
+    BatchRunner,
+    ItemDeltaEvent,
+    RunEvent,
+    completer_for_snapshot,
+)
 from ..strategies import read_snapshot
 from ..workdir import WorkdirStore
 from ..workdir.assets import registered_origins, unimported_files
@@ -51,6 +57,8 @@ def run(
     )
 
     def progress(event: RunEvent) -> None:
+        if isinstance(event, ItemDeltaEvent):
+            return  # 逐字增量只服务 Web 界面；CLI 有逐条终态，刷几千行 delta 是噪音
         typer.echo(f"{event.kind}: {event.to_payload()}", err=True)
 
     unsubscribe = runner.subscribe(progress)

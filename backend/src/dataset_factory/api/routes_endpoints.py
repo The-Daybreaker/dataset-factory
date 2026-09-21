@@ -11,14 +11,17 @@ from __future__ import annotations
 from fastapi import APIRouter, Response, status
 
 from ..llm import (
+    SUPPORTED_API_FORMAT,
     EndpointConfig,
     EndpointConfigInfo,
     SecretValue,
     config_info,
     create_config,
     delete_config,
+    env_api_key,
     first_api_key,
     list_configs,
+    parse_request_params,
     probe_endpoint,
     read_stored_api_key,
     set_active_config,
@@ -124,9 +127,25 @@ def activate(name: str) -> Response:
 
 @router.post("/test", response_model=EndpointTestResult)
 def test_connection(request: EndpointTestRequest) -> EndpointTestResult:
-    """测试端点连通性：用表单当前值发一个极小的真实请求，不必先保存。"""
+    """测试端点连通性：用表单当前值两档探测，不必先保存。
+
+    密钥三通道（2026-09-21 审计定案，与实调的 resolve_api_key 对齐）：表单值 > 环境变量
+    DSF_API_KEY > 该配置已存密钥——之前探测不认环境变量通道，会出现「实调能通、测试
+    连接却报无密钥」的假故障。api_format 是真校验不是摆设：与受支持格式不符时直接给出
+    可操作失败，不留「改了以为生效」的假字段。
+    """
+    if request.api_format != SUPPORTED_API_FORMAT:
+        return EndpointTestResult(
+            ok=False,
+            message=(
+                f"API 格式「{request.api_format}」暂不支持"
+                f"（当前仅支持 {SUPPORTED_API_FORMAT}）——请改回默认值。"
+            ),
+            latency_ms=0.0,
+        )
     key = first_api_key(
         _parse_key(request.api_key),
+        env_api_key(),
         read_stored_api_key(request.name) if request.name is not None else None,
     )
     if key is None:
@@ -135,12 +154,39 @@ def test_connection(request: EndpointTestRequest) -> EndpointTestResult:
             message="未提供密钥，且该配置名下没有已存密钥；请填写密钥后重试。",
             latency_ms=0.0,
         )
+    request_params = parse_request_params(_params_payload(request.request_params) or {})
     result = probe_endpoint(
-        EndpointConfig(base_url=request.base_url, model=request.model, api_key=key)
+        EndpointConfig(
+            base_url=request.base_url,
+            model=request.model,
+            api_key=key,
+            request=request_params,
+        )
     )
     return EndpointTestResult(
-        ok=result.ok, message=result.message, latency_ms=result.latency_ms
+        ok=result.ok,
+        message=result.message,
+        latency_ms=result.latency_ms,
+        effective_params=_probe_params_echo(request),
     )
+
+
+def _probe_params_echo(request: EndpointTestRequest) -> dict[str, object]:
+    """回显本次探测实际发出的关键参数（探测专用传输参数不在此列）。
+
+    「测试连接」的价值不只是通不通，还包括让用户核对「我会以什么参数发请求」——思考
+    开关是否带上、透传对象写对没有，在这里一眼可见（2026-09-21 审计定案 A1）。
+    """
+    echo: dict[str, object] = {"model": request.model, "stream": True, "max_tokens": 1}
+    params = request.request_params
+    if params is not None:
+        if params.temperature is not None:
+            echo["temperature"] = params.temperature
+        if params.top_p is not None:
+            echo["top_p"] = params.top_p
+        if params.extra_body is not None:
+            echo["extra_body"] = dict(params.extra_body)
+    return echo
 
 
 def _parse_key(raw: str | None) -> SecretValue | None:

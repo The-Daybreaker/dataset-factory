@@ -86,6 +86,7 @@ from .progress import (
 __all__ = [
     "RETRYABLE_REASON_CODES",
     "BatchRunner",
+    "ItemDeltaEvent",
     "ItemUpdatedEvent",
     "RunFinishedEvent",
     "RunMode",
@@ -197,6 +198,35 @@ class ItemUpdatedEvent:
 
 
 @dataclass(frozen=True)
+class ItemDeltaEvent:
+    """item-delta：一条素材的流式增量（思考 / 正文），**只走 SSE、不落任何盘**。
+
+    A2（2026-09-21 审计定案）：没有逐字输出，用户判断不了「在跑」还是「卡住」。
+    增量只服务界面实时呈现——思考不进运行流水、不进产物（打标产物只有 caption，
+    PRD F4），关掉前端再打开就不显示；正文在终稿时随 item-updated 落产物 txt。
+    """
+
+    item: str
+    batch: int
+    delta: str
+    text: str
+
+    @property
+    def kind(self) -> str:
+        """SSE 事件类型名。"""
+        return "item-delta"
+
+    def to_payload(self) -> dict[str, Any]:
+        """序列化为 SSE data 载荷。"""
+        return {
+            "item": self.item,
+            "batch": self.batch,
+            "delta": self.delta,
+            "text": self.text,
+        }
+
+
+@dataclass(frozen=True)
 class RunFinishedEvent:
     """run-finished：运行结束（completed / interrupted），带最终计数。"""
 
@@ -223,7 +253,7 @@ class RunFinishedEvent:
 
 
 #: 业务事件的联合（SSE 桥接与 CLI 进度打印的消费对象）。
-RunEvent = RunStartedEvent | ItemUpdatedEvent | RunFinishedEvent
+RunEvent = RunStartedEvent | ItemUpdatedEvent | ItemDeltaEvent | RunFinishedEvent
 
 
 class _BlankCaptionError(Exception):
@@ -666,12 +696,22 @@ class BatchRunner:
                 raise MaterialReadError(  # noqa: TRY301
                     f"素材 {item} 不在工作目录（缺失）——请先补回素材再重试。"
                 )
-            result = engine.label_material(
+            result = engine.label_material_stream(
                 asset_path,
                 prompt_body=cast(str, snapshot.prompt["body"]),
                 skill_texts=[cast(str, block["body"]) for block in snapshot.skills],
                 video_fps=self._video_fps,
                 video_max_frames=self._video_max_frames,
+                # 流式增量只转发给界面（A2：没有逐字输出就不知道在不在跑）；
+                # 思考不落盘——事件只到 SSE 订阅者，产物与流水都不含它。
+                on_delta=lambda delta: self._emit(
+                    ItemDeltaEvent(
+                        item=item,
+                        batch=self._seq,
+                        delta=delta.kind,
+                        text=delta.text,
+                    )
+                ),
             )
             if not result.caption.strip():
                 raise _BlankCaptionError()  # noqa: TRY301 —— 同上
@@ -696,10 +736,12 @@ class BatchRunner:
                 retry_after=getattr(exc, "retry_after", None),
                 elapsed_ms=_elapsed(),
             )
-        # 成功：产物原子写（只有完整产物算已有产物，中断不留半截）。
+        # 成功：产物原子写（只有完整产物算已有产物，中断不留半截；流式增量同样
+        # 只活内存——写盘的只有这份 strip 过的终稿，A2 半截产物语义）。
         try:
             atomic_write_text(
-                self._workdir / product_filename(self._seq, item), result.caption
+                self._workdir / product_filename(self._seq, item),
+                result.caption.strip(),
             )
         except OSError as exc:
             return _Failure(
@@ -786,7 +828,8 @@ def _plan_full(
     store = WorkdirStore(workdir)
     registered = set(registered_origins(store))
     assets = scan_assets(workdir)
-    hashes = load_recent_success_hashes(runs_dir, seq)
+    known_stems = {Path(name).stem for name in registered}
+    hashes = load_recent_success_hashes(runs_dir, seq, known_items=known_stems)
 
     to_label: list[str] = []
     skipped: list[str] = []

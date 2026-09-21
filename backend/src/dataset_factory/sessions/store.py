@@ -252,6 +252,10 @@ def append_message(
     text: str,
     attachment: str | None = None,
     reasoning: str | None = None,
+    *,
+    partial: bool = False,
+    elapsed_ms: int | None = None,
+    reasoning_ms: int | None = None,
 ) -> None:
     """往会话追加一条消息事件（append-only，写后 fsync 确保落盘再返回）。
 
@@ -261,6 +265,9 @@ def append_message(
         text: 消息文本。
         attachment: 可选，已存进本会话 attachments/ 的图片文件名。
         reasoning: 可选，助手消息的思考过程全文（流式打标落盘；只供界面回看）。
+        partial: 可选，True = 断流 / 报错时落盘的半截助手回复（B5）。
+        elapsed_ms: 可选，本轮整轮耗时毫秒（V7）。
+        reasoning_ms: 可选，本轮思考耗时毫秒（V7）。
 
     Raises:
         SessionIdError: id 非法。
@@ -271,7 +278,14 @@ def append_message(
     _append_event(
         session_id,
         MessageEvent(
-            ts=ts, role=role, text=text, attachment=attachment, reasoning=reasoning
+            ts=ts,
+            role=role,
+            text=text,
+            attachment=attachment,
+            reasoning=reasoning,
+            partial=partial,
+            elapsed_ms=elapsed_ms,
+            reasoning_ms=reasoning_ms,
         ),
     )
 

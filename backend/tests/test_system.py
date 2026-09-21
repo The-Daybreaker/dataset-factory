@@ -239,6 +239,10 @@ def test_session_recovery_over_real_http(
         "attachment": None,
         # 非流式路径不产思考；快照一律带这个键，无思考时为 null（界面据此判「有没有」）。
         "reasoning": None,
+        # V7/B5（2026-09-21）：partial / 耗时字段随契约新增；非流式路径恒为默认值。
+        "partial": False,
+        "elapsed_ms": None,
+        "reasoning_ms": None,
     }
 
 

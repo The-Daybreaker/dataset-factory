@@ -169,7 +169,41 @@ class RunJournal:
             handle.flush()
 
 
-def load_recent_success_hashes(runs_dir: Path, seq: int) -> dict[str, str]:
+def _run_dir_batch(run_dir: Path) -> int | None:
+    """从 run.json 读批次号；缺失 / 损坏 / 非整数一律 None（不据此跳过，照旧解析流水）。
+
+    批次预筛的依据：run.json 只有一个小文件，读它比逐行解析他批次的 items.jsonl
+    便宜一个量级（2026-09-21 审计 B10——回读曾把全部批次的历史流水都整份解析一遍）。
+    拿不到批次就按「未知」处理、退回旧行为，绝不因预筛丢数据。
+    """
+    meta_path = run_dir / _RUN_JSON_NAME
+    if not meta_path.is_file():
+        return None
+    try:
+        meta = cast(
+            "dict[str, object] | None",
+            json.loads(meta_path.read_text(encoding="utf-8")),
+        )
+    except (OSError, ValueError):
+        return None
+    if not isinstance(meta, dict):
+        return None
+    batch = meta.get("batch")
+    return batch if isinstance(batch, int) else None
+
+
+def _recent_run_dirs(runs_dir: Path, seq: int) -> list[Path]:
+    """本批次相关的运行目录（新→旧）：他批次按 run.json 预筛整目录跳过。"""
+    return [
+        run_dir
+        for run_dir in sorted(runs_dir.iterdir(), key=lambda p: p.name, reverse=True)
+        if _run_dir_batch(run_dir) in (None, seq)
+    ]
+
+
+def load_recent_success_hashes(
+    runs_dir: Path, seq: int, *, known_items: set[str] | None = None
+) -> dict[str, str]:
     """扫**本批次**历史运行流水，取每条素材最近一次成功打标时读取的素材哈希。
 
     断点续跑的跳过判定（E1）：有产物的条目，当前素材哈希与「最近一次成功打标」
@@ -182,6 +216,10 @@ def load_recent_success_hashes(runs_dir: Path, seq: int) -> dict[str, str]:
     Args:
         runs_dir: ``.dsf/runs/`` 目录。
         seq: 批次序号（只认该批次的流水行）。
+        known_items: 本批次的条目主干全集（调用方有现成清单就传进来）——全部条目
+            都已取得哈希后立即停扫（2026-09-21 审计 B10：稳态下最新一次运行就覆盖
+            全部条目，不必把全部历史流水读完）。曾有条目从未成功时退回全量扫
+            （结果与全量扫相同，只是省不了 I/O），正确性不受影响。
 
     Returns:
         素材主干 → 素材哈希（只含有过成功打标的条目；从没成功过的不在映射里，
@@ -194,7 +232,9 @@ def load_recent_success_hashes(runs_dir: Path, seq: int) -> dict[str, str]:
     if not runs_dir.is_dir():
         return {}
     hashes: dict[str, str] = {}
-    for run_dir in sorted(runs_dir.iterdir(), key=lambda p: p.name, reverse=True):
+    for run_dir in _recent_run_dirs(runs_dir, seq):
+        if known_items is not None and known_items.issubset(hashes.keys()):
+            break  # 每条取「最新一次」成功——全覆盖后更旧的运行不可能再改写结果
         items_path = run_dir / _ITEMS_JSONL_NAME
         if not items_path.is_file():
             continue
@@ -224,7 +264,9 @@ class ItemRecord:
     message: str | None
 
 
-def load_latest_item_records(runs_dir: Path, seq: int) -> dict[str, ItemRecord]:
+def load_latest_item_records(
+    runs_dir: Path, seq: int, *, known_items: set[str] | None = None
+) -> dict[str, ItemRecord]:
     """扫本批次历史运行流水，取每条素材**各自最近一次**的结果记录。
 
     为什么按「每条素材各自最近一次」而不是「最近一次运行目录」取：retry 模式的
@@ -239,6 +281,10 @@ def load_latest_item_records(runs_dir: Path, seq: int) -> dict[str, ItemRecord]:
     Args:
         runs_dir: ``.dsf/runs/`` 目录。
         seq: 批次序号（只认该批次的流水行）。
+        known_items: 本批次的条目主干全集（调用方有现成清单就传进来）——全部条目
+            都已取到记录后立即停扫（2026-09-21 审计 B10：稳态下最新一次运行就覆盖
+            全部条目，不必把全部历史流水读完）。从未被实际调用过的条目保持缺席，
+            语义与全量扫一致。
 
     Returns:
         素材主干 → 最近一次记录（从没被实际调用过的条目不在映射里，调用方按
@@ -251,7 +297,9 @@ def load_latest_item_records(runs_dir: Path, seq: int) -> dict[str, ItemRecord]:
     if not runs_dir.is_dir():
         return {}
     records: dict[str, ItemRecord] = {}
-    for run_dir in sorted(runs_dir.iterdir(), key=lambda p: p.name, reverse=True):
+    for run_dir in _recent_run_dirs(runs_dir, seq):
+        if known_items is not None and known_items.issubset(records.keys()):
+            break  # 每条取「各自最近一次」——全覆盖后更旧的运行不可能再改写结果
         items_path = run_dir / _ITEMS_JSONL_NAME
         if not items_path.is_file():
             continue

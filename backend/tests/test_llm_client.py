@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock
 
+import httpx
 import openai
 import pytest
 
@@ -29,11 +30,13 @@ from dataset_factory.llm import (
     OpenAIChatClient,
     RequestConfig,
     SecretValue,
+    StreamDelta,
     TextPart,
     VideoPart,
     build_completer,
     probe_endpoint,
 )
+from dataset_factory.llm import client as client_module
 
 
 def _response_with_content(content: object) -> MagicMock:
@@ -381,14 +384,33 @@ def test_auth_error_message_is_clean_and_actionable() -> None:
     )
 
 
+def _precheck_pass(config: EndpointConfig) -> str | None:
+    """probe 的预检替身：恒通过（None = 继续第二档）。"""
+    return None
+
+
+def _precheck_unreachable(config: EndpointConfig) -> str | None:
+    """probe 的预检替身：恒「不可达」。"""
+    return "无法连接到端点：连接超时——请检查 base_url 与网络。"
+
+
+def _build_empty(config: EndpointConfig) -> object:
+    return _EmptyStreamCompleter()
+
+
+class _EmptyStreamCompleter:
+    def stream(self, messages: tuple[Message, ...]) -> object:
+        return iter(())
+
+
 def test_probe_endpoint_reports_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """探测成功返回 ok=True 与固定成功文案；探测参数覆盖调用方 request（快进快出）。"""
+    """探测成功返回 ok=True 与固定成功文案；传输参数被探测值覆盖、生成参数原样保留。"""
 
     class _FakeCompleter:
-        def complete(self, messages: tuple[Message, ...]) -> str:
-            return "pong"
+        def stream(self, messages: tuple[Message, ...]) -> object:
+            yield StreamDelta(kind="content", text="p")
 
     captured: list[EndpointConfig] = []
 
@@ -397,21 +419,35 @@ def test_probe_endpoint_reports_success(
         return _FakeCompleter()
 
     monkeypatch.setattr("dataset_factory.llm.client.build_completer", fake_build)
+    monkeypatch.setattr("dataset_factory.llm.client._precheck_models", _precheck_pass)
 
     result = probe_endpoint(
         EndpointConfig(
             base_url="https://api.example.com/v1",
             model="test-model",
             api_key=SecretValue("test-key"),
-            request=RequestConfig(timeout_seconds=120.0, max_retries=2, max_tokens=999),
+            request=RequestConfig(
+                timeout_seconds=120.0,
+                max_retries=2,
+                max_tokens=999,
+                temperature=0.5,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            ),
         )
     )
 
     assert result.ok is True
     assert "连接成功" in result.message
     assert result.latency_ms >= 0.0
+    # 传输参数：探测专用（快进快出）。
     assert captured[0].request.max_tokens == 1
     assert captured[0].request.max_retries == 0
+    assert captured[0].request.timeout_seconds == 8.0
+    # 生成参数：保留调用方传入值——探测发出的就是正式请求的形状。
+    assert captured[0].request.temperature == 0.5
+    assert captured[0].request.extra_body == {
+        "chat_template_kwargs": {"enable_thinking": False}
+    }
 
 
 def test_probe_endpoint_translates_llm_failure(
@@ -420,13 +456,15 @@ def test_probe_endpoint_translates_llm_failure(
     """探测失败不抛异常：LLMError 的分类消息进 ProbeResult.message，ok=False。"""
 
     class _FailingCompleter:
-        def complete(self, messages: tuple[Message, ...]) -> str:
+        def stream(self, messages: tuple[Message, ...]) -> object:
+            # 建流即失败（非生成器：异常从 stream() 调用本身抛出，等价于 SDK 建流报错）。
             raise LLMAuthError("鉴权失败：API 密钥无效或过期。")
 
     def fake_build(config: EndpointConfig) -> _FailingCompleter:
         return _FailingCompleter()
 
     monkeypatch.setattr("dataset_factory.llm.client.build_completer", fake_build)
+    monkeypatch.setattr("dataset_factory.llm.client._precheck_models", _precheck_pass)
 
     result = probe_endpoint(
         EndpointConfig(
@@ -439,3 +477,77 @@ def test_probe_endpoint_translates_llm_failure(
     assert result.ok is False
     assert "鉴权失败" in result.message
     assert result.latency_ms >= 0.0
+
+
+def test_probe_endpoint_precheck_failure_short_circuits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """第一档预检失败（不可达 / 密钥被拒）→ 直接返回原因，不再发第二枪。"""
+
+    def unexpected_build(config: EndpointConfig) -> object:
+        raise AssertionError("预检失败后不应再装配客户端")
+
+    monkeypatch.setattr("dataset_factory.llm.client.build_completer", unexpected_build)
+    monkeypatch.setattr(
+        "dataset_factory.llm.client._precheck_models", _precheck_unreachable
+    )
+
+    result = probe_endpoint(
+        EndpointConfig(
+            base_url="https://unreachable.example.com/v1",
+            model="test-model",
+            api_key=SecretValue("test-key"),
+        )
+    )
+
+    assert result.ok is False
+    assert "无法连接" in result.message
+
+
+def test_probe_endpoint_empty_stream_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """流式响应结束却没有任何增量 → 判失败并指向模型名（第二档的现形价值）。"""
+    monkeypatch.setattr("dataset_factory.llm.client.build_completer", _build_empty)
+    monkeypatch.setattr("dataset_factory.llm.client._precheck_models", _precheck_pass)
+
+    result = probe_endpoint(
+        EndpointConfig(
+            base_url="https://api.example.com/v1",
+            model="wrong-model",
+            api_key=SecretValue("test-key"),
+        )
+    )
+
+    assert result.ok is False
+    assert "模型名" in result.message
+
+
+def test_probe_endpoint_precheck_rejects_bad_key() -> None:
+    """预检对 401/403 给出「密钥被拒」的定向原因；其余状态码不算失败（交第二档）。"""
+    handler = httpx.MockTransport(
+        lambda request: httpx.Response(401, json={"error": "bad key"})
+    )
+
+    failure = client_module._precheck_models(  # pyright: ignore[reportPrivateUsage]
+        EndpointConfig(
+            base_url="https://api.example.com/v1",
+            model="test-model",
+            api_key=SecretValue("bad-key"),
+        ),
+        transport=handler,
+    )
+
+    assert failure is not None
+    assert "密钥被拒绝" in failure
+
+    ok_case = client_module._precheck_models(  # pyright: ignore[reportPrivateUsage]
+        EndpointConfig(
+            base_url="https://api.example.com/v1",
+            model="test-model",
+            api_key=SecretValue("test-key"),
+        ),
+        transport=httpx.MockTransport(lambda request: httpx.Response(404)),
+    )
+
+    assert ok_case is None  # 端点不提供 /models 也不算失败

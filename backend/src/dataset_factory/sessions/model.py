@@ -44,6 +44,10 @@ class MessageEvent:
         attachment: 可选，会话 attachments/ 下的图片文件名；无图时为 None。
         reasoning: 可选，本条助手消息的思考过程全文（流式打标落盘；只供界面回看，
             不参与下一轮请求装配——回放历史仍只取 text）。
+        partial: 可选，True = 断流 / 报错时落盘的**半截**助手回复（B5，2026-09-21 审计：
+            失败轮的已有产出也留痕，会话历史不整条消失）；正常终稿恒 False 且不写盘。
+        elapsed_ms: 可选，本轮整轮耗时毫秒（V7：恢复历史后仍能看到「一轮多久」）。
+        reasoning_ms: 可选，本轮思考耗时毫秒（V7：思考开关的仪表盘）。
     """
 
     ts: str
@@ -51,6 +55,9 @@ class MessageEvent:
     text: str
     attachment: str | None
     reasoning: str | None = None
+    partial: bool = False
+    elapsed_ms: int | None = None
+    reasoning_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -105,6 +112,12 @@ def dump_event(event: SessionEvent) -> str:
             obj["attachment"] = event.attachment
         if event.reasoning is not None:
             obj["reasoning"] = event.reasoning
+        if event.partial:
+            obj["partial"] = True
+        if event.elapsed_ms is not None:
+            obj["elapsed_ms"] = event.elapsed_ms
+        if event.reasoning_ms is not None:
+            obj["reasoning_ms"] = event.reasoning_ms
     elif isinstance(event, EnvelopeEvent):
         obj = {
             "type": _TYPE_ENVELOPE,
@@ -151,11 +164,14 @@ def parse_event(obj: object) -> SessionEvent:
 
 
 def _parse_message(data: dict[str, object], ts: str) -> MessageEvent:
-    """从映射里取 message 事件的字段并校验；缺 role / text 或 attachment / reasoning 非串即报错。"""
+    """从映射里取 message 事件的字段并校验；缺 role / text 或可选字段类型不对即报错。"""
     role = data.get("role")
     text = data.get("text")
     attachment = data.get("attachment")
     reasoning = data.get("reasoning")
+    partial = data.get("partial", False)
+    elapsed_ms = data.get("elapsed_ms")
+    reasoning_ms = data.get("reasoning_ms")
     if not isinstance(role, str):
         raise SessionEventError("message 事件缺少合法的 role（字符串）字段。")
     if not isinstance(text, str):
@@ -164,8 +180,21 @@ def _parse_message(data: dict[str, object], ts: str) -> MessageEvent:
         raise SessionEventError("message 事件的 attachment 字段应是字符串或不出现。")
     if reasoning is not None and not isinstance(reasoning, str):
         raise SessionEventError("message 事件的 reasoning 字段应是字符串或不出现。")
+    if not isinstance(partial, bool):
+        raise SessionEventError("message 事件的 partial 字段应是布尔或不出现。")
+    if elapsed_ms is not None and not isinstance(elapsed_ms, int):
+        raise SessionEventError("message 事件的 elapsed_ms 字段应是整数或不出现。")
+    if reasoning_ms is not None and not isinstance(reasoning_ms, int):
+        raise SessionEventError("message 事件的 reasoning_ms 字段应是整数或不出现。")
     return MessageEvent(
-        ts=ts, role=role, text=text, attachment=attachment, reasoning=reasoning
+        ts=ts,
+        role=role,
+        text=text,
+        attachment=attachment,
+        reasoning=reasoning,
+        partial=partial,
+        elapsed_ms=elapsed_ms,
+        reasoning_ms=reasoning_ms,
     )
 
 

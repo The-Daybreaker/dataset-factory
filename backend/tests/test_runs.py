@@ -19,7 +19,12 @@ import openai
 import pytest
 from filelock import FileLock
 
-from dataset_factory.llm import OpenAIChatClient, SecretValue, create_config
+from dataset_factory.llm import (
+    OpenAIChatClient,
+    SecretValue,
+    StreamDelta,
+    create_config,
+)
 from dataset_factory.llm.errors import (
     LLMBadRequestError,
     LLMConnectionError,
@@ -60,8 +65,12 @@ class ScriptedCompleter:
         return action
 
     def stream(self, messages: object) -> object:
-        """批量跑批不该走流式路径——走到即测试失败。"""
-        raise AssertionError("批量跑批不走流式路径")
+        """批量跑批走流式路径（A2，2026-09-21 起）：按脚本逐段产出正文增量。"""
+        self.calls += 1
+        action = self._script.pop(0) if self._script else "打标结果"
+        if isinstance(action, Exception):
+            raise action
+        return iter([StreamDelta(kind="content", text=action)])
 
 
 @pytest.fixture
@@ -613,14 +622,14 @@ def test_stop_interrupts_between_items_and_keeps_finished_part(batch: Path) -> N
     completer = ScriptedCompleter()
     runner = _runner(batch, completer)
 
-    original_complete = completer.complete
+    original_stream = completer.stream
 
-    def _complete_and_stop(messages: object) -> str:
-        text = original_complete(messages)
+    def _stream_and_stop(messages: object) -> object:
+        deltas = original_stream(messages)
         runner.stop()  # 第一条打完即请求停止
-        return text
+        return deltas
 
-    completer.complete = _complete_and_stop  # type: ignore[method-assign]
+    completer.stream = _stream_and_stop  # type: ignore[method-assign]
 
     report = runner.run()
 
@@ -635,7 +644,7 @@ def test_stop_interrupts_between_items_and_keeps_finished_part(batch: Path) -> N
 
 
 def test_events_emitted_in_order_with_payloads(batch: Path) -> None:
-    """事件序：run-started → (item started / succeeded)×N → run-finished，载荷可序列化。"""
+    """事件序：run-started → (item started / delta / succeeded)×N → run-finished（A2 含增量帧）。"""
     received: list[RunEvent] = []
     runner = _runner(batch, ScriptedCompleter())
     runner.subscribe(received.append)
@@ -646,8 +655,10 @@ def test_events_emitted_in_order_with_payloads(batch: Path) -> None:
     assert kinds == [
         "run-started",
         "item-updated",
+        "item-delta",
         "item-updated",
         "item-updated",
+        "item-delta",
         "item-updated",
         "run-finished",
     ]
@@ -662,6 +673,12 @@ def test_events_emitted_in_order_with_payloads(batch: Path) -> None:
         "message": None,
     }
     assert received[2].to_payload() == {
+        "item": "cat_001",
+        "batch": 1,
+        "delta": "content",
+        "text": "打标结果",
+    }
+    assert received[3].to_payload() == {
         "item": "cat_001",
         "batch": 1,
         "status": "succeeded",

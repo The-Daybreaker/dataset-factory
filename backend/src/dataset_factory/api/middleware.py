@@ -29,6 +29,38 @@ REQUEST_ID_HEADER = "X-Request-ID"
 # 任意客户端内容等于敞开日志伪造与响应头注入（换行、控制字符尤其危险）。
 _ADOPTED_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
+# 客户端断流的识别文本：Windows 的 WinError 10053/10054、uvicorn 的 connection lost、
+# Starlette / uvicorn 各自的 ClientDisconnect 文案都收进来（B12，2026-09-21）。
+_CLIENT_DISCONNECT_TEXTS = (
+    "10053",  # 软件中止了一个已建立的连接（本机主动掐）
+    "10054",  # 远端主机强迫关闭了连接
+    "connection lost",
+    "client disconnected",
+    "client disconnected during",
+)
+
+
+def _is_client_disconnect(exc: BaseException) -> bool:
+    """判断一个异常是否「客户端主动断开」（沿异常链逐层看类名与消息）。
+
+    断流在不同服务器与平台上的表现不一：Starlette 的 ``ClientDisconnect``、uvicorn 的
+    ``ClientDisconnected``、httpx/asyncio 的 ``ConnectionResetError`` / ``BrokenResource``、
+    Windows 原生的 WinError 10053/10054——按类名与文本双层匹配，宁可多认（它们都该
+    降级）不可漏认（漏认就退回 ERROR 刷屏）。
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        name = type(current).__name__.lower()
+        if "disconnect" in name or "connectionreset" in name:
+            return True
+        text = str(current).lower()
+        if any(pattern in text for pattern in _CLIENT_DISCONNECT_TEXTS):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
 
 class RequestLogMiddleware(BaseHTTPMiddleware):
     """记录 `method / path / status / 耗时`，并把 request id 写进响应头。"""
@@ -62,7 +94,20 @@ class RequestLogMiddleware(BaseHTTPMiddleware):
         start = perf_counter()
         try:
             response = await call_next(request)
-        except Exception:
+        except Exception as exc:
+            if _is_client_disconnect(exc):
+                # 客户端主动断开（关页面 / 前端超时掐流）不是服务器异常：降级为 info
+                # 记一行、不刷 ERROR 堆栈——B12（2026-09-21 审计）：断流噪音曾把真
+                # 错误淹掉。499 是业界约定的「客户端关闭请求」，仅此一次收口用。
+                logger.info(
+                    "HTTP %s %s 客户端断开连接（%.0fms）——非错误，不记堆栈",
+                    request.method,
+                    request.url.path,
+                    ms_since(start),
+                )
+                return Response(status_code=499)
+            # 入口层边界的唯一宽捕获（错误分级见类 docstring）；记完整堆栈后收口成 500，
+            # 不 re-raise——交给 Starlette 兜底反而丢掉响应头里的 request id。
             # 入口层边界的唯一宽捕获（错误分级见类 docstring）；记完整堆栈后收口成 500，
             # 不 re-raise——交给 Starlette 兜底反而丢掉响应头里的 request id。
             logger.exception(

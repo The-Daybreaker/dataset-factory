@@ -9,7 +9,7 @@ from collections.abc import Generator
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from ..labeling import LabelingEngine, SessionSnapshot, StreamFinished, StreamStarted
 from ..llm import (
@@ -19,7 +19,7 @@ from ..llm import (
     build_completer,
     read_config,
 )
-from ..sessions import latest_session_id
+from ..sessions import attachment_path, latest_session_id
 from .schemas import (
     ErrorDetail,
     HistoryMessageView,
@@ -213,7 +213,31 @@ def _snapshot_response(snapshot: SessionSnapshot) -> SessionSnapshotResponse:
                 text=item.text,
                 attachment=item.attachment,
                 reasoning=item.reasoning,
+                partial=item.partial,
+                elapsed_ms=item.elapsed_ms,
+                reasoning_ms=item.reasoning_ms,
             )
             for item in snapshot.messages
         ],
+    )
+
+
+@router.get(
+    "/sessions/{session_id}/attachments/{name}",
+    response_class=FileResponse,
+    responses={
+        404: {"model": ErrorDetail, "description": "会话或附件不存在"},
+        400: {"model": ErrorDetail, "description": "附件名非法"},
+    },
+)
+def session_attachment(session_id: str, name: str) -> FileResponse:
+    """取会话附件的文件字节（B5，2026-09-21 审计）：历史缩略图不再依赖内存 dataURL。
+
+    安全口径与素材域的 /asset 同源：附件名经 sessions 域的单段安全名校验（路径穿越
+    与非法字符在数据域拦下），只读、越界即 404。
+    """
+    return FileResponse(
+        attachment_path(session_id, name),
+        filename=name,
+        content_disposition_type="inline",
     )

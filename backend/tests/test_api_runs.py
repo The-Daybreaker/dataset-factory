@@ -24,7 +24,7 @@ from starlette.types import Message, Scope
 
 from dataset_factory.api import create_app
 from dataset_factory.api import routes_runs as routes_runs_module
-from dataset_factory.llm import create_config
+from dataset_factory.llm import StreamDelta, create_config
 from dataset_factory.prompts import Prompt, save_prompt
 from dataset_factory.runs import (
     BatchRunner,
@@ -57,8 +57,12 @@ class GatedCompleter:
         return "打标结果"
 
     def stream(self, messages: object) -> Iterator[object]:
-        """批量跑批不该走流式路径——走到即测试失败。"""
-        raise AssertionError("批量跑批不走流式路径")
+        """等本轮的门（若有）后按流式产出固定文本（A2：跑批走流式）。"""
+        self.calls += 1
+        gate = self._gates.pop(0) if self._gates else None
+        if gate is not None:
+            gate.wait(timeout=_WAIT_TIMEOUT)
+        return iter([StreamDelta(kind="content", text="打标结果")])
 
 
 @pytest.fixture
@@ -99,15 +103,15 @@ def _gates(count: int) -> list[threading.Event]:
     return [threading.Event() for _ in range(count)]
 
 
-async def _wait_current_404(http: httpx.AsyncClient, wid: str) -> None:
-    """轮询 current 端点直到 404（运行结束、注册表清空；带超时护栏）。"""
+async def _wait_current_idle(http: httpx.AsyncClient, wid: str) -> None:
+    """轮询 current 端点直到回到 200 + null（运行结束、注册表清空；带超时护栏）。"""
     deadline = time.monotonic() + _WAIT_TIMEOUT
     while time.monotonic() < deadline:
         response = await http.get(f"/api/workdirs/{wid}/batches/s1/runs/current")
-        if response.status_code == 404:
+        if response.status_code == 200 and response.json() is None:
             return
         await asyncio.sleep(0.01)
-    pytest.fail("current 未在超时内回到 404")
+    pytest.fail("current 未在超时内回到空闲（200 + null）")
 
 
 def test_start_run_accepts_and_completes(
@@ -131,7 +135,7 @@ def test_start_run_accepts_and_completes(
             run_id = accepted.json()["run_id"]
             assert accepted.headers["retry-after"]
 
-            await _wait_current_404(http, wid)
+            await _wait_current_idle(http, wid)
             assert (workdir / "s1__cat_001.txt").exists()
             assert (workdir / "s1__cat_002.txt").exists()
             run_json = (workdir / ".dsf" / "runs" / run_id / "run.json").read_text(
@@ -201,7 +205,7 @@ def test_start_failure_remains_readable_and_allows_next_run(
             assert (await http.get(f"{url}/stream")).status_code == 404
             lock.release()
             assert (await http.post(url, json={"mode": "full"})).status_code == 202
-            await _wait_current_404(http, wid)
+            await _wait_current_idle(http, wid)
 
     try:
         asyncio.run(scenario())
@@ -232,7 +236,7 @@ def test_explicit_retry_api_preserves_other_retry_entries(
                 json={"mode": "retry", "items": ["cat_001"]},
             )
             assert response.status_code == 202
-            await _wait_current_404(http, wid)
+            await _wait_current_idle(http, wid)
 
     asyncio.run(scenario())
 
@@ -306,7 +310,7 @@ def test_start_run_rejects_second_run_with_409(
             assert body["occupier"]["batch"] == "s1"
 
             gates[0].set()  # 放行让第一个运行收尾
-            await _wait_current_404(http, wid)  # 等收尾，不留后台线程与 pytest 抢目录
+            await _wait_current_idle(http, wid)  # 等收尾，不留后台线程与 pytest 抢目录
 
     asyncio.run(scenario())
 
@@ -345,7 +349,11 @@ def test_current_run_rejects_wrong_batch(
             await asyncio.sleep(0.2)  # 等运行持锁、卡到门口
 
             other = f"/api/workdirs/{wid}/batches/s2/runs"
-            assert (await http.get(f"{other}/current")).status_code == 404
+            other_current = await http.get(f"{other}/current")
+            # current 的「空闲」语义是 200 + null（404 只留给 wid / 批次不存在）；
+            # 跨批次校验的要点是**不能命中 s1 的运行**——null 即「s2 没有自己的运行」。
+            assert other_current.status_code == 200
+            assert other_current.json() is None
             assert (await http.post(f"{other}/stop")).status_code == 404
             stream = await http.get(f"{other}/stream")
             assert stream.status_code == 404
@@ -357,7 +365,7 @@ def test_current_run_rejects_wrong_batch(
             assert own.json()["batch"] == 1
 
             gates[0].set()
-            await _wait_current_404(http, wid)
+            await _wait_current_idle(http, wid)
 
     asyncio.run(scenario())
 
@@ -397,7 +405,7 @@ def test_hide_batch_interrupts_running_run(
             assert hidden.status_code == 200  # 停用成功且已请求中断运行
             gates[0].set()  # 放行当前条目：完成后边界检查停止信号 → interrupted
 
-            await _wait_current_404(http, wid)
+            await _wait_current_idle(http, wid)
             assert (workdir / "s1__cat_001.txt").exists()
             assert not (workdir / "s1__cat_002.txt").exists()
 
@@ -409,7 +417,7 @@ def test_current_run_reports_progress_then_404(
     batch_env: tuple[Path, str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """运行中 current 返回进度快照；结束后注册表清空 → 404（run-not-active）。"""
+    """运行中 current 返回进度快照；结束后注册表清空 → 200 + null（空闲语义）。"""
     _workdir, wid = batch_env
     gates = _gates(2)
     _inject_fake_completer(monkeypatch, GatedCompleter(gates))
@@ -465,10 +473,11 @@ def test_current_run_reports_progress_then_404(
             gates[0].set()
             gates[1].set()
 
-            await _wait_current_404(http, wid)
+            await _wait_current_idle(http, wid)
             missing = await http.get(url)
-            assert missing.status_code == 404
-            assert missing.json()["type"] == "run-not-active"
+            # 空闲语义 = 200 + null（L3，2026-09-21 起）；404 只留给 wid / 批次不存在。
+            assert missing.status_code == 200
+            assert missing.json() is None
 
     asyncio.run(scenario())
 
@@ -513,7 +522,7 @@ def test_stop_run_interrupts(
             assert stopped.status_code == 204
             gates[0].set()  # 放行第一条：完成后边界检查停止信号 → interrupted
 
-            await _wait_current_404(http, wid)
+            await _wait_current_idle(http, wid)
             assert (workdir / "s1__cat_001.txt").exists()
             assert not (workdir / "s1__cat_002.txt").exists()
 
