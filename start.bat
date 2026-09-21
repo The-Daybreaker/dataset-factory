@@ -31,8 +31,20 @@ if errorlevel 1 (
 )
 popd
 
+rem B14（2026-09-21 审计）：源码比 dist 新就重建——否则「明明改了前端却看到旧界面」。
+rem 判据：frontend\src 下最新文件的修改时间 > dist\index.html 的修改时间 = 需要重建。
+set "NEED_BUILD=0"
 if not exist "frontend\dist\index.html" (
+    set "NEED_BUILD=1"
     echo [start] 未找到前端构建产物，开始构建（需要 Node.js / npm）...
+) else (
+    powershell -NoProfile -Command "$newest = (Get-ChildItem -Recurse 'frontend\src' -File | Measure-Object LastWriteTime -Maximum).Maximum; $dist = (Get-Item 'frontend\dist\index.html').LastWriteTime; exit ([int]($null -ne $newest -and $newest -gt $dist))" >nul 2>nul
+    if not errorlevel 1 (
+        set "NEED_BUILD=1"
+        echo [start] 检测到前端源码比构建产物新，重新构建（需要 Node.js / npm）...
+    )
+)
+if "%NEED_BUILD%"=="1" (
     pushd frontend
     call npm install
     if errorlevel 1 (
