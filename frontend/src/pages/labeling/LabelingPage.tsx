@@ -20,6 +20,12 @@ import { Button } from "../../components/ui/button";
 import { Tip } from "../../components/ui/tooltip";
 import { usePersistedState } from "../../hooks/use-persisted-state";
 import { formatBytesAuto } from "../../lib/format";
+import {
+  LABELING_QUERY_KEY,
+  LABELING_SELECTED_ITEM_KEY,
+  readStoredString,
+  writeStoredJson,
+} from "../../lib/ui-storage";
 import { BatchConfiguration } from "./BatchConfiguration";
 import { BatchOverview } from "./BatchOverview";
 import {
@@ -228,10 +234,9 @@ export function LabelingPage({
   onOpenWorkbench?: () => void;
 } = {}) {
   const [workdirs, setWorkdirs] = useState<WorkdirBatches[]>([]);
-  // 本页是条件渲染 + lazy 加载（App 层切页即整页卸载重挂）：selection 与左列的折叠 /
-  // 组内展开状态都靠 localStorage 活过卸载——否则每次从别的页回来都被重置成默认选择，
-  // 用户看到「策略名错位、状态徽标丢失」。恢复的旧批次若已被删 / 停用，由
-  // loadWorkdirBatches 完成后的既有校验回退默认选择，无需新增分支。
+  // selection 与左列的折叠 / 组内展开状态落 localStorage：三期起页面用 Activity
+  // 保活（切页不再卸载），这里的职责是活过「整页刷新 / 应用重启」。恢复的旧批次
+  // 若已被删 / 停用，由 loadWorkdirBatches 完成后的既有校验回退默认选择，无需新增分支。
   const [selection, setSelection] = usePersistedState<BatchSelection | null>(
     "dsf-labeling-selection",
     null,
@@ -244,6 +249,11 @@ export function LabelingPage({
     id: string;
   } | null>(null);
   const [selectedItem, setSelectedItem] = useState<string | null>(null);
+  // 选中素材跨重启恢复（三期）：只在启动后的首次装载生效一次，换批次 / 换条目的
+  // 既有清空语义不变。素材 id 批次内有效，恢复时对装载结果校验，对不上就放弃。
+  const restoredItemRef = useRef<string | null>(
+    readStoredString(LABELING_SELECTED_ITEM_KEY),
+  );
   const followRun = useRef(true);
   const [foldedItem, setFoldedItem] = useState<string | null>(null);
   /** 预览舞台 HUD 的媒体元信息：从加载后的媒体元素读取，无需额外接口。 */
@@ -272,7 +282,8 @@ export function LabelingPage({
   const [settingsWid, setSettingsWid] = useState<string | null>(null);
   const [newStrategyWid, setNewStrategyWid] = useState<string | null>(null);
   const [directoriesRevision, setDirectoriesRevision] = useState(0);
-  const [query, setQuery] = useState("");
+  // 左列筛选词跨重启持久化（三期）：搜索到一半重启，回来还在。
+  const [query, setQuery] = usePersistedState<string>(LABELING_QUERY_KEY, "");
   const [collapsed, setCollapsed] = usePersistedState<ReadonlySet<string>>(
     "dsf-labeling-collapsed",
     new Set(),
@@ -368,7 +379,15 @@ export function LabelingPage({
     void api
       .listItems(selection.workdirId, selection.batchId)
       .then((view) => {
-        if (current) setItems(itemsFromGroups(view.groups));
+        if (!current) return;
+        const loaded = itemsFromGroups(view.groups);
+        setItems(loaded);
+        // 跨重启恢复选中素材：只在首次装载生效一次；对装载结果校验不过就放弃。
+        const wanted = restoredItemRef.current;
+        if (wanted !== null) {
+          restoredItemRef.current = null;
+          if (loaded.has(wanted)) setSelectedItem(wanted);
+        }
       })
       .catch((reason: unknown) => {
         if (current) setError(errorMessage(reason));
@@ -415,6 +434,10 @@ export function LabelingPage({
     followRun.current = false;
     setSelectedItem(itemKey(row));
   }, []);
+  // 选中素材落盘（跨重启恢复的写入侧）：换批次 / 换条目的清空也如实记 null。
+  useEffect(() => {
+    writeStoredJson(LABELING_SELECTED_ITEM_KEY, selectedItem);
+  }, [selectedItem]);
   const recover = useCallback((row: ItemRow) => {
     setRecovery({
       names: [row.name],

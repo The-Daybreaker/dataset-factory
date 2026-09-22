@@ -38,6 +38,9 @@ const SERVICE_UP = {
 describe("App 外壳", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // 三期起外壳会持久化上次页面 / 侧栏折叠：清档防止用例间的「重启」串状态
+    // （上一个用例切到设置页，下一个用例就会「重启直达设置页」）。
+    localStorage.clear();
     apiMock.listStrategies.mockResolvedValue([]);
     apiMock.listPrompts.mockResolvedValue([]);
     apiMock.listSkills.mockResolvedValue([]);
@@ -206,5 +209,69 @@ describe("App 外壳", () => {
     release();
     expect(await screen.findByText("切页不丢终稿")).toBeInTheDocument();
     expect(screen.queryByText("生成中…")).not.toBeInTheDocument();
+  });
+});
+
+describe("页面保活与外壳持久化（三期）", () => {
+  beforeEach(() => {
+    // 外壳与页面往 localStorage 写记忆键：先清档防用例间串状态。
+    localStorage.clear();
+    apiMock.listWorkdirs.mockResolvedValue([]);
+    // 钉空提示词库：clearAllMocks 不清实现，前一个 describe 的 listPrompts 桩会漏过来。
+    apiMock.listPrompts.mockResolvedValue([]);
+  });
+
+  it("切页不再卸载：未访问页不挂载，访问过的页隐藏常驻", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(screen.getByTestId("page-prompts")).toBeInTheDocument();
+    expect(screen.queryByTestId("page-settings")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("page-labeling")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "打标" }));
+    await screen.findByTestId("page-labeling");
+    await user.click(screen.getByRole("button", { name: "策略" }));
+
+    // 保活的直接证据：切走后打标页仍在 DOM（display:none 隐藏），策略页不重挂。
+    expect(screen.getByTestId("page-labeling")).toBeInTheDocument();
+    expect(screen.getByTestId("page-prompts")).toBeInTheDocument();
+  });
+
+  it("编辑器草稿跨切页保留（保活语义下不再重置）", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.type(screen.getByLabelText("名称"), "我的草稿");
+    await user.click(screen.getByRole("button", { name: "打标" }));
+    await screen.findByTestId("page-labeling");
+    await user.click(screen.getByRole("button", { name: "策略" }));
+
+    expect(
+      within(screen.getByTestId("page-prompts")).getByLabelText("名称"),
+    ).toHaveValue("我的草稿");
+  });
+
+  it("外壳持久化：导航与侧栏动作落盘，重挂（模拟重启）直达上次页面", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "打标" }));
+    await screen.findByTestId("page-labeling");
+    await user.click(screen.getByRole("button", { name: "收起侧栏" }));
+    expect(localStorage.getItem("dsf-shell-page")).toBe(JSON.stringify("labeling"));
+    expect(localStorage.getItem("dsf-shell-sidebar-collapsed")).toBe("true");
+    unmount();
+
+    // 重挂 = 模拟重启：从 localStorage 恢复到打标页，侧栏保持折叠。
+    render(<App />);
+    await screen.findByTestId("page-labeling");
+    expect(screen.getByRole("button", { name: "打标" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(
+      within(screen.getByTestId("sidebar")).queryByText("Dataset Factory"),
+    ).not.toBeInTheDocument();
   });
 });

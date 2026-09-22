@@ -1,15 +1,17 @@
 /**
  * 对话会话域：会话状态与流式发送逻辑住在 App 层的 Provider 里。
  *
- * 为什么要上提：三个页面是条件渲染，切到打标页会把 PromptWorkbench 整个卸载——
- * 会话状态原先跟着组件走，进行中的流式回调把结果写进已卸载组件的 state（React 18
- * 静默 no-op），回复就此在界面上消失（后端其实已落盘，刷新才看得见）。
- * 状态住到 App 层后，切页对流式生成完全无感：回到工作台时，流式面板与消息
- * 原样接上，onDone 的终稿照常落位。
+ * 历史上三个页面是条件渲染，切到打标页会把 PromptWorkbench 整个卸载——会话状态
+ * 跟着组件走时，进行中的流式回调把结果写进已卸载组件的 state（静默 no-op），回复
+ * 就此在界面上消失（后端其实已落盘，刷新才看得见）。状态住到 App 层后，切页对流式
+ * 生成完全无感。三期起页面改 Activity 保活、切页不再卸载，这层上提依然保留：会话
+ * 的生命周期本来就比任何一页长，层级与「哪页在显示」解耦，不依赖保活细节。
  *
  * 会话恢复（latestSession）也在这里做——Provider 随 App 挂载，整个页面生命周期
  * 只恢复一次；组件侧只负责「把恢复出的基础提示词应用到编辑器」（restoreState /
- * restoredPromptName 就是给组件的接口）。
+ * restoredPromptName 就是给组件的接口）。恢复前会对照策略页的编辑器镜像
+ * （dsf-workbench-editor）：镜像指向与快照不同的提示词 = 用户上次切了选择没发，
+ * 切选择在产品语义里会清空会话，重启不复活它（保真到离开时刻）。
  */
 import {
   createContext,
@@ -22,7 +24,14 @@ import {
   useState,
 } from "react";
 import { ApiError, api } from "../../api";
+import { usePersistedState } from "../../hooks/use-persisted-state";
 import { reportError } from "../../lib/feedback";
+import {
+  CHAT_INSTRUCTION_KEY,
+  isWorkbenchEditorMirror,
+  readStoredJson,
+  WORKBENCH_EDITOR_KEY,
+} from "../../lib/ui-storage";
 import type { ChatMessage, PendingMedia } from "./types";
 
 /** 抽视频首帧与时长（L26/V8）：本地 <video> 解码，失败静默降级为图标（不打扰发送）。 */
@@ -113,7 +122,12 @@ export function ChatSessionProvider({
 }): ReactElement {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [instruction, setInstructionState] = useState("");
+  // 输入框草稿跨重启持久化（三期）：没发出去的话重启还在；发送 / 新会话 / 清空
+  // 会把它归零，落盘值随之清掉。附件不持久化（体积与隐私不划算，显式不做）。
+  const [instruction, setInstructionState] = usePersistedState<string>(
+    CHAT_INSTRUCTION_KEY,
+    "",
+  );
   const [media, setMedia] = useState<PendingMedia | null>(null);
   const [sending, setSending] = useState(false);
   const [waitSeconds, setWaitSeconds] = useState(0);
@@ -142,6 +156,19 @@ export function ChatSessionProvider({
       try {
         const snapshot = await api.latestSession();
         if (cancelled || userActedRef.current > 0) {
+          return;
+        }
+        // 与编辑器镜像对账：镜像指向另一个提示词 = 用户切了选择没发——切选择
+        // （下拉选提示词 / 应用策略）在产品语义里会清空会话，重启不复活它。
+        // 新建草稿（selectedName 为空）不清会话，不算分叉；镜像与快照一致
+        // （或没有镜像 / 没有快照）才照旧恢复。
+        const mirror = readStoredJson(WORKBENCH_EDITOR_KEY, isWorkbenchEditorMirror);
+        if (
+          mirror !== null &&
+          mirror.selectedName !== "" &&
+          mirror.selectedName !== (snapshot.settings.prompt_name ?? "")
+        ) {
+          setRestoreState("empty");
           return;
         }
         setRestoredPromptName(snapshot.settings.prompt_name);
@@ -341,7 +368,7 @@ export function ChatSessionProvider({
         }
       })();
     },
-    [instruction, media, sessionId, skillNames],
+    [instruction, media, sessionId, skillNames, setInstructionState],
   );
 
   /** 停止生成（N1④）：中止当前请求；已收到的部分按半截消息留痕。 */
@@ -360,7 +387,7 @@ export function ChatSessionProvider({
     setInstructionState("");
     setMedia(null);
     setSkillNames([]);
-  }, []);
+  }, [setInstructionState]);
 
   const clearConversation = useCallback((): void => {
     userActedRef.current += 1;
@@ -384,10 +411,13 @@ export function ChatSessionProvider({
     setSkillNames(names);
   }, []);
 
-  const setInstruction = useCallback((value: string): void => {
-    userActedRef.current += 1;
-    setInstructionState(value);
-  }, []);
+  const setInstruction = useCallback(
+    (value: string): void => {
+      userActedRef.current += 1;
+      setInstructionState(value);
+    },
+    [setInstructionState],
+  );
 
   const pickMedia = useCallback((file: File | undefined): void => {
     if (file === undefined) {

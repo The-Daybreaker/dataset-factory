@@ -107,8 +107,10 @@ test.describe("设置页", () => {
     await page.goto("/");
     await page.getByRole("button", { name: "设置", exact: true }).click();
 
-    await expect(page.getByLabel("Base URL")).toHaveValue(/fake-llm\/v1$/);
-    await expect(page.getByText(/已配置 · 来源：credentials 文件/)).toBeVisible();
-    await expect(page.getByLabel("名称", { exact: true })).toBeDisabled();
+    // 三期页面保活：策略页常驻 DOM（隐藏），「名称」标签两页都有——按页容器取作用域。
+    const settings = page.getByTestId("page-settings");
+    await expect(settings.getByLabel("Base URL")).toHaveValue(/fake-llm\/v1$/);
+    await expect(settings.getByText(/已配置 · 来源：credentials 文件/)).toBeVisible();
+    await expect(settings.getByLabel("名称", { exact: true })).toBeDisabled();
   });
 });

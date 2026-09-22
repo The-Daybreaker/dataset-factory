@@ -24,6 +24,7 @@ export const ISOLATED_SPEC_FILES = [
   "rebuild-imports.spec.ts",
   "strategy-workbench.spec.ts",
   "skill-editing.spec.ts",
+  "page-state.spec.ts",
 ] as const;
 
 /** 名单里的文件名联合类型：名字写错在类型检查阶段就会红。 */

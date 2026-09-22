@@ -76,6 +76,8 @@ const SKILLS: SkillInfo[] = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // 三期起编辑器状态会镜像落盘、外壳状态会持久化：清档防止用例间的「重启」串状态。
+  localStorage.clear();
   apiMock.listStrategies.mockResolvedValue([]);
   apiMock.listPrompts.mockResolvedValue(PROMPTS);
   apiMock.listSkills.mockResolvedValue(SKILLS);
@@ -647,5 +649,157 @@ describe("PromptWorkbench", () => {
     release();
     expect(await screen.findByText("切页回归终稿")).toBeInTheDocument();
     expect(screen.queryByText("生成中…")).not.toBeInTheDocument();
+  });
+});
+
+describe("编辑器镜像与恢复优先级（三期）", () => {
+  beforeEach(() => {
+    // 镜像键被既有用例的编辑器动作写过：每个用例先清档，防串状态。
+    localStorage.clear();
+  });
+
+  const MIRROR_BASE = {
+    draftDescription: "",
+    savedPrompt: { name: "simple", description: "", body: "" },
+  };
+
+  it("镜像优先：编辑器恢复为离开时刻的样子，且不经服务端取全文", async () => {
+    localStorage.setItem(
+      "dsf-workbench-editor",
+      JSON.stringify({
+        ...MIRROR_BASE,
+        selectedName: "simple",
+        draftName: "simple",
+        draftBody: "镜像正文",
+        isNewDraft: false,
+      }),
+    );
+    renderWorkbench();
+
+    await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("simple"));
+    expect(screen.getByLabelText("描述")).toHaveValue("");
+    expect(screen.getByLabelText("正文（Markdown）")).toHaveValue("镜像正文");
+    // 镜像 = 编辑器原样，内容以镜像为准，不额外请求全文。
+    expect(apiMock.getPrompt).not.toHaveBeenCalled();
+  });
+
+  it("镜像与快照分叉：编辑器听镜像，被切走的会话不复活", async () => {
+    localStorage.setItem(
+      "dsf-workbench-editor",
+      JSON.stringify({
+        ...MIRROR_BASE,
+        selectedName: "simple",
+        draftName: "simple",
+        draftBody: "镜像正文",
+        isNewDraft: false,
+      }),
+    );
+    apiMock.latestSession.mockResolvedValue({
+      session_id: "s-old",
+      settings: { prompt_name: "h3-video", skill_names: [] },
+      messages: [{ role: "user", text: "旧会话消息", attachment: null }],
+    });
+    renderWorkbench();
+
+    await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("simple"));
+    expect(screen.getByLabelText("正文（Markdown）")).toHaveValue("镜像正文");
+    // 快照的会话属于 h3-video 的时代，用户切走选择时界面已按产品语义清空——
+    // 重启不把它复活（保真到离开时刻）。
+    expect(screen.queryByText("旧会话消息")).not.toBeInTheDocument();
+  });
+
+  it("镜像与快照一致：编辑器恢复镜像草稿，会话照常恢复", async () => {
+    localStorage.setItem(
+      "dsf-workbench-editor",
+      JSON.stringify({
+        selectedName: "h3-video",
+        draftName: "h3-video",
+        draftDescription: "视频打标",
+        draftBody: "未保存的草稿正文",
+        savedPrompt: {
+          name: "h3-video",
+          description: "视频打标",
+          body: "你是打标助手。",
+        },
+        isNewDraft: false,
+      }),
+    );
+    apiMock.latestSession.mockResolvedValue({
+      session_id: "s-old",
+      settings: { prompt_name: "h3-video", skill_names: [] },
+      messages: [{ role: "user", text: "历史消息", attachment: null }],
+    });
+    renderWorkbench();
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("正文（Markdown）")).toHaveValue("未保存的草稿正文"),
+    );
+    expect(await screen.findByText("历史消息")).toBeInTheDocument();
+  });
+
+  it("镜像指向已删除的提示词：编辑器回退默认链，会话不恢复", async () => {
+    localStorage.setItem(
+      "dsf-workbench-editor",
+      JSON.stringify({
+        ...MIRROR_BASE,
+        selectedName: "ghost",
+        draftName: "ghost",
+        draftBody: "幽灵正文",
+        isNewDraft: false,
+      }),
+    );
+    apiMock.latestSession.mockResolvedValue({
+      session_id: "s-old",
+      settings: { prompt_name: "h3-video", skill_names: [] },
+      messages: [{ role: "user", text: "旧会话消息", attachment: null }],
+    });
+    renderWorkbench();
+
+    // 快照被镜像分叉规则拦下 → 无「恢复的提示词」，回落「自动选中首条」。
+    await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("h3-video"));
+    expect(screen.getByLabelText("正文（Markdown）")).toHaveValue("你是打标助手。");
+    expect(screen.queryByText("旧会话消息")).not.toBeInTheDocument();
+  });
+
+  it("空白编辑器里直接打的草稿也恢复（无选中但有草稿内容）", async () => {
+    localStorage.setItem(
+      "dsf-workbench-editor",
+      JSON.stringify({
+        selectedName: "",
+        draftName: "凭空起的名",
+        draftDescription: "",
+        draftBody: "写了一半的正文",
+        savedPrompt: { name: "", description: "", body: "" },
+        isNewDraft: false,
+      }),
+    );
+    renderWorkbench();
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("名称")).toHaveValue("凭空起的名"),
+    );
+    expect(screen.getByLabelText("正文（Markdown）")).toHaveValue("写了一半的正文");
+  });
+
+  it("新建草稿态的镜像恢复：保持新建态而不是回落首条", async () => {
+    localStorage.setItem(
+      "dsf-workbench-editor",
+      JSON.stringify({
+        selectedName: "",
+        draftName: "",
+        draftDescription: "",
+        draftBody: "",
+        savedPrompt: { name: "", description: "", body: "" },
+        isNewDraft: true,
+      }),
+    );
+    renderWorkbench();
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("正文（Markdown）")).toHaveValue(""),
+    );
+    expect(screen.getByLabelText("名称")).toHaveValue("");
+    // 交互让位已发生：后端快照 / 首条都不应覆盖新建态。
+    expect(apiMock.getPrompt).not.toHaveBeenCalled();
   });
 });

@@ -37,9 +37,15 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "../../components/ui/tooltip";
+import { usePersistedState } from "../../hooks/use-persisted-state";
 import type { Feedback } from "../../lib/feedback";
 import { reportError } from "../../lib/feedback";
 import { formatBytes } from "../../lib/format";
+import {
+  isWorkbenchEditorMirror,
+  WORKBENCH_EDITOR_KEY,
+  type WorkbenchEditorMirror,
+} from "../../lib/ui-storage";
 import { BodyEditor } from "./BodyEditor";
 import { useChatSession } from "./chat-session";
 import { EndpointSwitcher } from "./EndpointSwitcher";
@@ -115,6 +121,19 @@ export function PromptWorkbench({
   const interactionRef = useRef(0);
   const activatingEndpointRef = useRef(false);
 
+  // 编辑器状态镜像（三期「跨重启」）：选中提示词 + 未保存草稿合一键，恢复即视为
+  // 最近一次用户意图。列表装载时按镜像分流（见下方启动分流）；镜像指向已删除的
+  // 提示词则整段让位给快照 / 首条的既有链。
+  const [editorMirror, setEditorMirror] =
+    usePersistedState<WorkbenchEditorMirror | null>(
+      WORKBENCH_EDITOR_KEY,
+      null,
+      isWorkbenchEditorMirror,
+    );
+  // 装载期读镜像走 ref：镜像状态随编辑变化高频更新，不能进装载 effect 的依赖。
+  const editorMirrorRef = useRef<WorkbenchEditorMirror | null>(editorMirror);
+  editorMirrorRef.current = editorMirror;
+
   /** 失败分流：连接类失败改弹浮层（不占界面位置），后端返回的业务错误仍就地展示。 */
   const failEditor = useCallback((err: unknown): void => {
     const text = reportError(err);
@@ -164,7 +183,39 @@ export function PromptWorkbench({
     [],
   );
 
-  // 进页拉提示词 / skill / 端点配置三份列表；没有会话恢复时默认选中首条（原型稿激活态）。
+  // 编辑器状态镜像落盘（跨重启恢复「上次正在编辑什么」）：编辑器的每个动作都会
+  // 走到这里，等价于持续镜像。空态不写——防止启动挂载的一帧空白把既有镜像冲掉
+  // （镜像恢复发生在列表装载，若中途崩溃也最多退回「无镜像」的旧行为）。
+  useEffect(() => {
+    if (
+      !isNewDraft &&
+      selectedName === "" &&
+      draftName === "" &&
+      draftDescription === "" &&
+      draftBody === ""
+    ) {
+      return;
+    }
+    setEditorMirror({
+      selectedName,
+      draftName,
+      draftDescription,
+      draftBody,
+      savedPrompt,
+      isNewDraft,
+    });
+  }, [
+    isNewDraft,
+    selectedName,
+    draftName,
+    draftDescription,
+    draftBody,
+    savedPrompt,
+    setEditorMirror,
+  ]);
+
+  // 进页拉提示词 / skill / 端点配置三份列表；随后按优先级决定编辑器初始内容
+  // （三期恢复优先级：编辑器镜像 > 会话快照 > 首条，ADR 2026-09-22）。
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -181,6 +232,43 @@ export function PromptWorkbench({
         setSkills(skillList);
         setEndpoints(endpointList);
         setActiveModel(endpointList.find((item) => item.is_active)?.model ?? "");
+        const mirror = editorMirrorRef.current;
+        // 镜像优先（三期恢复优先级：编辑器镜像 > 会话快照 > 首条）：镜像 = 用户离开
+        // 时刻的编辑器原样（选中 + 未保存草稿），比快照（最后一次发送时的配置）更新。
+        // 恢复镜像视为用户动过手（interactionRef 递增），后端快照的提示词应用自此
+        // 让位；会话内容的恢复由会话域按镜像与快照是否分叉另行对账（chat-session.tsx）。
+        // 仅当镜像选中的提示词已从库里消失（外部删除）时，才整段让位给既有链。
+        if (mirror?.isNewDraft) {
+          restoredPromptRef.current = true;
+          interactionRef.current += 1;
+          setSelectedName("");
+          setDraftName("");
+          setDraftDescription("");
+          setDraftBody("");
+          setSavedPrompt({ name: "", description: "", body: "" });
+          setIsNewDraft(true);
+          setEditorFeedback(null);
+          return;
+        }
+        if (mirror !== null) {
+          const exists =
+            mirror.selectedName !== "" &&
+            promptList.some((entry) => entry.name === mirror.selectedName);
+          // 「无选中但有草稿」同样恢复：空白编辑器里直接打字的草稿也是用户意图。
+          if (exists || mirror.selectedName === "") {
+            restoredPromptRef.current = true;
+            interactionRef.current += 1;
+            setSelectedName(mirror.selectedName);
+            setDraftName(mirror.draftName);
+            setDraftDescription(mirror.draftDescription);
+            setDraftBody(mirror.draftBody);
+            setSavedPrompt(mirror.savedPrompt);
+            setIsNewDraft(false);
+            setEditorFeedback(null);
+            return;
+          }
+          // 镜像指向已删除的提示词：整段让位，走下方快照 / 首条的既有链。
+        }
         const first = promptList[0];
         if (
           !restoredPromptRef.current &&
@@ -202,6 +290,7 @@ export function PromptWorkbench({
 
   // 会话恢复带回了基础提示词：带回了就不做「自动选中首条」（恢复优先于默认），
   // 也不覆盖用户已选 / 已编辑的草稿——用户动过手（interactionRef > 0）就让位。
+  // 编辑器镜像恢复也会递增 interactionRef，所以「镜像存在」时这里自然让位。
   useEffect(() => {
     if (restoreState !== "restored") return;
     restoredPromptRef.current = true;

@@ -672,3 +672,57 @@ describe("切页记忆与状态章", () => {
     expect(await screen.findByRole("button", { name: "n4.jpg" })).toBeInTheDocument();
   });
 });
+
+describe("跨重启恢复（三期）", () => {
+  it("选中的素材跨重启恢复：启动后首次装载按 localStorage 回选", async () => {
+    localStorage.setItem(
+      "dsf-labeling-selection",
+      JSON.stringify({ workdirId: "one", batchId: "s1" }),
+    );
+    localStorage.setItem("dsf-labeling-selected-item", JSON.stringify("first"));
+    render(<LabelingPage />);
+
+    const row = await screen.findByRole("button", { name: "first.jpg" });
+    await waitFor(() => expect(row).toHaveAttribute("aria-pressed", "true"));
+  });
+
+  it("恢复的素材 id 已不在装载结果里：静默放弃，不误选", async () => {
+    localStorage.setItem(
+      "dsf-labeling-selection",
+      JSON.stringify({ workdirId: "one", batchId: "s1" }),
+    );
+    localStorage.setItem("dsf-labeling-selected-item", JSON.stringify("ghost"));
+    render(<LabelingPage />);
+
+    const row = await screen.findByRole("button", { name: "first.jpg" });
+    await waitFor(() => expect(row).toHaveAttribute("aria-pressed", "false"));
+  });
+
+  it("左列筛选词跨重启恢复：搜索框带出上次的词", async () => {
+    localStorage.setItem(
+      "dsf-labeling-selection",
+      JSON.stringify({ workdirId: "one", batchId: "s1" }),
+    );
+    localStorage.setItem("dsf-labeling-query", JSON.stringify("first"));
+    render(<LabelingPage />);
+
+    await screen.findByRole("button", { name: "first.jpg" });
+    expect(screen.getByPlaceholderText("搜索条目")).toHaveValue("first");
+  });
+
+  it("未持久化时保持旧默认：无 selection 存档即回默认选择", async () => {
+    localStorage.setItem(
+      "dsf-labeling-selection",
+      JSON.stringify({ workdirId: "one", batchId: "s1" }),
+    );
+    render(<LabelingPage />);
+
+    await screen.findByRole("button", { name: "first.jpg" });
+    expect(screen.getByPlaceholderText("搜索条目")).toHaveValue("");
+    // 首个目录的首个批次（既有默认链），选中素材为空。
+    expect(screen.queryByRole("button", { name: "first.jpg" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+});
