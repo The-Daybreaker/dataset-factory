@@ -28,6 +28,7 @@ from dataset_factory.llm import (
     list_configs,
     read_config_data,
     read_stored_api_key,
+    rename_config,
     set_active_config,
     update_config,
 )
@@ -336,6 +337,115 @@ def test_update_with_new_key_overwrites_credentials(temp_data_root: Path) -> Non
     stored = read_stored_api_key("prod")
     assert stored is not None
     assert stored.reveal() == "sk-brand-new"
+
+
+def test_enable_thinking_persists_as_first_class_param(temp_data_root: Path) -> None:
+    """思考开关是一等参数：布尔值进 config.json、读侧带出（B 方案，2026-09-23）。"""
+    name = create_config(
+        "think-off",
+        base_url="https://sf.example.com/v1",
+        model="Qwen/Qwen3.5-4B",
+        api_key=None,
+        request_params={"enable_thinking": False},
+    )
+
+    saved = json.loads(
+        (temp_data_root / "endpoints" / name / "config.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert saved["enable_thinking"] is False
+    infos = {info.name: info for info in list_configs()}
+    assert infos[name].request_params == {"enable_thinking": False}
+
+
+def test_enable_thinking_bad_type_raises(temp_data_root: Path) -> None:
+    """思考开关非布尔：创建即拒绝（布尔闸门与数值闸门同一道边界）。"""
+    with pytest.raises(ConfigError, match="enable_thinking 应是 true / false"):
+        create_config(
+            "bad",
+            base_url="https://bad.example.com/v1",
+            model="m-bad",
+            api_key=None,
+            request_params={"enable_thinking": "false"},
+        )
+
+
+def test_rename_moves_dir_credentials_and_active_pointer(temp_data_root: Path) -> None:
+    """改名：目录整体重命名（凭据参数随走）、active 指针同步跟随、旧目录消失。"""
+    _create("old-name", key="sk-moves-with-dir")
+
+    returned = rename_config("old-name", "new-name")
+
+    assert returned == "new-name"
+    assert not (temp_data_root / "endpoints" / "old-name").exists()
+    new_dir = temp_data_root / "endpoints" / "new-name"
+    assert (new_dir / "config.json").is_file()
+    assert (new_dir / "credentials").is_file()
+    assert active_config_name() == "new-name"
+    stored = read_stored_api_key("new-name")
+    assert stored is not None
+    assert stored.reveal() == "sk-moves-with-dir"
+    assert has_config("old-name") is False
+
+
+def test_rename_non_active_does_not_touch_pointer(temp_data_root: Path) -> None:
+    """改名的不是当前使用配置：active 指针保持原样。"""
+    _create("active-one")
+    _create("bystander")
+
+    rename_config("bystander", "renamed-b")
+
+    assert active_config_name() == "active-one"
+    assert has_config("renamed-b") is True
+
+
+def test_rename_to_existing_name_conflicts(temp_data_root: Path) -> None:
+    """改成既有配置名（不区分大小写）→ ConfigConflictError（接口层据此映射 409）。"""
+    _create("alpha")
+    _create("beta")
+
+    with pytest.raises(ConfigConflictError, match="已存在配置"):
+        rename_config("alpha", "BETA")
+
+
+def test_rename_case_only_allowed(temp_data_root: Path) -> None:
+    """纯大小写改名（aaa → AAA）：唯一重名是自身，放行且 Windows 语义下合法。
+
+    目录条目名（list_configs）断言改名真实生效——大小写不敏感文件系统上旧名路径
+    仍能解析到同一目录，用 has_config 判不出「目录条目已换名」。
+    """
+    _create("aaa")
+
+    returned = rename_config("aaa", "AAA")
+
+    assert returned == "AAA"
+    assert [info.name for info in list_configs()] == ["AAA"]
+    assert has_config("AAA") is True
+
+
+def test_rename_same_name_is_noop(temp_data_root: Path) -> None:
+    """新名与旧名完全相同：不动盘、不报错（调用方未过滤时兜底）。"""
+    _create("stable")
+
+    assert rename_config("stable", "stable") == "stable"
+    assert active_config_name() == "stable"
+
+
+def test_rename_missing_old_config_raises(temp_data_root: Path) -> None:
+    """旧配置不存在 → ConfigNotFoundError。"""
+    with pytest.raises(ConfigNotFoundError, match="不存在"):
+        rename_config("ghost", "anywhere")
+
+
+def test_rename_to_invalid_new_name_raises(temp_data_root: Path) -> None:
+    """新名含文件名保留字符 → ConfigError（名称闸门先于任何落盘动作）。"""
+    _create("source")
+
+    with pytest.raises(ConfigError, match="不合法"):
+        rename_config("source", "bad:name")
+
+    assert has_config("source") is True
 
 
 def test_update_missing_config_raises(temp_data_root: Path) -> None:

@@ -276,10 +276,18 @@ class EndpointRequestParams(BaseModel):
     max_tokens: int | None = Field(
         default=None, ge=1, description="输出 token 上限；null = 不传"
     )
+    enable_thinking: bool | None = Field(
+        default=None,
+        description="思考模式开关（一等参数）；null = 不传（跟随模型默认）。"
+        "按 SiliconFlow / DashScope 官方口径进请求体顶层；"
+        "仅部分模型支持（Qwen3.x / DeepSeek-V3.2+ / GLM / Kimi 等），"
+        "不支持的模型会收到端点 400",
+    )
     extra_body: dict[str, object] | None = Field(
         default=None,
         description="端点专有参数透传（openai SDK 的 extra_body，原样转发不解释）；"
-        "null = 不传。厂商文档里的专有参数（如开关思考模式）放这里",
+        "null = 不传。厂商文档里的专有参数（如 reasoning_effort）放这里；"
+        "与 enable_thinking 同名时一等参数优先",
     )
     timeout_seconds: float | None = Field(
         default=None, gt=0, description="单次请求超时秒数；null = 用内置默认（120）"
@@ -364,6 +372,10 @@ class EndpointUpdateRequest(BaseModel):
     model: str
     api_key: str | None = None
     api_format: str = SUPPORTED_API_FORMAT
+    new_name: str | None = Field(
+        default=None,
+        description="新配置名（改名）；null = 不改名。字段更新成功后再执行改名",
+    )
     request_params: EndpointRequestParams | None = Field(
         default=None,
         description="请求参数（生成 + 传输）；缺省 = 沿用已有参数不变；"

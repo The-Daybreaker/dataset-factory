@@ -46,19 +46,23 @@ SUPPORTED_API_FORMAT = "openai-chat-completions"
 # config.json 里「请求参数」相关的键：更新端点字段且未显式给参数时原样保留，避免把
 # 用户手配的生成 / 传输参数抹掉（参数语义见 config.RequestConfig）。键集是封闭的——
 # 不在这份清单里的键（如厂商文档里的其他参数）不属于本工具的参数面，经界面/API 写入时
-# 会被丢弃（要透传厂商专有参数请放 extra_body）。
+# 会被丢弃（要透传厂商专有参数请放 extra_body）。enable_thinking 是一等参数（B 方案，
+# 2026-09-23）：思考模式开关，布尔值，SiliconFlow / DashScope 等国内端点的官方顶层
+# 口径——其余厂商形状（reasoning_effort / thinking 等）仍走 extra_body 逃生门。
 _REQUEST_PARAM_KEYS = (
     "temperature",
     "top_p",
     "max_tokens",
+    "enable_thinking",
     "extra_body",
     "timeout_seconds",
     "max_retries",
 )
 
-# 数值型参数键（浮点 / 整数分别校验）；其余参数键是 extra_body（对象型）。
+# 数值型参数键（浮点 / 整数分别校验）；extra_body 是透传对象；enable_thinking 是布尔。
 _FLOAT_PARAM_KEYS = ("temperature", "top_p", "timeout_seconds")
 _INT_PARAM_KEYS = ("max_tokens", "max_retries")
+_BOOL_PARAM_KEYS = ("enable_thinking",)
 
 _MAX_NAME_LENGTH = 64
 # Windows 文件名保留字符。数据根可能随 DATASET_FACTORY_HOME 搬到任何平台，统一按最严
@@ -112,6 +116,11 @@ def validated_request_params(
         elif key in _INT_PARAM_KEYS:
             if isinstance(raw, bool) or not isinstance(raw, int):
                 raise ConfigError(f"端点配置「{name}」的 {key} 应是整数；请检查内容。")
+        elif key in _BOOL_PARAM_KEYS:
+            if not isinstance(raw, bool):
+                raise ConfigError(
+                    f"端点配置「{name}」的 {key} 应是 true / false；请检查内容。"
+                )
         else:  # extra_body：透传对象
             if not isinstance(raw, dict):
                 raise ConfigError(
@@ -447,6 +456,44 @@ def update_config(
         preserve_params_from=dir_path if params_payload is None else None,
     )
     return clean
+
+
+def rename_config(old_name: str, new_name: str) -> str:
+    """把一套已存在配置改名为 new_name（目录重命名；凭据与参数随目录整体走）。
+
+    当前使用指针指向旧名时同步改写——否则改名后 active 悬空，下一次请求即报
+    「当前使用的端点配置不存在」。纯大小写改名（``aaa`` → ``AAA``）放行：唯一重名
+    就是它自己，Windows 目录名不区分大小写、原地改名合法。
+
+    Args:
+        old_name: 现有配置名（必须已存在）。
+        new_name: 新配置名（校验合法性 + 不区分大小写的重名检查）。
+
+    Returns:
+        规整后的新配置名（去首尾空白）。
+
+    Raises:
+        ConfigNotFoundError: 旧配置不存在。
+        ConfigConflictError: 新名与既有配置重名（不区分大小写）。
+        ConfigError: 任一名称不合法 / 目录改名或指针写入失败。
+    """
+    clean_old = validate_config_name(old_name)
+    clean_new = validate_config_name(new_name)
+    dir_path = _require_config_exists(clean_old)
+    if clean_new != clean_old:
+        if clean_new.casefold() != clean_old.casefold():
+            _require_name_available(clean_new)
+        target = _config_dir(clean_new)
+        try:
+            dir_path.rename(target)
+        except OSError as exc:
+            raise ConfigError(
+                f"无法把配置「{clean_old}」改名为「{clean_new}」：{exc.strerror or exc}"
+            ) from exc
+        # 指针在目录改名成功之后写（顺序不可反：先写指针会短暂指向不存在的目录）。
+        if active_config_name() == clean_old:
+            set_active_config(clean_new)
+    return clean_new
 
 
 def delete_config(name: str) -> None:

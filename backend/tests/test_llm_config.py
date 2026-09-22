@@ -63,6 +63,7 @@ def test_read_config_parses_request_params(temp_data_root: Path) -> None:
             "temperature": 0.7,
             "top_p": 0.8,
             "max_tokens": 2048,
+            "enable_thinking": False,
             "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
             "timeout_seconds": 300,
             "max_retries": 1,
@@ -73,6 +74,7 @@ def test_read_config_parses_request_params(temp_data_root: Path) -> None:
 
     assert request.temperature == 0.7
     assert request.top_p == 0.8
+    assert request.enable_thinking is False
     assert request.extra_body == {"chat_template_kwargs": {"enable_thinking": False}}
     assert request.max_tokens == 2048
     assert request.timeout_seconds == 300
@@ -101,6 +103,7 @@ def test_read_config_request_params_default_when_absent(temp_data_root: Path) ->
     [
         ("temperature", "热"),
         ("max_tokens", 1.5),
+        ("enable_thinking", 1),
         ("extra_body", [1, 2]),
         ("timeout_seconds", True),
     ],

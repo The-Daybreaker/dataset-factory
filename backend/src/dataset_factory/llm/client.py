@@ -80,6 +80,21 @@ class Completer(Protocol):
         ...
 
 
+def _effective_extra_body(request: RequestConfig) -> dict[str, object] | None:
+    """组装实际进 SDK 的 extra_body（SDK 会把它的键合并到请求体**顶层**）。
+
+    一等参数 enable_thinking 在这里并入（SiliconFlow / DashScope 官方顶层口径）；与
+    用户手写进 extra_body 的同名键冲突时**一等参数优先**——显式覆盖，不留两处真相。
+    全空返回 None（语义同「不传」，SDK 序列化时跳过）。
+    """
+    extra: dict[str, object] = (
+        dict(request.extra_body) if request.extra_body is not None else {}
+    )
+    if request.enable_thinking is not None:
+        extra["enable_thinking"] = request.enable_thinking
+    return extra or None
+
+
 class OpenAIChatClient:
     """OpenAI 兼容 /v1/chat/completions 的 Completer 实现（非流式 + 流式增量）。"""
 
@@ -126,11 +141,7 @@ class OpenAIChatClient:
                 temperature=_given_or_omit(self._request.temperature),
                 top_p=_given_or_omit(self._request.top_p),
                 max_tokens=_given_or_omit(self._request.max_tokens),
-                extra_body=(
-                    dict(self._request.extra_body)
-                    if self._request.extra_body is not None
-                    else None
-                ),
+                extra_body=_effective_extra_body(self._request),
             )
         except openai.APIError as exc:
             # 第三段边界：模型调用本身。失败也记耗时——「卡了多久才失败」是排查的关键信息；
@@ -173,11 +184,7 @@ class OpenAIChatClient:
                 temperature=_given_or_omit(self._request.temperature),
                 top_p=_given_or_omit(self._request.top_p),
                 max_tokens=_given_or_omit(self._request.max_tokens),
-                extra_body=(
-                    dict(self._request.extra_body)
-                    if self._request.extra_body is not None
-                    else None
-                ),
+                extra_body=_effective_extra_body(self._request),
                 stream=True,
             )
             for chunk in stream:

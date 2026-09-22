@@ -775,6 +775,18 @@
       "EndpointRequestParams": {
         "description": "一套端点配置的请求参数（生成 + 传输），随配置存于其 config.json。\n\n所有键都可缺省：null = 不设该参数（请求时用端点自身默认或工具内置默认）。",
         "properties": {
+          "enable_thinking": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "思考模式开关（一等参数）；null = 不传（跟随模型默认）。按 SiliconFlow / DashScope 官方口径进请求体顶层；仅部分模型支持（Qwen3.x / DeepSeek-V3.2+ / GLM / Kimi 等），不支持的模型会收到端点 400",
+            "title": "Enable Thinking"
+          },
           "extra_body": {
             "anyOf": [
               {
@@ -785,7 +797,7 @@
                 "type": "null"
               }
             ],
-            "description": "端点专有参数透传（openai SDK 的 extra_body，原样转发不解释）；null = 不传。厂商文档里的专有参数（如开关思考模式）放这里",
+            "description": "端点专有参数透传（openai SDK 的 extra_body，原样转发不解释）；null = 不传。厂商文档里的专有参数（如 reasoning_effort）放这里；与 enable_thinking 同名时一等参数优先",
             "title": "Extra Body"
           },
           "max_retries": {
@@ -985,6 +997,18 @@
           "model": {
             "title": "Model",
             "type": "string"
+          },
+          "new_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "新配置名（改名）；null = 不改名。字段更新成功后再执行改名",
+            "title": "New Name"
           },
           "request_params": {
             "anyOf": [
@@ -3605,7 +3629,7 @@
         ]
       },
       "put": {
-        "description": "更新一套配置的端点字段；api_key 缺省沿用已存密钥、参数块缺省沿用已有参数。",
+        "description": "更新一套配置的端点字段；api_key 缺省沿用已存密钥、参数块缺省沿用已有参数。\n\n带 ``new_name`` 时改名字段更新成功之后执行——参数校验失败时名字不动，报错不会\n引用一个不存在的新名字。",
         "operationId": "update_api_endpoints__name__put",
         "parameters": [
           {
@@ -3647,7 +3671,7 @@
                 }
               }
             },
-            "description": "字段为空 / API 格式暂未支持"
+            "description": "字段为空 / API 格式暂未支持 / 新名称不合法"
           },
           "404": {
             "content": {
@@ -3658,6 +3682,16 @@
               }
             },
             "description": "配置不存在"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "新名称与既有配置重名（不区分大小写）"
           },
           "422": {
             "content": {

@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import socket
 import struct
@@ -148,6 +149,109 @@ def test_live_text_round(live_system_client: tuple[httpx.Client, Path]) -> None:
     )
     assert response.status_code == 200, response.text
     assert len(response.json()["caption"]) > 0
+
+
+def _sse_round(
+    client: httpx.Client, payload: dict[str, object]
+) -> list[tuple[str, dict[str, str]]]:
+    """打一发 /api/label/stream，按序收集全部 SSE 事件（event, data）。"""
+    events: list[tuple[str, dict[str, str]]] = []
+    with client.stream("POST", "/api/label/stream", json=payload) as response:
+        assert response.status_code == 200, response.read().decode(
+            "utf-8", errors="replace"
+        )
+        event = ""
+        for line in response.iter_lines():
+            if line.startswith("event: "):
+                event = line[len("event: ") :]
+            elif line.startswith("data: "):
+                events.append((event, json.loads(line[len("data: ") :])))
+    return events
+
+
+def test_live_thinking_off_round(live_system_client: tuple[httpx.Client, Path]) -> None:
+    """思考开关一等参数（B 方案）真端点验证：关闭后流式轮零 reasoning 增量。
+
+    配置带 ``enable_thinking: false`` → 一等参数进请求体顶层（SiliconFlow /
+    DashScope 官方口径）→ 模型不思考。弱断言原则的例外说明：这里断言的是
+    「wire 契约被端点尊重」这一结构性事实，不是内容；默认模型（Qwen3.5-4B）
+    在官方支持清单内、思考默认开——若平台改动该默认值，先查端点再动用例。
+    """
+    client, _ = live_system_client
+    updated = client.put(
+        f"/api/endpoints/{DEFAULT_CONFIG_NAME}",
+        json={
+            "base_url": _LIVE_BASE_URL,
+            "model": _LIVE_MODEL,
+            "request_params": {"enable_thinking": False},
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["request_params"]["enable_thinking"] is False
+
+    client.put(
+        "/api/prompts/live-e2e",
+        json={"description": "L3 用", "body": "你是图片打标助手，用一句中文描述图片。"},
+    )
+    events = _sse_round(
+        client,
+        {
+            "session_id": None,
+            "prompt_name": "live-e2e",
+            "skill_names": [],
+            "instruction": "你好，请回复任意一句话验证通道。",
+            "image_base64": None,
+            "image_name": "x.png",
+        },
+    )
+
+    kinds = [event for event, _ in events]
+    assert "start" in kinds, kinds
+    assert "done" in kinds, kinds
+    reasoning = [
+        data
+        for event, data in events
+        if event == "delta" and data.get("kind") == "reasoning"
+    ]
+    assert reasoning == [], f"思考已关闭仍收到 {len(reasoning)} 段 reasoning 增量"
+
+
+def test_live_thinking_default_round(
+    live_system_client: tuple[httpx.Client, Path],
+) -> None:
+    """对照组：不带思考参数时模型默认思考（增量里有 reasoning）——证明开关真的在起作用。
+
+    平台默认行为（Qwen3.5 系思考默认开）属于厂商可改面；本用例红了先核对端点
+    当前默认，再决定是改用例还是记档。
+    """
+    client, _ = live_system_client
+    client.put(
+        "/api/prompts/live-e2e",
+        json={"description": "L3 用", "body": "你是图片打标助手，用一句中文描述图片。"},
+    )
+    events = _sse_round(
+        client,
+        {
+            "session_id": None,
+            "prompt_name": "live-e2e",
+            "skill_names": [],
+            "instruction": "你好，请回复任意一句话验证通道。",
+            "image_base64": None,
+            "image_name": "x.png",
+        },
+    )
+
+    kinds = [event for event, _ in events]
+    assert "start" in kinds, kinds
+    assert "done" in kinds, kinds
+    reasoning = [
+        data
+        for event, data in events
+        if event == "delta" and data.get("kind") == "reasoning"
+    ]
+    assert len(reasoning) > 0, (
+        "默认配置下未收到任何 reasoning 增量——模型默认行为或透传有变"
+    )
 
 
 def test_live_image_round(live_system_client: tuple[httpx.Client, Path]) -> None:

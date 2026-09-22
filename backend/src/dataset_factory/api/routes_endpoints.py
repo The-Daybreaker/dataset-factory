@@ -24,6 +24,7 @@ from ..llm import (
     parse_request_params,
     probe_endpoint,
     read_stored_api_key,
+    rename_config,
     set_active_config,
     update_config,
 )
@@ -78,13 +79,21 @@ def create(request: EndpointCreateRequest) -> EndpointConfigSummary:
     responses={
         400: {
             "model": ErrorDetail,
-            "description": "字段为空 / API 格式暂未支持",
+            "description": "字段为空 / API 格式暂未支持 / 新名称不合法",
         },
         404: {"model": ErrorDetail, "description": "配置不存在"},
+        409: {
+            "model": ErrorDetail,
+            "description": "新名称与既有配置重名（不区分大小写）",
+        },
     },
 )
 def update(name: str, request: EndpointUpdateRequest) -> EndpointConfigSummary:
-    """更新一套配置的端点字段；api_key 缺省沿用已存密钥、参数块缺省沿用已有参数。"""
+    """更新一套配置的端点字段；api_key 缺省沿用已存密钥、参数块缺省沿用已有参数。
+
+    带 ``new_name`` 时改名字段更新成功之后执行——参数校验失败时名字不动，报错不会
+    引用一个不存在的新名字。
+    """
     api_key = _parse_key(request.api_key)
     clean = update_config(
         name=name,
@@ -94,6 +103,8 @@ def update(name: str, request: EndpointUpdateRequest) -> EndpointConfigSummary:
         api_format=request.api_format,
         request_params=_params_payload(request.request_params),
     )
+    if request.new_name is not None:
+        clean = rename_config(clean, request.new_name)
     return _summary_of(clean)
 
 
@@ -184,6 +195,8 @@ def _probe_params_echo(request: EndpointTestRequest) -> dict[str, object]:
             echo["temperature"] = params.temperature
         if params.top_p is not None:
             echo["top_p"] = params.top_p
+        if params.enable_thinking is not None:
+            echo["enable_thinking"] = params.enable_thinking
         if params.extra_body is not None:
             echo["extra_body"] = dict(params.extra_body)
     return echo
@@ -213,6 +226,8 @@ def _params_payload(
         payload["top_p"] = params.top_p
     if params.max_tokens is not None:
         payload["max_tokens"] = params.max_tokens
+    if params.enable_thinking is not None:
+        payload["enable_thinking"] = params.enable_thinking
     if params.extra_body is not None:
         payload["extra_body"] = dict(params.extra_body)
     if params.timeout_seconds is not None:

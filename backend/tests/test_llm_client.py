@@ -103,6 +103,41 @@ def test_complete_omits_unconfigured_params() -> None:
     assert kwargs["extra_body"] is None
 
 
+def test_complete_sends_thinking_toggle_at_top_level() -> None:
+    """一等思考开关进 SDK 的 extra_body（SDK 把它的键合并到请求体顶层——官方口径）。"""
+    sdk = MagicMock()
+    sdk.chat.completions.create.return_value = _response_with_content("ok")
+    client = OpenAIChatClient(
+        cast(openai.OpenAI, sdk),
+        "gpt-test",
+        RequestConfig(enable_thinking=False),
+    )
+
+    client.complete((Message(role="user", parts=(TextPart("hi"),)),))
+
+    kwargs = sdk.chat.completions.create.call_args.kwargs
+    assert kwargs["extra_body"] == {"enable_thinking": False}
+
+
+def test_complete_thinking_toggle_wins_over_extra_body_key() -> None:
+    """一等开关与手写 extra_body 同名键冲突：一等参数显式优先，不留两处真相。"""
+    sdk = MagicMock()
+    sdk.chat.completions.create.return_value = _response_with_content("ok")
+    client = OpenAIChatClient(
+        cast(openai.OpenAI, sdk),
+        "gpt-test",
+        RequestConfig(
+            enable_thinking=False,
+            extra_body={"enable_thinking": True, "top_k": 40},
+        ),
+    )
+
+    client.complete((Message(role="user", parts=(TextPart("hi"),)),))
+
+    kwargs = sdk.chat.completions.create.call_args.kwargs
+    assert kwargs["extra_body"] == {"top_k": 40, "enable_thinking": False}
+
+
 def test_complete_returns_model_text() -> None:
     """正常路径：取出模型返回的首条 choice 文本。"""
     client = _client_returning(_response_with_content("a caption"))

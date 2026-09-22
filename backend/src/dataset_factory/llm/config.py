@@ -53,6 +53,9 @@ class RequestConfig:
         top_p: 核采样阈值；None = 不传。
         max_tokens: **输出** token 上限；None = 不传。注意它管输出侧，不是上下文窗口——
             上下文窗口是模型的固有属性、不可设置。
+        enable_thinking: 思考模式开关（一等参数，B 方案 2026-09-23）；None = 不传
+            （跟随模型默认）。布尔值按 SiliconFlow / DashScope 等国内端点的官方顶层
+            口径进请求体；其余厂商形状（reasoning_effort / thinking 等）走 extra_body。
         extra_body: 端点专有参数，原样放进 SDK 的 extra_body 转发；None = 不传。
         timeout_seconds: 单次 HTTP 调用超时（秒）。推理型模型默认带思考模式时响应明显更慢，
             必要时调大它。
@@ -62,6 +65,7 @@ class RequestConfig:
     temperature: float | None = None
     top_p: float | None = None
     max_tokens: int | None = None
+    enable_thinking: bool | None = None
     extra_body: Mapping[str, object] | None = None
     timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS
     max_retries: int = _DEFAULT_MAX_RETRIES
@@ -190,7 +194,7 @@ def parse_request_params(params: Mapping[str, object]) -> RequestConfig:
 
     Args:
         params: 只含实际存在的参数键的字典（temperature / top_p / max_tokens /
-            extra_body / timeout_seconds / max_retries）。
+            enable_thinking / extra_body / timeout_seconds / max_retries）。
 
     Returns:
         RequestConfig。
@@ -201,10 +205,12 @@ def parse_request_params(params: Mapping[str, object]) -> RequestConfig:
     timeout = params.get("timeout_seconds")
     retries = params.get("max_retries")
     extra_body = params.get("extra_body")
+    thinking = params.get("enable_thinking")
     return RequestConfig(
         temperature=_as_opt_float(params.get("temperature")),
         top_p=_as_opt_float(params.get("top_p")),
         max_tokens=_as_opt_int(params.get("max_tokens")),
+        enable_thinking=cast(bool, thinking) if thinking is not None else None,
         extra_body=cast("dict[str, object] | None", extra_body),
         timeout_seconds=(
             float(cast(float, timeout))

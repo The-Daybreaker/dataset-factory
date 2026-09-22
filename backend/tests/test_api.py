@@ -535,6 +535,7 @@ def test_endpoints_create_and_list(client: TestClient) -> None:
             "temperature": None,
             "top_p": None,
             "max_tokens": None,
+            "enable_thinking": None,
             "extra_body": None,
             "timeout_seconds": None,
             "max_retries": None,
@@ -641,6 +642,72 @@ def test_endpoints_update_missing_404(client: TestClient) -> None:
     assert response.status_code == 404
 
 
+def test_endpoints_rename_via_put(client: TestClient) -> None:
+    """PUT 带 new_name：改名成功返回新名概要，active 指针跟随，旧名消失。"""
+    created = client.post(
+        "/api/endpoints",
+        json={"name": "prod", "base_url": "https://a/v1", "model": "m"},
+    )
+
+    assert created.status_code == 201
+    renamed = client.put(
+        "/api/endpoints/prod",
+        json={"base_url": "https://a/v1", "model": "m", "new_name": "production"},
+    )
+
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "production"
+    assert client.get("/api/config").json()["name"] == "production"
+    names = [item["name"] for item in client.get("/api/endpoints").json()]
+    assert names == ["production"]
+
+
+def test_endpoints_rename_conflict_409(client: TestClient) -> None:
+    """新名与既有配置重名（不区分大小写）：409。
+
+    顺序是「字段更新成功 → 改名」：字段改动已落盘、名字保持旧名（参数校验失败
+    不动名字），前端据此提示换名重试。
+    """
+    client.post(
+        "/api/endpoints",
+        json={"name": "alpha", "base_url": "https://a/v1", "model": "m"},
+    )
+    client.post(
+        "/api/endpoints",
+        json={"name": "beta", "base_url": "https://b/v1", "model": "m"},
+    )
+
+    response = client.put(
+        "/api/endpoints/alpha",
+        json={"base_url": "https://changed/v1", "model": "m", "new_name": "BETA"},
+    )
+
+    assert response.status_code == 409
+    names = {item["name"] for item in client.get("/api/endpoints").json()}
+    assert names == {"alpha", "beta"}
+    alpha = next(
+        item for item in client.get("/api/endpoints").json() if item["name"] == "alpha"
+    )
+    assert alpha["base_url"] == "https://changed/v1"
+
+
+def test_endpoints_rename_new_name_invalid_400(client: TestClient) -> None:
+    """新名含保留字符：400，且原配置不受影响。"""
+    client.post(
+        "/api/endpoints",
+        json={"name": "prod", "base_url": "https://a/v1", "model": "m"},
+    )
+
+    response = client.put(
+        "/api/endpoints/prod",
+        json={"base_url": "https://a/v1", "model": "m", "new_name": "bad:name"},
+    )
+
+    assert response.status_code == 400
+    names = [item["name"] for item in client.get("/api/endpoints").json()]
+    assert names == ["prod"]
+
+
 def test_endpoints_create_with_request_params_echoed(client: TestClient) -> None:
     """创建带请求参数：响应概要回显（未设置的键为 null）；列表同样带出。"""
     response = client.post(
@@ -663,6 +730,7 @@ def test_endpoints_create_with_request_params_echoed(client: TestClient) -> None
         "temperature": 0.7,
         "top_p": None,
         "max_tokens": 1024,
+        "enable_thinking": None,
         "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
         "timeout_seconds": None,
         "max_retries": None,
