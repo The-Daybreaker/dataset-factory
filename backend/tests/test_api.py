@@ -102,6 +102,42 @@ def test_label_with_data_url_image(
     assert list_sessions()[0]  # 会话已建
 
 
+def test_session_attachment_serves_media_content_type(
+    client: TestClient, fake_engine: FakeCompleter
+) -> None:
+    """会话附件端点按扩展名显式给 Content-Type（PRD-0004）：<img>/<video> 内联渲染靠它。"""
+    _save_prompt("h3", "你是打标助手。")
+    data_url = "data:image/png;base64," + base64.b64encode(_PNG_BYTES).decode("ascii")
+    created = client.post(
+        "/api/label",
+        json={
+            "prompt_name": "h3",
+            "instruction": "描述",
+            "image_base64": data_url,
+            "image_name": "cat.png",
+        },
+    )
+    session_id = created.json()["session_id"]
+    video = client.post(
+        "/api/label",
+        json={
+            "session_id": session_id,
+            "instruction": "看视频",
+            "video_base64": "ZmFrZS1tcDQtYnl0ZXM=",
+            "video_name": "clip.mp4",
+        },
+    )
+    assert video.status_code == 200
+
+    image = client.get(f"/api/sessions/{session_id}/attachments/cat.png")
+    assert image.status_code == 200
+    assert image.headers["content-type"] == "image/png"
+    assert "attachment" not in image.headers.get("content-disposition", "")
+    clip = client.get(f"/api/sessions/{session_id}/attachments/clip.mp4")
+    assert clip.status_code == 200
+    assert clip.headers["content-type"] == "video/mp4"
+
+
 def test_label_resume_iterates(client: TestClient, fake_engine: FakeCompleter) -> None:
     """带 session_id 续接：第二轮带历史（迭代改写）。"""
     _save_prompt("h3", "你是打标助手。")

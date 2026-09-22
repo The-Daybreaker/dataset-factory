@@ -322,7 +322,14 @@ export function ChatSessionProvider({
             ? {
                 attachmentDataUrl: sentMedia.dataUrl,
                 ...(sentMedia.kind === "video"
-                  ? { attachmentDurationSec: sentMedia.durationSec }
+                  ? {
+                      attachmentDurationSec: sentMedia.durationSec,
+                      // 封面随消息走（C0）：pickMedia 异步抽帧，若发送时还没抽完，
+                      // 这里就没有 poster——当轮落到图标，属可接受的竞态边界。
+                      ...(sentMedia.posterUrl !== undefined
+                        ? { attachmentPosterUrl: sentMedia.posterUrl }
+                        : {}),
+                    }
                   : {}),
               }
             : {}),

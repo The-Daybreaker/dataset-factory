@@ -204,11 +204,11 @@ describe("App 外壳", () => {
     // 生成中途切到打标页再回工作台：流式面板接上，说明生成没被打断。
     await user.click(screen.getByRole("button", { name: "打标" }));
     await user.click(screen.getByRole("button", { name: "策略" }));
-    expect(screen.getByText("生成中…")).toBeInTheDocument();
+    expect(screen.getByText(/生成中 · 已用时/)).toBeInTheDocument();
 
     release();
     expect(await screen.findByText("切页不丢终稿")).toBeInTheDocument();
-    expect(screen.queryByText("生成中…")).not.toBeInTheDocument();
+    expect(screen.queryByText(/生成中 · 已用时/)).not.toBeInTheDocument();
   });
 });
 

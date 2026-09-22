@@ -11,6 +11,8 @@ import {
 } from "react";
 import type { EndpointConfigSummary, PromptInfo, SkillInfo } from "../../api";
 import { api } from "../../api";
+import type { MediaPreviewTarget } from "../../components/media-lightbox";
+import { MediaLightbox } from "../../components/media-lightbox";
 import { Alert, AlertDescription } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import {
@@ -81,6 +83,8 @@ export function PromptWorkbench({
   const [promptBusy, setPromptBusy] = useState(false);
   const [strategyBusy, setStrategyBusy] = useState(false);
   const [endpointBusy, setEndpointBusy] = useState(false);
+  // 媒体大图预览（PRD-0004 交互 6）：消息流缩略图与待发附件卡的共同出口。
+  const [preview, setPreview] = useState<MediaPreviewTarget | null>(null);
 
   // ---------- 对话列（状态与逻辑住在 App 级会话域：切页卸载本组件不打断流式生成） ----------
   const {
@@ -713,8 +717,10 @@ export function PromptWorkbench({
             <MessageList
               messages={messages}
               streaming={streaming}
+              waitSeconds={waitSeconds}
               copiedId={copiedId}
               onCopy={copyCaption}
+              onPreview={setPreview}
             />
 
             {chatError !== "" && (
@@ -796,12 +802,14 @@ export function PromptWorkbench({
               onClearMedia={clearMedia}
               canSend={canSend}
               sending={sending}
-              waitSeconds={waitSeconds}
               onSend={handleSend}
               onStop={stopGeneration}
+              onPreview={setPreview}
             />
           </section>
         </fieldset>
+
+        <MediaLightbox target={preview} onClose={() => setPreview(null)} />
       </div>
     </TooltipProvider>
   );

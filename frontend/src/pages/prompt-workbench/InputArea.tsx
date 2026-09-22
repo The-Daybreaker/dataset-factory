@@ -1,4 +1,4 @@
-/** 输入区：打标指令文本框 + 附件选择 + 视频抽帧参数 + 发送按钮 + 停止生成。 */
+/** 输入区：打标指令文本框 + 附件选择 + 视频抽帧参数 + 发送/停止一体钮。 */
 import { ArrowUpIcon, FilmIcon, PaperclipIcon, SquareIcon, XIcon } from "lucide-react";
 import {
   type ChangeEvent,
@@ -7,6 +7,7 @@ import {
   type ReactNode,
   useRef,
 } from "react";
+import type { MediaPreviewTarget } from "../../components/media-lightbox";
 import { Button } from "../../components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
 import { formatBytesAuto } from "../../lib/format";
@@ -40,9 +41,9 @@ export function InputArea({
   onClearMedia,
   canSend,
   sending,
-  waitSeconds,
   onSend,
   onStop,
+  onPreview,
   actions,
   selectedSkills,
 }: {
@@ -56,10 +57,11 @@ export function InputArea({
   onClearMedia: () => void;
   canSend: boolean;
   sending: boolean;
-  waitSeconds: number;
   onSend: () => void;
-  /** 停止生成（N1④）：发送期间展示；点击中止本轮，已收到的部分留痕。 */
-  onStop?: () => void;
+  /** 停止生成（PRD-0004 交互 5）：生成中发送钮变形为停止钮，点击走这里。 */
+  onStop: () => void;
+  /** 待发附件卡点击开大图预览（PRD-0004 交互 6）。 */
+  onPreview: (target: MediaPreviewTarget) => void;
   actions?: ReactNode;
   selectedSkills?: ReactNode;
 }): ReactElement {
@@ -69,21 +71,37 @@ export function InputArea({
       <div className="rounded-xl border border-input bg-card p-2 focus-within:border-n-400">
         {media !== null && (
           <div className="mb-1 flex max-w-full items-center gap-2 rounded-lg border border-border bg-muted/40 p-1 text-t-sm">
-            {media.kind === "image" ? (
-              <img
-                className="size-10 shrink-0 rounded-sm object-cover"
-                src={media.dataUrl}
-                alt={`待打标图片 ${media.name}`}
-              />
-            ) : media.posterUrl !== undefined ? (
-              <img
-                className="size-10 shrink-0 rounded-sm object-cover"
-                src={media.posterUrl}
-                alt={`待打标视频 ${media.name}`}
-              />
-            ) : (
-              <FilmIcon className="size-10 shrink-0 rounded-sm bg-muted p-2" />
-            )}
+            <button
+              type="button"
+              aria-label={`预览 ${media.name}`}
+              className="shrink-0 cursor-zoom-in"
+              onClick={() =>
+                onPreview({
+                  url: media.dataUrl,
+                  kind: media.kind,
+                  name: media.name,
+                  ...(media.kind === "video" && media.posterUrl !== undefined
+                    ? { posterUrl: media.posterUrl }
+                    : {}),
+                })
+              }
+            >
+              {media.kind === "image" ? (
+                <img
+                  className="size-10 rounded-sm object-cover"
+                  src={media.dataUrl}
+                  alt={`待打标图片 ${media.name}`}
+                />
+              ) : media.posterUrl !== undefined ? (
+                <img
+                  className="size-10 rounded-sm object-cover"
+                  src={media.posterUrl}
+                  alt={`待打标视频 ${media.name}`}
+                />
+              ) : (
+                <FilmIcon className="size-10 rounded-sm bg-muted p-2" />
+              )}
+            </button>
             <div className="min-w-0 flex-1">
               <div className="truncate">{media.name}</div>
               <div className="text-t-xs text-muted-foreground">
@@ -172,44 +190,26 @@ export function InputArea({
             {actions}
           </div>
           {selectedSkills}
-          {sending && (
-            <>
-              <span role="status" className="text-t-xs text-text-4">
-                等待模型 · {waitSeconds}s
-              </span>
-              {onStop !== undefined && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="xs"
-                  onClick={onStop}
-                  aria-label="停止生成"
-                >
-                  <SquareIcon className="size-3" /> 停止生成
-                </Button>
-              )}
-            </>
-          )}
           <span className="ml-auto shrink-0 text-t-sm text-muted-foreground">
             Enter 发送 · Shift+Enter 换行
           </span>
           <Tooltip>
             <TooltipTrigger asChild>
-              {/* N2（2026-09-21 审计）：主行动用实底档——可发态白图标压浅底的
-                  1.2:1 对比度曾让「能不能发」比禁用态更难分辨。 */}
+              {/* 发送钮即停止钮（PRD-0004 交互 5）：生成中同一颗钮变形为方块停止形态，
+                  点击中止本轮；不再有独立的停止按钮与等待计时文字（状态收敛到消息流）。 */}
               <Button
                 type="button"
                 size="icon"
                 variant="default"
                 className="shrink-0 rounded-full"
-                aria-label="发送"
-                disabled={!canSend}
-                onClick={onSend}
+                aria-label={sending ? "停止生成" : "发送"}
+                disabled={!sending && !canSend}
+                onClick={sending ? onStop : onSend}
               >
-                <ArrowUpIcon />
+                {sending ? <SquareIcon className="size-3.5" /> : <ArrowUpIcon />}
               </Button>
             </TooltipTrigger>
-            <TooltipContent>发送</TooltipContent>
+            <TooltipContent>{sending ? "停止生成" : "发送"}</TooltipContent>
           </Tooltip>
         </div>
       </div>

@@ -27,6 +27,8 @@ export interface ChatMessage extends HistoryMessageView {
   createdAt?: Date;
   /** 本轮发送的附件字节（data URL，仅当轮消息有）。 */
   attachmentDataUrl?: string;
+  /** 本轮视频附件的封面（发送时本地抽帧所得的 data URL，仅当轮消息有）。 */
+  attachmentPosterUrl?: string;
   /** 历史附件的字节地址（B5：直连会话附件端点，刷新后仍能显示）。 */
   attachmentUrl?: string;
   /** 视频附件的时长秒数（仅当轮消息有，时长角标用）。 */

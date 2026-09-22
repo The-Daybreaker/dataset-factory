@@ -480,7 +480,7 @@ describe("PromptWorkbench", () => {
     release();
     // done：终稿上屏、生成中状态消失。
     expect(await screen.findByText("打标结果")).toBeInTheDocument();
-    expect(screen.queryByText("生成中…")).not.toBeInTheDocument();
+    expect(screen.queryByText(/生成中 · 已用时/)).not.toBeInTheDocument();
   });
 
   it("生成结束后思考过程保留在消息上，可展开回看（页面内存态）", async () => {
@@ -500,7 +500,7 @@ describe("PromptWorkbench", () => {
 
     // done 后：终稿上屏，思考区不再随流式面板一起消失，仍可展开回看。
     expect(await screen.findByText("打标结果")).toBeInTheDocument();
-    expect(screen.queryByText("生成中…")).not.toBeInTheDocument();
+    expect(screen.queryByText(/生成中 · 已用时/)).not.toBeInTheDocument();
     expect(screen.getByText("先想想构图")).toBeInTheDocument();
     // 摘要带思考耗时（V7）：用正则匹配前缀。
     expect(screen.getByText(/思考过程/)).toBeInTheDocument();
@@ -645,11 +645,11 @@ describe("PromptWorkbench", () => {
         <Toggle show />
       </ChatSessionProvider>,
     );
-    expect(screen.getByText("生成中…")).toBeInTheDocument();
+    expect(screen.getByText(/生成中 · 已用时/)).toBeInTheDocument();
 
     release();
     expect(await screen.findByText("切页回归终稿")).toBeInTheDocument();
-    expect(screen.queryByText("生成中…")).not.toBeInTheDocument();
+    expect(screen.queryByText(/生成中 · 已用时/)).not.toBeInTheDocument();
   });
 });
 
@@ -871,5 +871,132 @@ describe("策略与会话的一致性（三期 v2）", () => {
     await userEvent.click(await screen.findByRole("button", { name: /^测试策略/ }));
 
     await expect(screen.getByText("策略会话的历史")).toBeInTheDocument();
+  });
+});
+
+describe("对话页交互改版（PRD-0004）", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  const renderIsolated = () =>
+    render(
+      <ChatSessionProvider>
+        <PromptWorkbench onNavigateToSettings={() => {}} />
+      </ChatSessionProvider>,
+    );
+
+  it("生成中发送钮变形为停止钮，点击中止本轮并恢复发送形态", async () => {
+    let released = false;
+    let captured: AbortSignal | undefined;
+    const release = (): void => {
+      released = true;
+    };
+    apiMock.labelStream.mockImplementation(
+      async (_payload, handlers, signal: AbortSignal) => {
+        captured = signal;
+        handlers.onStart("s1");
+        handlers.onDelta("content", "半截");
+        await vi.waitFor(() => expect(released).toBe(true));
+        handlers.onDone("s1", "终稿");
+      },
+    );
+    renderIsolated();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
+    });
+    await userEvent.type(screen.getByLabelText("打标指令"), "打个标");
+    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    // 生成中：同一颗钮变成停止钮；独立的「停止生成」文字按钮与等待计时文字不存在。
+    const stop = await screen.findByRole("button", { name: "停止生成" });
+    expect(screen.queryByText(/等待模型/)).not.toBeInTheDocument();
+
+    await userEvent.click(stop);
+    expect(captured?.aborted).toBe(true);
+
+    // 流结束：按钮恢复发送形态。
+    release();
+    expect(await screen.findByRole("button", { name: "发送" })).toBeInTheDocument();
+    expect(screen.queryByText(/生成中 · 已用时/)).not.toBeInTheDocument();
+  });
+
+  it("仅附件不打字可发送：请求带图、消息流只显示缩略图不出空气泡", async () => {
+    class FakeFileReader {
+      result = "data:image/png;base64,AAAA";
+      onload: ((event: { target: FakeFileReader }) => void) | null = null;
+      readAsDataURL(): void {
+        this.onload?.({ target: this });
+      }
+    }
+    vi.stubGlobal("FileReader", FakeFileReader);
+    apiMock.labelStream.mockImplementation(async (_payload, handlers) => {
+      handlers.onStart("s1");
+      handlers.onDelta("content", "图片描述");
+      handlers.onDone("s1", "图片描述");
+    });
+    renderIsolated();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
+    });
+    fireEvent.change(screen.getByLabelText("附图或视频（最多 1 个）"), {
+      target: {
+        files: [new File(["fake-png"], "cat.png", { type: "image/png" })],
+      },
+    });
+    // 不打字，直接发送（发送钮对「仅附件」可点）。
+    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      expect(apiMock.labelStream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          image_base64: "data:image/png;base64,AAAA",
+          instruction: "",
+        }),
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+    // 用户消息 = 缩略图 alone（user-stack 里没有空气泡 div）。
+    await screen.findByRole("button", { name: "预览 cat.png" });
+    const stack = screen.getByRole("button", { name: "预览 cat.png" })
+      .parentElement as HTMLElement;
+    expect(stack.children).toHaveLength(1);
+    vi.unstubAllGlobals();
+  });
+
+  it("待发附件卡点击开大图预览，Esc 关闭", async () => {
+    class FakeFileReader {
+      result = "data:image/png;base64,BBBB";
+      onload: ((event: { target: FakeFileReader }) => void) | null = null;
+      readAsDataURL(): void {
+        this.onload?.({ target: this });
+      }
+    }
+    vi.stubGlobal("FileReader", FakeFileReader);
+    renderIsolated();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("名称")).toHaveValue("h3-video");
+    });
+    fireEvent.change(screen.getByLabelText("附图或视频（最多 1 个）"), {
+      target: {
+        files: [new File(["fake-png"], "cat.png", { type: "image/png" })],
+      },
+    });
+    await userEvent.click(screen.getByRole("button", { name: "预览 cat.png" }));
+
+    // 预览弹层打开：dialog 内是原件 <img>。
+    const dialog = screen.getByRole("dialog");
+    const image = within(dialog).getByAltText("cat.png") as HTMLImageElement;
+    expect(image.src).toBe("data:image/png;base64,BBBB");
+
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+    vi.unstubAllGlobals();
   });
 });
