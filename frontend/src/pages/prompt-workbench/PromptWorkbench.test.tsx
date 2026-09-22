@@ -828,9 +828,9 @@ describe("策略与会话的一致性（三期 v2）", () => {
         id: "s1",
         name: "测试策略",
         description: "回归用",
-        endpoint: "default",
-        prompt: "h3-video",
-        skills: [],
+        endpoint_id: "e-default-x1",
+        prompt_id: "p-h3-video-01",
+        skill_ids: [],
       }),
     );
     apiMock.listStrategies.mockResolvedValue([WORKBENCH_STRATEGY]);
@@ -856,13 +856,13 @@ describe("策略与会话的一致性（三期 v2）", () => {
         id: "s1",
         name: "测试策略",
         description: "回归用",
-        endpoint: "default",
-        prompt: "h3-video",
-        skills: ["h3-skill"],
+        endpoint_id: "e-default-x1",
+        prompt_id: "p-h3-video-01",
+        skill_ids: ["k-h3-skill-01"],
       }),
     );
     apiMock.listStrategies.mockResolvedValue([
-      { ...WORKBENCH_STRATEGY, skills: ["h3-skill"] },
+      { ...WORKBENCH_STRATEGY, skill_ids: ["k-h3-skill-01"] },
     ]);
     apiMock.latestSession.mockResolvedValue({
       session_id: "s-old",

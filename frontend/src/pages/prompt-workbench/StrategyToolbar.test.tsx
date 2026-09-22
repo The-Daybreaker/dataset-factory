@@ -210,9 +210,9 @@ describe("策略选中的启动恢复与镜像（三期 v2）", () => {
         id: "a1",
         name: "详细描述（未保存改名）",
         description: "训练用",
-        endpoint: "default",
-        prompt: "caption",
-        skills: [],
+        endpoint_id: "e-default-x1",
+        prompt_id: "p-caption-01",
+        skill_ids: [],
       }),
     );
     mount();
@@ -235,9 +235,9 @@ describe("策略选中的启动恢复与镜像（三期 v2）", () => {
         id: "a1",
         name: "",
         description: "",
-        endpoint: "",
-        prompt: "",
-        skills: [],
+        endpoint_id: "",
+        prompt_id: "",
+        skill_ids: [],
       }),
     );
     mount();
@@ -274,9 +274,9 @@ describe("策略选中的启动恢复与镜像（三期 v2）", () => {
         id: "ghost",
         name: "已删除的策略",
         description: "",
-        endpoint: "default",
-        prompt: "caption",
-        skills: [],
+        endpoint_id: "e-default-x1",
+        prompt_id: "p-caption-01",
+        skill_ids: [],
       }),
     );
     mount();
@@ -293,9 +293,9 @@ describe("策略选中的启动恢复与镜像（三期 v2）", () => {
         id: "a1",
         name: "详细描述",
         description: "训练用",
-        endpoint: "default",
-        prompt: "caption",
-        skills: [],
+        endpoint_id: "e-default-x1",
+        prompt_id: "p-caption-01",
+        skill_ids: [],
       }),
     );
     render(
