@@ -1,14 +1,15 @@
 @echo off
-rem Dataset Factory 一键启动：同步依赖 →（需要时）构建前端 → 隐藏拉起本地服务 → 打开浏览器。
-rem 服务以无窗口后台进程运行：关闭服务用浏览器页头的电源按钮，或运行 stop.bat。
-rem 设 DSF_NO_BROWSER=1 跳过自动打开浏览器；设 DSF_PORT 改端口（默认 8000）。
+rem Dataset Factory one-click start: sync deps -> build frontend if needed -> start hidden local server -> open browser.
+rem The server runs as a hidden background process. Stop it via the power button in the web UI header, or run stop.bat.
+rem Set DSF_NO_BROWSER=1 to skip auto-opening the browser; set DSF_PORT to change the port (default 8000).
+rem NOTE: keep every rem line pure ASCII (see the B14 block below for why Chinese rem lines are dangerous here).
 setlocal
 chcp 65001 >nul
 cd /d "%~dp0"
 
 if defined DSF_PORT (set "PORT=%DSF_PORT%") else set "PORT=8000"
 
-rem 解析 uv：先找 PATH，再退到 uv 默认安装位置（%USERPROFILE%\.local\bin）。
+rem Resolve uv: PATH first, then the default install location (%USERPROFILE%\.local\bin).
 where uv >nul 2>nul
 if %errorlevel% equ 0 (
     set "UV=uv"
@@ -31,15 +32,25 @@ if errorlevel 1 (
 )
 popd
 
-rem B14（2026-09-21 审计）：源码比 dist 新就重建——否则「明明改了前端却看到旧界面」。
-rem 判据：frontend\src 下最新文件的修改时间 > dist\index.html 的修改时间 = 需要重建。
+rem B14 (2026-09-21 audit): rebuild when frontend src is newer than dist, else "changed src but see stale UI".
+rem Rule: newest mtime under frontend\src later than dist\index.html mtime = rebuild needed.
+rem The PowerShell below exits 1 = rebuild needed, and we catch it with "if errorlevel 1".
+rem Two hard lessons from real incidents:
+rem   1. A bare greater-than sign inside a rem line is executed as redirection by cmd
+rem      (it once created a file named after the comment text and broke the errorlevel).
+rem   2. Never put Chinese rem comments inside parenthesized blocks: with chcp 65001,
+rem      consecutive multi-byte rem lines can trigger cmd's multibyte parsing bug that
+rem      eats the first characters of the following line (real case: "if errorlevel"
+rem      became "rrorlevel", errorlevel turned 9009, and the rebuild branch fired on
+rem      every single run). Therefore: no comments inside blocks at all, and all
+rem      rem lines stay ASCII. Chinese in echo lines is fine (they run as commands).
 set "NEED_BUILD=0"
 if not exist "frontend\dist\index.html" (
     set "NEED_BUILD=1"
     echo [start] 未找到前端构建产物，开始构建（需要 Node.js / npm）...
 ) else (
     powershell -NoProfile -Command "$newest = (Get-ChildItem -Recurse 'frontend\src' -File | Measure-Object LastWriteTime -Maximum).Maximum; $dist = (Get-Item 'frontend\dist\index.html').LastWriteTime; exit ([int]($null -ne $newest -and $newest -gt $dist))" >nul 2>nul
-    if not errorlevel 1 (
+    if errorlevel 1 (
         set "NEED_BUILD=1"
         echo [start] 检测到前端源码比构建产物新，重新构建（需要 Node.js / npm）...
     )
@@ -63,8 +74,9 @@ if "%NEED_BUILD%"=="1" (
     popd
 )
 
-rem 幂等启动（含身份校验）：端口在监听且监听进程是本工具（命令行含 dsf 特征）= 服务已在
-rem 运行，直接打开界面、不重复起服务；端口被无关程序占用则不启动，给出可操作提示。
+rem Idempotent start with identity check: port listening AND owning process is this tool
+rem (cmdline contains "dsf") means the server is already running, so just open the UI;
+rem if the port is taken by an unrelated program, do not start and show actionable hints.
 powershell -NoProfile -Command "$conn = Get-NetTCPConnection -LocalPort %PORT% -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if (-not $conn) { exit 1 }; $cmdline = (Get-CimInstance Win32_Process -Filter ('ProcessId=' + $conn.OwningProcess)).CommandLine; exit ([int]($cmdline -notmatch 'dsf'))" >nul 2>nul
 if %errorlevel% equ 0 (
     echo [start] 服务已在运行（端口 %PORT%），直接打开界面。
@@ -79,14 +91,16 @@ if %errorlevel% equ 0 (
     exit /b 1
 )
 
-rem 隐藏拉起服务：Start-Process 给新进程独立的隐藏控制台，不影响本窗口；
-rem 日志写数据根 logs\server.log，设置页「服务运行」也可查看。
+rem Start the server hidden: Start-Process gives the new process its own hidden console,
+rem independent of this window. Logs go to the data root logs\server.log, also viewable
+rem on the settings page service panel.
 echo [start] 启动服务（无窗口后台运行）...
 set "SERVE_ARGS=run,dsf,serve"
 if not "%PORT%"=="8000" set "SERVE_ARGS=run,dsf,serve,--port,%PORT%"
 powershell -NoProfile -Command "Start-Process -WindowStyle Hidden -FilePath \"%UV%\" -ArgumentList %SERVE_ARGS% -WorkingDirectory 'backend'"
 
-rem 等端口就绪（最多约 15 秒）：就绪即开浏览器；超时保底报错，不静默消失。
+rem Wait for the port (up to about 15 seconds): open browser once ready; on timeout,
+rem report instead of failing silently.
 set /a TRIES=15
 :waitport
 ping -n 2 127.0.0.1 >nul
