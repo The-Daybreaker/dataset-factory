@@ -1,11 +1,14 @@
 """搬迁复制：完整副本、内容校验、取消与失败时的数据保全。"""
 
+import json
 import threading
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import cast
 
 import pytest
 
+from dataset_factory._fs import atomic_write_text
 from dataset_factory.tasks import TaskCancelledError
 from dataset_factory.workdir import (
     RunOccupiedError,
@@ -13,7 +16,12 @@ from dataset_factory.workdir import (
     WorkdirRegistry,
     WorkdirStore,
 )
-from dataset_factory.workdir.locks import RunLock, StateLock, import_guard
+from dataset_factory.workdir.locks import (
+    RunLock,
+    StateLock,
+    import_guard,
+    maintenance_record,
+)
 from dataset_factory.workdir.relocation import (
     copy_verified,
     relocate_workdir,
@@ -232,6 +240,35 @@ def test_recreated_old_path_can_register_without_accepting_stale_state_writer(
     assert new_entry.id != entry.id
     assert current.read_state() == {"new": True}
     assert current.read_import_records() == []
+
+
+def test_cleaned_record_allows_recreated_path_with_recycled_inode(
+    tmp_path: Path, temp_data_root: Path
+) -> None:
+    """cleaned 后同路径重建可登记：inode 复用使 (dev, ino) 相同也不能误判为旧目录。
+
+    回归锚（CI ubuntu 3 跑 2 红的根因）：搬迁清理会移除旧目录、释放其 inode，
+    紧随的重建在 Linux 文件系统上常复用该 inode——守卫若用 (st_dev, st_ino)
+    当目录身份，重建的新目录会被误判成旧目录而拒绝登记。本用例把记录里的来源
+    身份手工改写成重建目录的真实身份（即复用后的形态），钉死「cleaned 后一律
+    放行」，在任何文件系统上确定性复现修复前的红。
+    """
+    source = tmp_path / "source"
+    source.mkdir()
+    entry = WorkdirRegistry.register(source)
+    destination = tmp_path / "destination"
+    relocate_workdir(entry.id, destination)
+    source.mkdir()
+
+    info = source.stat()
+    record = maintenance_record(source)
+    payload = cast(dict[str, object], json.loads(record.read_text(encoding="utf-8")))
+    payload["source_device"] = info.st_dev
+    payload["source_inode"] = info.st_ino
+    atomic_write_text(record, json.dumps(payload, ensure_ascii=False))
+
+    new_entry = WorkdirRegistry.register(source)
+    assert new_entry.id != entry.id
 
 
 def test_relocate_cancel_keeps_registry_and_original(

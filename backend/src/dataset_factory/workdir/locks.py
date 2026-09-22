@@ -102,12 +102,12 @@ def require_workdir_writable(dsf_path: Path) -> None:
         if payload.get("status") == "aborted":
             return
         if payload.get("status") == "cleaned" and dsf_path.parent.is_dir():
-            current_identity = dsf_path.parent.stat()
-            if (current_identity.st_dev, current_identity.st_ino) != (
-                payload.get("source_device"),
-                payload.get("source_inode"),
-            ):
-                return
+            # cleaned = 旧位置已完整移除（删除 / 搬迁的清理成功后才落此状态）——
+            # 路径下再出现的目录必然是重建的新目录，放行。不能用 (st_dev, st_ino)
+            # 当目录身份来区分：删后重建会复用刚释放的 inode，新目录会被误判成
+            # 旧目录而拒绝登记（CI ubuntu 上 3 跑 2 红的根因；本机 NTFS 的复用
+            # 行为不同所以不显现，回归用例见 tests/test_relocation.py）。
+            return
         if payload.get("status") in ("prepared", "copying"):
             # 延迟导入避免锁原语与注册表门面在模块装载时循环依赖。
             from .store import WorkdirRegistry
