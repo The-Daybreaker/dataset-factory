@@ -40,7 +40,6 @@ import { formatChars } from "../../lib/format";
 import {
   isStrategySelection,
   readStoredJson,
-  sameSkills,
   WORKBENCH_STRATEGY_KEY,
   writeStoredJson,
 } from "../../lib/ui-storage";
@@ -72,6 +71,7 @@ export function StrategyToolbar({
   locked,
   onSelect,
   onNewStrategy,
+  onStrategySaved,
 }: {
   references: References;
   prompts: PromptInfo[];
@@ -79,8 +79,10 @@ export function StrategyToolbar({
   endpoints: EndpointConfigSummary[];
   locked: boolean;
   onSelect: (strategy: Strategy) => Promise<void>;
-  /** 点「新建策略」时回调：换底座语义，工作域据此清空会话（与切策略一致）。 */
+  /** 点「新建策略」时回调：换桶语义，工作域据此进 __new__ 桶（三期 v3）。 */
   onNewStrategy: () => void;
+  /** 新策略落库成功后回调：工作域把当前草稿会话改挂到新策略 id（三期 v3）。 */
+  onStrategySaved: (strategy: Strategy) => void;
 }): ReactElement {
   const [entries, setEntries] = useState<Strategy[]>([]);
   const [selected, setSelected] = useState<Strategy | null>(null);
@@ -165,11 +167,12 @@ export function StrategyToolbar({
     );
   }, [selected, name, description]);
 
-  // 策略选中的启动恢复（三期 v2，修「重启变成新建策略、历史挂在新建策略页」）：
-  // ① 镜像按 id 对号入座（名称/描述用镜像缓冲——未保存的改动也是用户意图）；
-  // ② 镜像缺失时按当前工作配置的签名（提示词 + Skill 组合）从库里认领——
-  //    「历史挂在新建策略页」的反向兜底；镜像指向已删除的策略则不认领（空着）。
-  // 一次性：条件不成熟（列表 / 配置未就绪）可推迟，尝试过或用户已动手即收摊。
+  // 策略选中的启动恢复（三期 v3，归属即身份）：镜像键三分支——
+  // ① 键存在且指向策略 → 按 id 对号入座（名称/描述用镜像缓冲；认领写回的镜像
+  //    名称为空，从库里补全并落回完整镜像）；指向已删除的策略则不认领。
+  // ② 键存在且为 null → 用户停在新建策略态（或会话域认领过并定案），不认领。
+  // ③ 键不存在 → 会话域（ChatSessionProvider）是认领的唯一发起方，这里只轮询
+  //    等它落盘（最多约 3s）；超时仍无键就停在新建态。本组件 boot 不发请求。
   useEffect(() => {
     if (selectionResolved.current || selectionTouched.current) return;
     if (loading || entries.length === 0) return;
@@ -177,32 +180,44 @@ export function StrategyToolbar({
       selectionResolved.current = true;
       return;
     }
-    const mirror = readStoredJson(WORKBENCH_STRATEGY_KEY, isStrategySelection);
-    if (mirror !== null) {
-      const byId = entries.find((entry) => entry.id === mirror.id);
-      if (byId !== undefined) {
-        setSelected(byId);
-        setName(mirror.name);
-        setDescription(mirror.description);
+    const restoreFrom = (mirrorId: string | null): void => {
+      if (mirrorId === null) {
+        selectionResolved.current = true;
+        return;
       }
-      // 镜像指向已删除的策略：不按签名认领（用户明确选过它，它没了就空着）。
+      const byId = entries.find((entry) => entry.id === mirrorId);
+      if (byId !== undefined) {
+        const mirror = readStoredJson(WORKBENCH_STRATEGY_KEY, isStrategySelection);
+        setSelected(byId);
+        setName(mirror?.name || byId.name);
+        setDescription(mirror?.description || byId.description);
+        // 补全认领写回的骨架镜像（空名称）——落回完整版，下次重启直接用。
+        if (mirror !== null && mirror.name === "") selectionTouched.current = true;
+      }
+      // 镜像指向已删除的策略：不认领（用户明确选过它，它没了就空着）。
       selectionResolved.current = true;
-      return;
-    }
-    if (references.prompt === "") return;
-    const match = entries.find(
-      (entry) =>
-        entry.available &&
-        entry.prompt === references.prompt &&
-        sameSkills(entry.skills, references.skills),
-    );
-    if (match !== undefined) {
-      setSelected(match);
-      setName(match.name);
-      setDescription(match.description);
-    }
-    selectionResolved.current = true;
-  }, [entries, loading, selected, name, description, references]);
+    };
+    let attempts = 0;
+    let timer = 0;
+    const tick = (): void => {
+      const raw = localStorage.getItem(WORKBENCH_STRATEGY_KEY);
+      if (raw !== null) {
+        const mirror = readStoredJson(WORKBENCH_STRATEGY_KEY, isStrategySelection);
+        restoreFrom(mirror?.id ?? null);
+        return;
+      }
+      attempts += 1;
+      if (attempts >= 10) {
+        selectionResolved.current = true;
+        return;
+      }
+      timer = window.setTimeout(tick, 300);
+    };
+    tick();
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [entries, loading, selected, name, description]);
 
   const remember = (entry: Strategy): void => {
     setEntries((current) =>
@@ -273,6 +288,11 @@ export function StrategyToolbar({
       setSelected(entry);
       setName(entry.name);
       setDescription(entry.description);
+      // 新落库的策略：把当前草稿桶的会话改挂到它名下（三期 v3——保存前聊的
+      // 就是「这个策略」的对话，落库即认领；改存量策略不动归属）。
+      if (selected === null) {
+        onStrategySaved(entry);
+      }
     });
   };
 

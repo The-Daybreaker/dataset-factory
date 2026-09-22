@@ -62,7 +62,7 @@ test.describe("页面状态保持（三期）", () => {
     await expect(page.getByLabel("名称", { exact: true })).toHaveValue("重启草稿");
   });
 
-  test("策略会话跨重启：策略选中恢复、对话接续、切走再切回不丢（v2）", async ({ page }) => {
+  test("策略会话跨重启：策略选中恢复、对话接续、切走再切回不丢（v3）", async ({ page }) => {
     await page.goto("/");
     // 建提示词 → 存 → 建策略 → 存 → 下拉点选应用 → 发消息等回复。
     await page.getByRole("button", { name: "切换提示词" }).click();
@@ -89,14 +89,74 @@ test.describe("页面状态保持（三期）", () => {
     );
     await expect(page.getByText("E2E 假模型的打标结果").last()).toBeVisible();
 
-    // 切走（新建策略 = 换底座）→ 会话清空。
+    // 切走（新建策略 = 进草稿桶）→ 草稿桶还没有会话，空白。
     await page.getByRole("button", { name: "切换策略" }).click();
     await page.getByRole("button", { name: "新建策略" }).click();
     await expect(page.getByText(/暂无消息/)).toBeVisible();
 
-    // 切回 → 签名一致，磁盘最近会话接续，历史回来。
+    // 切回 → 进该策略的桶接续它的最近会话，历史回来。
     await page.getByRole("button", { name: "切换策略" }).click();
     await page.getByRole("button", { name: /^E2E 状态策略/ }).click();
     await expect(page.getByText("E2E 假模型的打标结果").last()).toBeVisible();
+  });
+
+  test("每策略各自的最近会话；新建策略的对话不错绑到已有策略（v3）", async ({ page }) => {
+    await page.goto("/");
+    // 建提示词 → 两条策略共用它（共用提示词正是 v2 签名错绑的温床）。
+    await page.getByRole("button", { name: "切换提示词" }).click();
+    await page.getByRole("button", { name: "新建提示词" }).click();
+    await page.getByLabel("名称", { exact: true }).fill("归属隔离提示词");
+    await page.getByLabel("正文（Markdown）").fill("客观描述可见画面。");
+    await page.getByRole("button", { name: "保存", exact: true }).click();
+    await expect(page.getByText(/已保存提示词/)).toBeVisible();
+
+    // 策略 A：保存 → 应用 → 发言。
+    await page.getByLabel("策略名称", { exact: true }).fill("桶隔离A");
+    await page.getByRole("button", { name: "保存策略" }).click();
+    await page.getByRole("button", { name: "切换策略" }).click();
+    await page.getByRole("button", { name: /^桶隔离A/ }).click();
+    await page.getByLabel("打标指令").fill("A 的第一句");
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(page.getByText("E2E 假模型的打标结果").last()).toBeVisible({
+      timeout: 15_000,
+    });
+
+    // 策略 B：新建（进草稿桶）→ 保存 → 应用 → 发言。
+    await page.getByRole("button", { name: "切换策略" }).click();
+    await page.getByRole("button", { name: "新建策略" }).click();
+    await page.getByLabel("策略名称", { exact: true }).fill("桶隔离B");
+    await page.getByRole("button", { name: "保存策略" }).click();
+    await page.getByRole("button", { name: "切换策略" }).click();
+    await page.getByRole("button", { name: /^桶隔离B/ }).click();
+    await page.getByLabel("打标指令").fill("B 的第一句");
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(page.getByText("E2E 假模型的打标结果").last()).toBeVisible({
+      timeout: 15_000,
+    });
+
+    // 切回 A：接的是 A 桶的历史，B 的发言不串场（v2 签名错绑的回归点）。
+    await page.getByRole("button", { name: "切换策略" }).click();
+    await page.getByRole("button", { name: /^桶隔离A/ }).click();
+    await expect(page.getByText("A 的第一句")).toBeVisible();
+    await expect(page.getByText("B 的第一句")).not.toBeVisible();
+
+    // 新建策略聊一句 → 草稿桶会话；切回 A 时它不错绑到 A。
+    await page.getByRole("button", { name: "切换策略" }).click();
+    await page.getByRole("button", { name: "新建策略" }).click();
+    await page.getByLabel("打标指令").fill("草稿桶的一句话");
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(page.getByText("E2E 假模型的打标结果").last()).toBeVisible({
+      timeout: 15_000,
+    });
+    await page.getByRole("button", { name: "切换策略" }).click();
+    await page.getByRole("button", { name: /^桶隔离A/ }).click();
+    await expect(page.getByText("A 的第一句")).toBeVisible();
+    await expect(page.getByText("草稿桶的一句话")).not.toBeVisible();
+
+    // 重启：草稿桶会话在新建态下接续（新建策略点击 = 接续草稿桶）。
+    await page.reload();
+    await page.getByRole("button", { name: "切换策略" }).click();
+    await page.getByRole("button", { name: "新建策略" }).click();
+    await expect(page.getByText("草稿桶的一句话")).toBeVisible();
   });
 });

@@ -27,12 +27,18 @@ from dataset_factory.sessions import (
     append_settings,
     attachment_path,
     create_session,
+    delete_session,
     dump_event,
     latest_session_id,
+    latest_session_id_for,
     list_sessions,
     parse_event,
     read_events,
+    read_strategy_id,
+    retain_latest_for,
     save_attachment,
+    sessions_for_strategy,
+    write_strategy_id,
 )
 
 _FIXTURE_EVENTS = Path(__file__).parent / "fixtures" / "events.jsonl"
@@ -584,3 +590,64 @@ def test_parse_settings_requires_settings() -> None:
     """parse_event 的 settings 缺 settings 字段 → SessionEventError。"""
     with pytest.raises(SessionEventError, match="settings"):
         parse_event({"type": "settings", "ts": "t"})
+
+
+class TestSessionOwnership:
+    """会话归属（meta.json）与桶操作（三期 v3）：盖章、按桶查最近、改挂、滚动保留、删除。"""
+
+    def test_create_session_stamps_ownership(self, temp_data_root: Path) -> None:
+        """新建会话可带归属章：read_strategy_id 读回原值；不传则为无归属。"""
+        owned = create_session(strategy_id="s-test")
+        plain = create_session()
+
+        assert read_strategy_id(owned) == "s-test"
+        assert read_strategy_id(plain) is None
+
+    def test_bucket_query_and_latest(self, temp_data_root: Path) -> None:
+        """按桶查询只命中本桶会话，latest 取桶内最新；无归属会话不属于任何桶。"""
+        a_old = create_session(strategy_id="s-a")
+        b1 = create_session(strategy_id="s-b")
+        create_session()  # 无归属
+        a_new = create_session(strategy_id="s-a")
+
+        assert sessions_for_strategy("s-a") == [a_old, a_new]
+        assert latest_session_id_for("s-a") == a_new
+        assert latest_session_id_for("s-b") == b1
+        assert latest_session_id_for("s-nope") is None
+
+    def test_write_strategy_id_reassigns(self, temp_data_root: Path) -> None:
+        """改挂后旧桶查不到、新桶查得到；指向不存在的会话即 404。"""
+        session_id = create_session(strategy_id="__new__")
+
+        write_strategy_id(session_id, "s-saved")
+
+        assert latest_session_id_for("__new__") is None
+        assert latest_session_id_for("s-saved") == session_id
+        with pytest.raises(SessionNotFoundError):
+            write_strategy_id("20990101-000000-000000", "s-x")
+
+    def test_retain_latest_keeps_only_keep(self, temp_data_root: Path) -> None:
+        """滚动保留：桶内除 keep 外全删；keep 不在桶内则整桶不动。"""
+        old = create_session(strategy_id="s-a")
+        other_bucket = create_session(strategy_id="s-b")
+        new = create_session(strategy_id="s-a")
+
+        removed = retain_latest_for("s-a", keep=new)
+
+        assert removed == [old]
+        assert sessions_for_strategy("s-a") == [new]
+        assert latest_session_id_for("s-b") == other_bucket
+        assert retain_latest_for("s-a", keep="20990101-000000-000000") == []
+        assert sessions_for_strategy("s-a") == [new]
+
+    def test_delete_session_removes_directory(self, temp_data_root: Path) -> None:
+        """删除会话：目录整体消失（事件流 + meta），再删即 404。"""
+        session_id = create_session(strategy_id="s-a")
+        append_message(session_id, "user", "hi")
+
+        delete_session(session_id)
+
+        assert session_id not in list_sessions()
+        assert latest_session_id_for("s-a") is None
+        with pytest.raises(SessionNotFoundError):
+            delete_session(session_id)

@@ -1,6 +1,22 @@
 {
   "components": {
     "schemas": {
+      "AssignStrategyRequest": {
+        "description": "POST /api/sessions/{id}/strategy 的请求体（保存新策略时改挂草稿会话）。",
+        "properties": {
+          "strategy_id": {
+            "description": "新归属（策略 id）",
+            "minLength": 1,
+            "title": "Strategy Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "strategy_id"
+        ],
+        "title": "AssignStrategyRequest",
+        "type": "object"
+      },
       "BatchCreateRequest": {
         "description": "POST /api/workdirs/{wid}/batches 的请求体：新建批次。\n\ntype = library：从库策略 copy-on-apply（id 必填；name / description 缺省\n沿用库策略）；type = scratch：从零配置（name / endpoint / prompt 必填）。",
         "properties": {
@@ -1741,6 +1757,18 @@
             "description": "启用的 skill 清单；缺省沿用会话设置",
             "title": "Skill Names"
           },
+          "strategy_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "会话归属（策略 id 或 __new__ 草稿桶）：新建会话时盖章，续接时忽略（归属跟随既有会话）",
+            "title": "Strategy Id"
+          },
           "video_base64": {
             "anyOf": [
               {
@@ -2510,6 +2538,18 @@
           },
           "settings": {
             "$ref": "#/components/schemas/SettingsView"
+          },
+          "strategy_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "会话归属（策略 id / __new__ 草稿桶）；无归属为 null",
+            "title": "Strategy Id"
           }
         },
         "required": [
@@ -4482,8 +4522,26 @@
     },
     "/api/sessions/latest": {
       "get": {
-        "description": "最新会话快照（重启恢复入口）；一个会话都没有时 404。",
+        "description": "最新会话快照（重启恢复入口）；一个会话都没有时 404。\n\n带 ``strategy_id`` 查询时按归属桶取最新（三期 v3：每策略各自的最近会话），\n该桶为空同样 404；不带时为全局最新（存量认领垫层用）。",
         "operationId": "latest_session_api_sessions_latest_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "strategy_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Strategy Id"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -4504,6 +4562,16 @@
               }
             },
             "description": "还没有任何会话"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Latest Session",
@@ -4513,8 +4581,62 @@
       }
     },
     "/api/sessions/{session_id}": {
+      "delete": {
+        "description": "删除一个会话（事件流 + 附件 + 归属；有轮次在写时拒绝）。",
+        "operationId": "delete_session_endpoint_api_sessions__session_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "会话不存在"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "会话有进行中的打标轮次"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Session Endpoint",
+        "tags": [
+          "打标与会话"
+        ]
+      },
       "get": {
-        "description": "某会话快照（设置 + 对话历史）。",
+        "description": "某会话快照（设置 + 对话历史 + 归属）。",
         "operationId": "get_session_api_sessions__session_id__get",
         "parameters": [
           {
@@ -4625,6 +4747,79 @@
           }
         },
         "summary": "Session Attachment",
+        "tags": [
+          "打标与会话"
+        ]
+      }
+    },
+    "/api/sessions/{session_id}/strategy": {
+      "post": {
+        "description": "改挂会话归属（三期 v3）：保存新策略时把当前草稿会话从 ``__new__`` 挂到新 id。",
+        "operationId": "assign_session_strategy_api_sessions__session_id__strategy_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignStrategyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSnapshotResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "strategy_id 非法"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "会话不存在"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Assign Session Strategy",
         "tags": [
           "打标与会话"
         ]
@@ -5278,7 +5473,7 @@
     },
     "/api/strategies/{strategy_id}": {
       "delete": {
-        "description": "删除库策略（已应用的批次不受影响——copy-on-apply 持有内容副本）。",
+        "description": "删除库策略（已应用的批次不受影响——copy-on-apply 持有内容副本）。\n\n级联删除（三期 v3 用户定夺）：该策略名下的会话一并删除（滚动保留后至多一份\n+ 可能的失败半截会话）——用户明确不要孤儿会话。删除前检查进行中的打标轮次，\n有则 409 拒绝整次删除（策略与会话同进退，不删一半）。",
         "operationId": "delete_library_entry_api_strategies__strategy_id__delete",
         "parameters": [
           {
@@ -5305,6 +5500,17 @@
               "application/problem+json": {}
             },
             "description": "库策略不存在（problem+json: strategy-not-found）"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/problem+json": {}
+            },
+            "description": "策略的会话正在打标（problem+json: strategy-session-busy）"
           },
           "422": {
             "content": {

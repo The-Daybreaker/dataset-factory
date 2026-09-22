@@ -7,11 +7,11 @@
  * 生成完全无感。三期起页面改 Activity 保活、切页不再卸载，这层上提依然保留：会话
  * 的生命周期本来就比任何一页长，层级与「哪页在显示」解耦，不依赖保活细节。
  *
- * 会话恢复（latestSession）也在这里做——Provider 随 App 挂载，整个页面生命周期
- * 只恢复一次；组件侧只负责「把恢复出的基础提示词应用到编辑器」（restoreState /
- * restoredPromptName 就是给组件的接口）。恢复前会对照策略页的编辑器镜像
- * （dsf-workbench-editor）：镜像指向与快照不同的提示词 = 用户上次切了选择没发，
- * 切选择在产品语义里会清空会话，重启不复活它（保真到离开时刻）。
+ * 会话归属（三期 v3，2026-09-22 用户实测定案）：每个会话在创建时盖 strategy_id 章
+ * （后端 meta.json），「会话属于谁」以归属为准——签名（提示词 + Skill 组合）只是
+ * 无归属时代的近似，已退役。本域维护「当前桶」：启动按策略镜像进桶，切策略 / 新建
+ * 策略即换桶（拉该桶最近会话，有则接上、无则空白）；发送把桶 id 传给后端盖章。
+ * 输入草稿按桶分键，切策略互不串。
  */
 import {
   createContext,
@@ -24,16 +24,15 @@ import {
   useState,
 } from "react";
 import { ApiError, api } from "../../api";
-import { usePersistedState } from "../../hooks/use-persisted-state";
 import { reportError } from "../../lib/feedback";
 import {
-  CHAT_INSTRUCTION_KEY,
+  chatInstructionKey,
   isStrategySelection,
-  isWorkbenchEditorMirror,
+  NEW_STRATEGY_ID,
   readStoredJson,
-  sameSkills,
-  WORKBENCH_EDITOR_KEY,
+  readStoredString,
   WORKBENCH_STRATEGY_KEY,
+  writeStoredJson,
 } from "../../lib/ui-storage";
 import type { ChatMessage, PendingMedia } from "./types";
 
@@ -103,10 +102,18 @@ interface ChatSessionValue {
   send(input: { promptName: string | null; activeModel: string }): void;
   stopGeneration(): void;
   newSession(): void;
-  /** 清对话列（切提示词 / 切策略 = 换 system 底座）：保留输入与附件，不重开输入状态。 */
+  /** 清对话列（切提示词 = 换 system 底座）：保留输入与附件，不重开输入状态。 */
   clearConversation(): void;
-  /** 切换「工作配置」时的会话处理：签名一致接续磁盘最近会话，否则清空（见实现注）。 */
-  reattachOrClear(sig: { promptName: string | null; skills?: string[] }): void;
+  /**
+   * 进入一个会话桶（三期 v3）：切策略 / 新建策略时调用——拉该桶最近会话，
+   * 有则接上、无则空白；输入草稿随桶切换。桶 id 是策略 id 或 NEW_STRATEGY_ID。
+   */
+  attachBucket(bucketId: string): void;
+  /**
+   * 把当前活跃会话改挂到新策略 id（保存新策略时用）：本地桶状态与后端归属
+   * 一起更新；没有活跃会话则只换桶。
+   */
+  assignActiveSession(strategyId: string): void;
   toggleSkill(name: string): void;
   /** 整组替换 Skill 组合（策略应用时用；与 toggleSkill 同为会话域状态）。 */
   applySkillNames(names: string[]): void;
@@ -129,12 +136,10 @@ export function ChatSessionProvider({
 }): ReactElement {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  // 输入框草稿跨重启持久化（三期）：没发出去的话重启还在；发送 / 新会话 / 清空
-  // 会把它归零，落盘值随之清掉。附件不持久化（体积与隐私不划算，显式不做）。
-  const [instruction, setInstructionState] = usePersistedState<string>(
-    CHAT_INSTRUCTION_KEY,
-    "",
-  );
+  // 输入框草稿跨重启持久化（三期 v3 起按会话桶分键）：没发出去的话重启还在；
+  // 发送 / 新会话 / 清空会把它归零，落盘值随之清掉。附件不持久化（体积与隐私
+  // 不划算，显式不做）。桶切换时草稿跟着切（attachBucket 内迁移）。
+  const [instruction, setInstructionState] = useState("");
   const [media, setMedia] = useState<PendingMedia | null>(null);
   const [sending, setSending] = useState(false);
   const [waitSeconds, setWaitSeconds] = useState(0);
@@ -155,9 +160,30 @@ export function ChatSessionProvider({
   // 会话恢复前的用户动作计数：恢复落地时用户已经动过手（发过消息 / 动过组合 / 打过字），
   // 快照就是过时的，整体放弃应用（迟到的恢复不覆盖当前状态）。
   const userActedRef = useRef(0);
+  // 当前会话桶（策略 id 或 NEW_STRATEGY_ID）：send 盖章、草稿分键都以它为准。
+  // ref 与 state 并存——ref 供回调同步读（send / 草稿迁移），state 驱动 UI。
+  const bucketRef = useRef<string>(NEW_STRATEGY_ID);
+  // attachBucket 的请求序号：快速连续切桶时，旧桶的迟到响应不覆盖新桶状态。
+  const attachSeqRef = useRef(0);
+  // instruction 的同步镜像：桶切换迁移草稿时读「此刻输入框内容」，不进依赖数组。
+  const instructionRef = useRef("");
+  instructionRef.current = instruction;
 
-  // 会话快照的统一应用口：启动恢复与「切回同配置接续」（reattachOrClear）共用。
-  // 历史附件直连会话附件端点（B5）：缩略图不再依赖内存 dataURL，刷新不丢。
+  /** 把输入草稿写入当前桶的落盘键（切桶迁移 / 发送清空都走这里）。 */
+  const persistInstruction = useCallback((value: string): void => {
+    writeStoredJson(chatInstructionKey(bucketRef.current), value);
+  }, []);
+
+  const setInstructionForBucket = useCallback(
+    (value: string): void => {
+      setInstructionState(value);
+      persistInstruction(value);
+    },
+    [persistInstruction],
+  );
+
+  // 会话快照的统一应用口：启动恢复与切桶接续共用。历史附件直连会话附件端点（B5）：
+  // 缩略图不再依赖内存 dataURL，刷新不丢。
   const applySnapshot = useCallback((snapshot: SessionSnapshot): void => {
     setRestoredPromptName(snapshot.settings.prompt_name);
     setSessionId(snapshot.session_id);
@@ -179,47 +205,61 @@ export function ChatSessionProvider({
     setRestoreState("restored");
   }, []);
 
-  // 恢复最近一次会话（「还没有会话」404 是首次使用的正常情况，不当错误展示）。
-  // 与工作配置对账（v2，2026-09-22 用户实测曝光的策略维度缺口）：会话属于哪个
-  // 「配置」由签名决定——提示词名 + Skill 组合。
-  //   · 编辑器镜像的选中提示词 ≠ 快照 → 用户切了选择没发（切选择清空会话），不复活；
-  //   · 策略镜像存在且其 Skill 组合 ≠ 快照 → 同理（两条策略可共用一篇提示词，
-  //     只凭提示词名分不出是谁）；无论会话是否恢复，策略维度的状态都要带回来——
-  //     Skill 组合以策略为准回到会话域，工具栏的策略选中由它自己的镜像恢复。
+  // 启动恢复（三期 v3）：按策略镜像进桶——
+  //   · 镜像键存在且指向策略 → 拉该桶最近会话接上（镜像指向已删策略时桶为空，
+  //     404 即空白，恢复链不猜）；
+  //   · 镜像键存在且为 null（用户停在新建策略态）→ 进 __new__ 桶；
+  //   · 镜像键不存在（首启 / 清了站点数据）→ 认领：全局最新会话的归属命中什么
+  //     桶就进什么桶（无归属的存量会话进 __new__——签名近似已退役，不猜不认错）。
+  // 认领结论（含 404 / 新建态）一律落回镜像键：本 Provider 是认领的唯一发起方，
+  // 策略工具栏只等镜像键出现再按 id 恢复选中，不自己发请求——boot 的请求面因此
+  // 确定（E2E requests 基线不再竞速）。
   useEffect(() => {
     let cancelled = false;
-    const strategy = readStoredJson(WORKBENCH_STRATEGY_KEY, isStrategySelection);
+    const rawMirror = localStorage.getItem(WORKBENCH_STRATEGY_KEY);
+    const mirror =
+      rawMirror === null
+        ? undefined
+        : readStoredJson(WORKBENCH_STRATEGY_KEY, isStrategySelection);
+    const settleMirror = (value: unknown): void => {
+      if (!cancelled) writeStoredJson(WORKBENCH_STRATEGY_KEY, value);
+    };
     void (async () => {
       try {
-        const snapshot = await api.latestSession();
-        if (cancelled || userActedRef.current > 0) {
+        if (mirror === undefined) {
+          // 认领：全局最新会话的归属就是「上次工作的地方」。
+          const latest = await api.latestSession();
+          if (cancelled || userActedRef.current > 0) return;
+          const owner = latest.strategy_id ?? NEW_STRATEGY_ID;
+          bucketRef.current = owner;
+          setInstructionState(readStoredString(chatInstructionKey(owner)) ?? "");
+          settleMirror(
+            owner === NEW_STRATEGY_ID
+              ? null
+              : {
+                  id: owner,
+                  name: "",
+                  description: "",
+                  endpoint: "",
+                  prompt: "",
+                  skills: [],
+                },
+          );
+          applySnapshot(latest);
           return;
         }
-        const mirror = readStoredJson(WORKBENCH_EDITOR_KEY, isWorkbenchEditorMirror);
-        const promptMismatch =
-          mirror !== null &&
-          mirror.selectedName !== "" &&
-          mirror.selectedName !== (snapshot.settings.prompt_name ?? "");
-        const skillsMismatch =
-          strategy !== null &&
-          !sameSkills(strategy.skills, snapshot.settings.skill_names ?? []);
-        if (promptMismatch || skillsMismatch) {
-          if (strategy !== null) {
-            setSkillNames(strategy.skills);
-          }
-          setRestoreState("empty");
-          return;
-        }
+        const owner = mirror?.id ?? NEW_STRATEGY_ID;
+        const snapshot = await api.latestSession(owner);
+        if (cancelled || userActedRef.current > 0) return;
+        bucketRef.current = owner;
+        setInstructionState(readStoredString(chatInstructionKey(owner)) ?? "");
         applySnapshot(snapshot);
       } catch (err) {
-        if (cancelled || userActedRef.current > 0) {
-          return;
-        }
+        if (cancelled || userActedRef.current > 0) return;
         const noSessionYet = err instanceof ApiError && err.status === 404;
         if (noSessionYet) {
-          if (strategy !== null) {
-            setSkillNames(strategy.skills);
-          }
+          // 桶里还没有会话（或还没有任何会话）：空白起步，落镜像免得工具栏再等。
+          if (mirror === undefined) settleMirror(null);
           setRestoreState("empty");
         } else {
           setChatErrorState(reportError(err) ?? "");
@@ -288,7 +328,7 @@ export function ChatSessionProvider({
             : {}),
         },
       ]);
-      setInstructionState("");
+      setInstructionForBucket("");
       setMedia(null);
       setStreaming({ reasoning: "", content: "" });
       let reasoningText = "";
@@ -325,6 +365,8 @@ export function ChatSessionProvider({
               video_name: sentMedia?.kind === "video" ? sentMedia.name : "video.mp4",
               video_fps: sentMedia?.kind === "video" ? sentMedia.fps : 2,
               video_max_frames: sentMedia?.kind === "video" ? sentMedia.maxFrames : 16,
+              // 会话归属章（三期 v3）：新建会话时后端按它进桶；续接时后端忽略。
+              strategy_id: bucketRef.current,
             },
             {
               onStart: (id) => setSessionId(id),
@@ -392,7 +434,7 @@ export function ChatSessionProvider({
         }
       })();
     },
-    [instruction, media, sessionId, skillNames, setInstructionState],
+    [instruction, media, sessionId, skillNames, setInstructionForBucket],
   );
 
   /** 停止生成（N1④）：中止当前请求；已收到的部分按半截消息留痕。 */
@@ -408,10 +450,10 @@ export function ChatSessionProvider({
     setMessages([]);
     setChatErrorState("");
     // 旧输入 / 旧附件 / 旧 Skill 不带进新会话（N1 同源②）。
-    setInstructionState("");
+    setInstructionForBucket("");
     setMedia(null);
     setSkillNames([]);
-  }, [setInstructionState]);
+  }, [setInstructionForBucket]);
 
   const clearConversation = useCallback((): void => {
     userActedRef.current += 1;
@@ -420,27 +462,27 @@ export function ChatSessionProvider({
     setChatErrorState("");
   }, []);
 
-  /** 切换「工作配置」（应用策略 / 切提示词）时的会话处理：磁盘上最近的会话若属于
-   * 同一配置（签名一致：提示词名必比；sig.skills 给出时 Skill 组合也必比）就接续
-   * 显示——「切走再切回」不丢历史；配置真换了（换底座）才清空。404（还没有会话）
-   * 等同清空；其余错误清空并照常报错。 */
-  const reattachOrClear = useCallback(
-    (sig: { promptName: string | null; skills?: string[] }): void => {
+  /**
+   * 进入一个会话桶（三期 v3，替代签名对账）：切策略 / 新建策略统一走这里。
+   * 草稿随桶迁移（当前值落旧桶键、读入新桶键）；该桶最近会话有则接上、无则
+   * 空白。快速连续切桶时用序号丢弃迟到响应。
+   */
+  const attachBucket = useCallback(
+    (nextBucket: string): void => {
       userActedRef.current += 1;
+      const request = ++attachSeqRef.current;
+      if (bucketRef.current !== nextBucket) {
+        persistInstruction(instructionRef.current);
+        bucketRef.current = nextBucket;
+        setInstructionState(readStoredString(chatInstructionKey(nextBucket)) ?? "");
+      }
       void (async () => {
         try {
-          const snapshot = await api.latestSession();
-          const promptMatches =
-            (snapshot.settings.prompt_name ?? "") === (sig.promptName ?? "");
-          const skillsMatch =
-            sig.skills === undefined ||
-            sameSkills(snapshot.settings.skill_names ?? [], sig.skills);
-          if (promptMatches && skillsMatch) {
-            applySnapshot(snapshot);
-          } else {
-            clearConversation();
-          }
+          const snapshot = await api.latestSession(nextBucket);
+          if (request !== attachSeqRef.current) return;
+          applySnapshot(snapshot);
         } catch (err) {
+          if (request !== attachSeqRef.current) return;
           clearConversation();
           if (!(err instanceof ApiError && err.status === 404)) {
             setChatErrorState(reportError(err) ?? "");
@@ -448,7 +490,27 @@ export function ChatSessionProvider({
         }
       })();
     },
-    [applySnapshot, clearConversation],
+    [applySnapshot, clearConversation, persistInstruction],
+  );
+
+  /**
+   * 把当前活跃会话改挂到新策略 id（保存新策略后调用）：后端归属与本地桶状态
+   * 一起更新；没有活跃会话（草稿没发过言）只换桶。改挂失败（会话已不存在等）
+   * 不阻断保存流程，桶状态照常切换。
+   */
+  const assignActiveSession = useCallback(
+    (strategyId: string): void => {
+      const current = sessionId;
+      bucketRef.current = strategyId;
+      if (current === null) return;
+      void api
+        .assignSessionStrategy(current, strategyId)
+        .then(() => undefined)
+        .catch((err: unknown) => {
+          setChatErrorState(reportError(err) ?? "");
+        });
+    },
+    [sessionId],
   );
 
   const toggleSkill = useCallback((name: string): void => {
@@ -469,9 +531,9 @@ export function ChatSessionProvider({
   const setInstruction = useCallback(
     (value: string): void => {
       userActedRef.current += 1;
-      setInstructionState(value);
+      setInstructionForBucket(value);
     },
-    [setInstructionState],
+    [setInstructionForBucket],
   );
 
   const pickMedia = useCallback((file: File | undefined): void => {
@@ -555,7 +617,8 @@ export function ChatSessionProvider({
         stopGeneration,
         newSession,
         clearConversation,
-        reattachOrClear,
+        attachBucket,
+        assignActiveSession,
         toggleSkill,
         applySkillNames,
         setInstruction,

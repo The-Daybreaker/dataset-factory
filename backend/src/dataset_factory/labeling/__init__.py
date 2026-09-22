@@ -19,6 +19,7 @@ from .engine import (
     SessionSnapshot,
     StreamFinished,
     StreamStarted,
+    active_session_ids,
 )
 from .errors import (
     AttachmentReadError,
@@ -46,4 +47,5 @@ __all__ = [
     "SettingsFormatError",
     "StreamFinished",
     "StreamStarted",
+    "active_session_ids",
 ]

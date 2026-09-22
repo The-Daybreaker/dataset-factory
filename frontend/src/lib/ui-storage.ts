@@ -54,8 +54,19 @@ export function isWorkbenchEditorMirror(
   );
 }
 
-/** 会话域：输入框草稿（未发送的指令文本）。 */
-export const CHAT_INSTRUCTION_KEY = "dsf-chat-instruction";
+/**
+ * 未挂策略的固定桶 id（三期 v3）：新建策略态 / 无策略直接改提示词时，会话归属
+ * 都记到这个伪 id 下——它不与任何真实策略 id（后端随机生成的 `s` 前缀短 id）相等，
+ * 结构上杜绝「新建策略的对话错绑到已有策略」。后端 LabelRequest.strategy_id 直接
+ * 透传该值，语义两侧一致。
+ */
+export const NEW_STRATEGY_ID = "__new__";
+
+/** 会话域：输入框草稿（未发送的指令文本），按会话桶分键（切策略互不串）。 */
+export const CHAT_INSTRUCTION_KEY_PREFIX = "dsf-chat-instruction";
+export function chatInstructionKey(bucketId: string): string {
+  return `${CHAT_INSTRUCTION_KEY_PREFIX}:${bucketId}`;
+}
 
 /**
  * 策略页：当前选中的策略（策略工具栏的「我在哪个策略里工作」）。与编辑器镜像

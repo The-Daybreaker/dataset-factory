@@ -1237,3 +1237,142 @@ def test_label_image_and_video_together_is_400(
     )
 
     assert response.status_code == 400
+
+
+class TestSessionOwnershipApi:
+    """会话归属的 API 面（三期 v3）：盖章、按桶查 latest、改挂、删策略级联、进行中拒绝。"""
+
+    def test_label_stamps_ownership_and_latest_by_bucket(
+        self, client: TestClient, fake_engine: FakeCompleter
+    ) -> None:
+        """带 strategy_id 发送：会话盖上归属章；按桶查 latest 命中它、别的桶 404。"""
+        _save_prompt("h3", "你是打标助手。")
+
+        first = client.post(
+            "/api/label",
+            json={"prompt_name": "h3", "instruction": "一轮", "strategy_id": "s-x"},
+        )
+        assert first.status_code == 200
+        session_id = first.json()["session_id"]
+
+        bucket = client.get("/api/sessions/latest", params={"strategy_id": "s-x"})
+        assert bucket.status_code == 200
+        assert bucket.json()["session_id"] == session_id
+        assert bucket.json()["strategy_id"] == "s-x"
+        assert (
+            client.get(
+                "/api/sessions/latest", params={"strategy_id": "s-other"}
+            ).status_code
+            == 404
+        )
+        # 无归属的查询（全局 latest）也照常可达（存量垫层入口）。
+        assert client.get("/api/sessions/latest").status_code == 200
+
+    def test_assign_strategy_moves_session(
+        self, client: TestClient, fake_engine: FakeCompleter
+    ) -> None:
+        """改挂端点：把 __new__ 会话挂到新策略 id，旧桶随即查空。"""
+        _save_prompt("h3", "你是打标助手。")
+        session_id = client.post(
+            "/api/label",
+            json={
+                "prompt_name": "h3",
+                "instruction": "草稿轮",
+                "strategy_id": "__new__",
+            },
+        ).json()["session_id"]
+
+        moved = client.post(
+            f"/api/sessions/{session_id}/strategy", json={"strategy_id": "s-new"}
+        )
+
+        assert moved.status_code == 200
+        assert moved.json()["strategy_id"] == "s-new"
+        assert (
+            client.get(
+                "/api/sessions/latest", params={"strategy_id": "__new__"}
+            ).status_code
+            == 404
+        )
+        assert (
+            client.get("/api/sessions/latest", params={"strategy_id": "s-new"}).json()[
+                "session_id"
+            ]
+            == session_id
+        )
+        missing = client.post(
+            "/api/sessions/20990101-000000-000000/strategy",
+            json={"strategy_id": "s-x"},
+        )
+        assert missing.status_code == 404
+
+    def test_delete_strategy_cascades_bucket_sessions(
+        self, client: TestClient, fake_engine: FakeCompleter
+    ) -> None:
+        """删策略级联删桶内会话：滚掉失败半截后的桶内容随策略一起消失。"""
+        from dataset_factory.llm import create_config
+        from dataset_factory.sessions import (
+            create_session as create,
+        )
+        from dataset_factory.sessions import (
+            latest_session_id_for,
+        )
+
+        create_config("main", "https://api.example.com/v1", "test-model", api_key=None)
+        _save_prompt("h3", "你是打标助手。")
+        created = client.post(
+            "/api/strategies",
+            json={
+                "name": "删除我",
+                "description": "",
+                "endpoint": "main",
+                "prompt": "h3",
+                "skills": [],
+            },
+        )
+        assert created.status_code == 201, created.text
+        strategy_id = created.json()["id"]
+        session_id = client.post(
+            "/api/label",
+            json={
+                "prompt_name": "h3",
+                "instruction": "一轮",
+                "strategy_id": strategy_id,
+            },
+        ).json()["session_id"]
+        # 桶里再造一份失败半截（不属于滚动保留的常规路径，模拟存量）。
+        stale = create(strategy_id=strategy_id)
+
+        response = client.delete(f"/api/strategies/{strategy_id}")
+
+        assert response.status_code == 204
+        assert latest_session_id_for(strategy_id) is None
+        assert session_id not in list_sessions()
+        assert stale not in list_sessions()
+
+    def test_delete_session_rejected_while_turn_active(
+        self,
+        client: TestClient,
+        fake_engine: FakeCompleter,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """会话有进行中轮次时删除被 409 拒绝；轮次结束后可删。"""
+        from dataset_factory.labeling import active_session_ids
+
+        _save_prompt("h3", "你是打标助手。")
+        session_id = client.post(
+            "/api/label",
+            json={"prompt_name": "h3", "instruction": "一轮", "strategy_id": "s-busy"},
+        ).json()["session_id"]
+
+        # 直接登记一个进行中轮次，模拟流式生成中。
+        import dataset_factory.labeling.engine as engine_module
+
+        monkeypatch.setattr(engine_module, "_ACTIVE_TURNS", {session_id})
+        assert session_id in active_session_ids()
+        busy = client.delete(f"/api/sessions/{session_id}")
+        assert busy.status_code == 409
+
+        monkeypatch.setattr(engine_module, "_ACTIVE_TURNS", set[str]())
+        client.delete(f"/api/sessions/{session_id}")
+        assert session_id not in list_sessions()

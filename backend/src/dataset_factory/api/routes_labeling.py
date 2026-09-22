@@ -8,10 +8,16 @@ import json
 from collections.abc import Generator
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import FileResponse, StreamingResponse
 
-from ..labeling import LabelingEngine, SessionSnapshot, StreamFinished, StreamStarted
+from ..labeling import (
+    LabelingEngine,
+    SessionSnapshot,
+    StreamFinished,
+    StreamStarted,
+    active_session_ids,
+)
 from ..llm import (
     VIDEO_MIME_BY_SUFFIX,
     LLMError,
@@ -19,8 +25,18 @@ from ..llm import (
     build_completer,
     read_config,
 )
-from ..sessions import attachment_path, latest_session_id
+from ..sessions import (
+    SessionError,
+    SessionNotFoundError,
+    attachment_path,
+    delete_session,
+    latest_session_id,
+    latest_session_id_for,
+    retain_latest_for,
+    write_strategy_id,
+)
 from .schemas import (
+    AssignStrategyRequest,
     ErrorDetail,
     HistoryMessageView,
     LabelRequest,
@@ -93,7 +109,11 @@ def label(request: LabelRequest) -> LabelResponse:
         # 端点（SiliconFlow）对浮点 fps 判非法，wire 上必须是整型。
         video_fps=int(request.video_fps),
         video_max_frames=request.video_max_frames,
+        strategy_id=request.strategy_id,
     )
+    # 滚动保留（三期 v3）：新会话首轮成功落盘后，同桶旧会话删除；失败轮在上方抛出、
+    # 走不到这里，旧会话保留。
+    _retain_bucket(request.strategy_id, keep=result.session_id)
     return LabelResponse(session_id=result.session_id, caption=result.caption)
 
 
@@ -132,6 +152,7 @@ def label_stream(request: LabelRequest) -> StreamingResponse:
         video_mime=video_mime,
         video_fps=int(request.video_fps),
         video_max_frames=request.video_max_frames,
+        strategy_id=request.strategy_id,
     )
     # 预备段（校验 / 落信封）在返回响应前先执行到首个事件：域错误在此按全局映射转
     # 状态码（400/404…），不吞进 SSE——已开始的 SSE 无法再改状态码。
@@ -142,6 +163,10 @@ def label_stream(request: LabelRequest) -> StreamingResponse:
             yield _sse_event(first)
             for item in generator:
                 yield _sse_event(item)
+                # 滚动保留（三期 v3）：终稿落盘（done 帧）后删同桶旧会话；失败 /
+                # 中断轮走不到 StreamFinished，旧会话保留。
+                if isinstance(item, StreamFinished):
+                    _retain_bucket(request.strategy_id, keep=item.result.session_id)
         except LLMError as exc:
             yield _sse("error", {"message": str(exc)})
 
@@ -179,9 +204,15 @@ def _sse(event: str, data: dict[str, str]) -> str:
     response_model=SessionSnapshotResponse,
     responses={404: {"model": ErrorDetail, "description": "还没有任何会话"}},
 )
-def latest_session() -> SessionSnapshotResponse:
-    """最新会话快照（重启恢复入口）；一个会话都没有时 404。"""
-    session_id = latest_session_id()
+def latest_session(strategy_id: str | None = None) -> SessionSnapshotResponse:
+    """最新会话快照（重启恢复入口）；一个会话都没有时 404。
+
+    带 ``strategy_id`` 查询时按归属桶取最新（三期 v3：每策略各自的最近会话），
+    该桶为空同样 404；不带时为全局最新（存量认领垫层用）。
+    """
+    session_id = (
+        latest_session_id_for(strategy_id) if strategy_id else latest_session_id()
+    )
     if session_id is None:
         raise HTTPException(
             status_code=404, detail="还没有任何会话；发第一轮打标即自动创建。"
@@ -195,14 +226,69 @@ def latest_session() -> SessionSnapshotResponse:
     responses={404: {"model": ErrorDetail, "description": "会话不存在"}},
 )
 def get_session(session_id: str) -> SessionSnapshotResponse:
-    """某会话快照（设置 + 对话历史）。"""
+    """某会话快照（设置 + 对话历史 + 归属）。"""
     return _snapshot_response(build_engine().restore(session_id))
+
+
+def _retain_bucket(strategy_id: str | None, *, keep: str) -> None:
+    """按桶滚动保留（三期 v3）：桶内只留 ``keep``，其余删除。
+
+    策略为 None（无归属轮）不滚动。删除失败静默跳过（retain_latest_for 内部
+    已逐目录兜底）——保留失败不回滚本轮成功的打标结果。
+    """
+    if strategy_id:
+        retain_latest_for(strategy_id, keep=keep)
+
+
+@router.post(
+    "/sessions/{session_id}/strategy",
+    response_model=SessionSnapshotResponse,
+    responses={
+        404: {"model": ErrorDetail, "description": "会话不存在"},
+        400: {"model": ErrorDetail, "description": "strategy_id 非法"},
+    },
+)
+def assign_session_strategy(
+    session_id: str, body: AssignStrategyRequest
+) -> SessionSnapshotResponse:
+    """改挂会话归属（三期 v3）：保存新策略时把当前草稿会话从 ``__new__`` 挂到新 id。"""
+    try:
+        write_strategy_id(session_id, body.strategy_id)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SessionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _snapshot_response(build_engine().restore(session_id))
+
+
+@router.delete(
+    "/sessions/{session_id}",
+    status_code=204,
+    responses={
+        404: {"model": ErrorDetail, "description": "会话不存在"},
+        409: {"model": ErrorDetail, "description": "会话有进行中的打标轮次"},
+    },
+)
+def delete_session_endpoint(session_id: str) -> Response:
+    """删除一个会话（事件流 + 附件 + 归属；有轮次在写时拒绝）。"""
+    if session_id in active_session_ids():
+        raise HTTPException(
+            status_code=409, detail="该会话正在打标，请等本轮结束或停止后再删除。"
+        )
+    try:
+        delete_session(session_id)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SessionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return Response(status_code=204)
 
 
 def _snapshot_response(snapshot: SessionSnapshot) -> SessionSnapshotResponse:
     """把引擎的 SessionSnapshot 翻译成响应模型（入口层只做翻译）。"""
     return SessionSnapshotResponse(
         session_id=snapshot.session_id,
+        strategy_id=snapshot.strategy_id,
         settings=SettingsView(
             prompt_name=snapshot.settings.prompt_name,
             skill_names=list(snapshot.settings.skill_names),

@@ -19,13 +19,19 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import cast
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import ValidationError
 
+from ..labeling import active_session_ids
 from ..prompts import PromptError, read_prompt
 from ..runs import BatchRunner
 from ..runs.journal import load_latest_run
 from ..runs.runner import remove_batch
+from ..sessions import (
+    SessionError,
+    delete_session,
+    sessions_for_strategy,
+)
 from ..skills import list_skills
 from ..strategies import (
     BatchEntry,
@@ -235,10 +241,30 @@ def update_library_entry(strategy_id: str, body: StrategySaveRequest) -> Strateg
     status_code=204,
     responses={
         404: problem("库策略不存在（problem+json: strategy-not-found）"),
+        409: problem("策略的会话正在打标（problem+json: strategy-session-busy）"),
     },
 )
 def delete_library_entry(strategy_id: str) -> Response:
-    """删除库策略（已应用的批次不受影响——copy-on-apply 持有内容副本）。"""
+    """删除库策略（已应用的批次不受影响——copy-on-apply 持有内容副本）。
+
+    级联删除（三期 v3 用户定夺）：该策略名下的会话一并删除（滚动保留后至多一份
+    + 可能的失败半截会话）——用户明确不要孤儿会话。删除前检查进行中的打标轮次，
+    有则 409 拒绝整次删除（策略与会话同进退，不删一半）。
+    """
+    bucket = sessions_for_strategy(strategy_id)
+    running = sorted(set(bucket) & active_session_ids())
+    if running:
+        raise HTTPException(
+            status_code=409,
+            detail="该策略的会话正在打标，请等本轮结束或停止后再删除策略。",
+        )
+    for session_id in bucket:
+        try:
+            delete_session(session_id)
+        except SessionError:
+            # 单个会话删除失败（如文件被占用）不阻断策略删除——下次删策略或
+            # 手工清理可再收；归属记录随策略一起消失，孤儿会话不再可达。
+            continue
     delete_strategy(strategy_id)
     return Response(status_code=204)
 

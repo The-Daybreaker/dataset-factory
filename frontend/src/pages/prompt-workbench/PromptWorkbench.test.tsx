@@ -684,31 +684,6 @@ describe("编辑器镜像与恢复优先级（三期）", () => {
     expect(apiMock.getPrompt).not.toHaveBeenCalled();
   });
 
-  it("镜像与快照分叉：编辑器听镜像，被切走的会话不复活", async () => {
-    localStorage.setItem(
-      "dsf-workbench-editor",
-      JSON.stringify({
-        ...MIRROR_BASE,
-        selectedName: "simple",
-        draftName: "simple",
-        draftBody: "镜像正文",
-        isNewDraft: false,
-      }),
-    );
-    apiMock.latestSession.mockResolvedValue({
-      session_id: "s-old",
-      settings: { prompt_name: "h3-video", skill_names: [] },
-      messages: [{ role: "user", text: "旧会话消息", attachment: null }],
-    });
-    renderWorkbench();
-
-    await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("simple"));
-    expect(screen.getByLabelText("正文（Markdown）")).toHaveValue("镜像正文");
-    // 快照的会话属于 h3-video 的时代，用户切走选择时界面已按产品语义清空——
-    // 重启不把它复活（保真到离开时刻）。
-    expect(screen.queryByText("旧会话消息")).not.toBeInTheDocument();
-  });
-
   it("镜像与快照一致：编辑器恢复镜像草稿，会话照常恢复", async () => {
     localStorage.setItem(
       "dsf-workbench-editor",
@@ -738,7 +713,7 @@ describe("编辑器镜像与恢复优先级（三期）", () => {
     expect(await screen.findByText("历史消息")).toBeInTheDocument();
   });
 
-  it("镜像指向已删除的提示词：编辑器回退默认链，会话不恢复", async () => {
+  it("镜像指向已删除的提示词：编辑器回退默认链（会话按桶独立恢复，v3 起不再对账镜像）", async () => {
     localStorage.setItem(
       "dsf-workbench-editor",
       JSON.stringify({
@@ -756,10 +731,9 @@ describe("编辑器镜像与恢复优先级（三期）", () => {
     });
     renderWorkbench();
 
-    // 快照被镜像分叉规则拦下 → 无「恢复的提示词」，回落「自动选中首条」。
+    // 快照的提示词不再被镜像分叉拦（v3 起签名对账退役），回落「自动选中首条」。
     await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("h3-video"));
     expect(screen.getByLabelText("正文（Markdown）")).toHaveValue("你是打标助手。");
-    expect(screen.queryByText("旧会话消息")).not.toBeInTheDocument();
   });
 
   it("空白编辑器里直接打的草稿也恢复（无选中但有草稿内容）", async () => {
@@ -852,7 +826,7 @@ describe("策略与会话的一致性（三期 v2）", () => {
     expect(await screen.findByText("重启前的策略对话")).toBeInTheDocument();
   });
 
-  it("策略镜像的 Skill 组合与快照不符：会话不复活，Skill 组合以策略为准带回", async () => {
+  it("改过配置的策略：切回仍接续其会话（归属优先于配置，v3 定案语义）", async () => {
     localStorage.setItem(
       "dsf-workbench-strategy",
       JSON.stringify({
@@ -869,21 +843,20 @@ describe("策略与会话的一致性（三期 v2）", () => {
     ]);
     apiMock.latestSession.mockResolvedValue({
       session_id: "s-old",
-      settings: { prompt_name: "h3-video", skill_names: ["别的组合"] },
-      messages: [{ role: "user", text: "别的配置的会话", attachment: null }],
+      settings: { prompt_name: "h3-video", skill_names: ["旧组合"] },
+      messages: [{ role: "user", text: "策略名下的历史会话", attachment: null }],
     });
     renderWorkbench();
 
     await waitFor(() =>
       expect(screen.getByLabelText("策略名称")).toHaveValue("测试策略"),
     );
-    // 快照的 Skill 组合与策略不符 = 会话属于别的配置 → 不复活
-    expect(screen.queryByText("别的配置的会话")).not.toBeInTheDocument();
-    // 但策略维度的状态照常回来：Skill 组合以策略为准
-    expect(await screen.findByText("h3-skill")).toBeInTheDocument();
+    // 会话属于这个策略（归属章），策略后来改了 Skill 组合不影响接续——
+    // 这正是 v3 修「改了配置就认不回」的核心语义。
+    expect(await screen.findByText("策略名下的历史会话")).toBeInTheDocument();
   });
 
-  it("切走再切回：签名一致的会话接续（应用策略不清历史）", async () => {
+  it("切走再切回：进该策略的桶接续它的最近会话（应用策略不清历史）", async () => {
     apiMock.listStrategies.mockResolvedValue([WORKBENCH_STRATEGY]);
     apiMock.latestSession.mockResolvedValue({
       session_id: "s-old",

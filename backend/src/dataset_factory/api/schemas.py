@@ -53,6 +53,13 @@ class LabelRequest(BaseModel):
     video_max_frames: int = Field(
         default=16, ge=1, le=256, description="视频抽帧帧数上限"
     )
+    strategy_id: str | None = Field(
+        default=None,
+        description=(
+            "会话归属（策略 id 或 __new__ 草稿桶）：新建会话时盖章，续接时忽略"
+            "（归属跟随既有会话）"
+        ),
+    )
 
     @model_validator(mode="after")
     def _video_fps_is_integral(self) -> LabelRequest:
@@ -130,6 +137,15 @@ class SessionSnapshotResponse(BaseModel):
     session_id: str
     settings: SettingsView
     messages: list[HistoryMessageView]
+    strategy_id: str | None = Field(
+        default=None, description="会话归属（策略 id / __new__ 草稿桶）；无归属为 null"
+    )
+
+
+class AssignStrategyRequest(BaseModel):
+    """POST /api/sessions/{id}/strategy 的请求体（保存新策略时改挂草稿会话）。"""
+
+    strategy_id: str = Field(min_length=1, description="新归属（策略 id）")
 
 
 class PromptInfo(BaseModel):

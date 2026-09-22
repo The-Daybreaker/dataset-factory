@@ -53,6 +53,7 @@ from ..sessions import (
     attachment_path,
     create_session,
     read_events,
+    read_strategy_id,
     save_attachment,
     save_attachment_bytes,
 )
@@ -75,6 +76,16 @@ _SKILL_OPEN = "<skill>"
 _SKILL_CLOSE = "</skill>"
 
 logger = logging.getLogger(__name__)
+
+# 进行中的轮次（会话 id 集合）：从「本轮会话确定」起登记到轮次终结（完成 / 失败 / 客户端
+# 断开）。供会话删除路径检查「这个会话还有没有轮次在写」——Windows 上删正被追加的文件
+# 会失败，Linux 上虽不报错但会让删除与追加交错；统一拒绝是两侧一致的语义。
+_ACTIVE_TURNS: set[str] = set()
+
+
+def active_session_ids() -> frozenset[str]:
+    """当前有轮次在写（非流式执行中 / 流式未收尾）的会话 id 集合（删除路径的检查面）。"""
+    return frozenset(_ACTIVE_TURNS)
 
 
 @dataclass(frozen=True)
@@ -121,11 +132,14 @@ class SessionSnapshot:
         session_id: 会话 id。
         settings: 会话当前设置。
         messages: 对话历史（user / assistant 消息，按时间序）。
+        strategy_id: 会话归属（策略 id 或 ``__new__`` 草稿桶）；无归属（存量会话）
+            为 None。
     """
 
     session_id: str
     settings: SessionSettings
     messages: tuple[HistoryMessage, ...]
+    strategy_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -188,6 +202,7 @@ class LabelingEngine:
         video_mime: str = "video/mp4",
         video_fps: int = 2,
         video_max_frames: int = 16,
+        strategy_id: str | None = None,
     ) -> LabelResult:
         """跑一轮打标：组装请求 → 先落信封 → 调模型 → 落回复，返回 caption 与会话 id。
 
@@ -209,6 +224,8 @@ class LabelingEngine:
             image: 本轮图片文件路径；None 表示不以此方式附图。
             image_bytes: 本轮图片字节；None 表示不以此方式附图。
             image_name: image_bytes 方式的原始文件名（仅名字用途，不参与内容判定）。
+            strategy_id: 新建会话时的归属章（策略 id 或 ``__new__`` 草稿桶）；续接时
+                忽略（归属跟随既有会话，不随轮次漂移）。
 
         Returns:
             LabelResult：会话 id + 模型产出的 caption。
@@ -243,8 +260,44 @@ class LabelingEngine:
             image_name=image_name,
             video_bytes=video_bytes,
             video_name=video_name,
+            strategy_id=strategy_id,
         )
+        _ACTIVE_TURNS.add(session_id)
+        try:
+            return self._run_turn(
+                session_id=session_id,
+                start=start,
+                prompt=prompt,
+                skill_texts=skill_texts,
+                history=history,
+                sent_image_bytes=sent_image_bytes,
+                sent_video_bytes=sent_video_bytes,
+                attachment=attachment,
+                instruction=instruction,
+                video_mime=video_mime,
+                video_fps=video_fps,
+                video_max_frames=video_max_frames,
+            )
+        finally:
+            _ACTIVE_TURNS.discard(session_id)
 
+    def _run_turn(
+        self,
+        *,
+        session_id: str,
+        start: float,
+        prompt: Prompt,
+        skill_texts: list[str],
+        history: tuple[Message, ...],
+        sent_image_bytes: bytes | None,
+        sent_video_bytes: bytes | None,
+        attachment: str | None,
+        instruction: str,
+        video_mime: str,
+        video_fps: int,
+        video_max_frames: int,
+    ) -> LabelResult:
+        """非流式一轮的模型调用与落盘段（从 label() 拆出，让轮次登记包住全程）。"""
         messages, envelope_messages = _assemble(
             prompt_body=prompt.body,
             skill_texts=skill_texts,
@@ -299,6 +352,7 @@ class LabelingEngine:
         video_mime: str = "video/mp4",
         video_fps: int = 2,
         video_max_frames: int = 16,
+        strategy_id: str | None = None,
     ) -> Iterator[StreamStarted | StreamDelta | StreamFinished]:
         """流式跑一轮打标：先落信封 → 逐段产出增量 → 终稿落盘，事件序列返回给调用方。
 
@@ -332,8 +386,46 @@ class LabelingEngine:
             image_name=image_name,
             video_bytes=video_bytes,
             video_name=video_name,
+            strategy_id=strategy_id,
         )
+        _ACTIVE_TURNS.add(session_id)
+        try:
+            yield from self._stream_turn(
+                session_id=session_id,
+                start=start,
+                prompt=prompt,
+                skill_texts=skill_texts,
+                history=history,
+                sent_image_bytes=sent_image_bytes,
+                sent_video_bytes=sent_video_bytes,
+                attachment=attachment,
+                instruction=instruction,
+                video_mime=video_mime,
+                video_fps=video_fps,
+                video_max_frames=video_max_frames,
+            )
+        finally:
+            # 生成器被消费完或客户端中途断开（GeneratorExit）都要摘牌，否则该会话
+            # 会被永久当作「进行中」而拒绝删除。
+            _ACTIVE_TURNS.discard(session_id)
 
+    def _stream_turn(
+        self,
+        *,
+        session_id: str,
+        start: float,
+        prompt: Prompt,
+        skill_texts: list[str],
+        history: tuple[Message, ...],
+        sent_image_bytes: bytes | None,
+        sent_video_bytes: bytes | None,
+        attachment: str | None,
+        instruction: str,
+        video_mime: str,
+        video_fps: int,
+        video_max_frames: int,
+    ) -> Iterator[StreamStarted | StreamDelta | StreamFinished]:
+        """流式一轮的模型调用与落盘段（从 label_stream() 拆出，轮次登记在外层）。"""
         messages, envelope_messages = _assemble(
             prompt_body=prompt.body,
             skill_texts=skill_texts,
@@ -582,6 +674,7 @@ class LabelingEngine:
             session_id=session_id,
             settings=_fold_settings(events),
             messages=messages,
+            strategy_id=read_strategy_id(session_id),
         )
 
 
@@ -610,6 +703,7 @@ def _begin_turn(
     image_name: str,
     video_bytes: bytes | None,
     video_name: str,
+    strategy_id: str | None = None,
 ) -> tuple[
     str, Prompt, list[str], tuple[Message, ...], bytes | None, bytes | None, str | None
 ]:
@@ -657,7 +751,7 @@ def _begin_turn(
     prompt = read_prompt(wanted_prompt)
     skill_texts = _load_enabled_skill_texts(wanted_skills)
     if session_id is None:
-        session_id = create_session()
+        session_id = create_session(strategy_id=strategy_id)
     if (wanted_prompt, wanted_skills) != (
         settings.prompt_name,
         settings.skill_names,

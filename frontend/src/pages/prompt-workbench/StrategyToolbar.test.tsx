@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   copyStrategy: vi.fn(),
   deleteStrategy: vi.fn(),
   rebindStrategy: vi.fn(),
+  latestSession: vi.fn(),
 }));
 // 部分 mock：只替掉 api 对象，ApiError / errorMessage 用真货——错误分档要靠真类的 kind 字段判。
 vi.mock("../../api", async (original) => ({
@@ -50,6 +51,7 @@ function mount(strict = false): void {
         skills={[]}
         locked={false}
         onSelect={select}
+        onStrategySaved={vi.fn()}
         onNewStrategy={() => {}}
       />
     </TooltipProvider>
@@ -59,6 +61,8 @@ function mount(strict = false): void {
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.listStrategies.mockResolvedValue([strategy]);
+  // 认领是尽力而为：默认「没有会话」（404 形状的 reject），认领链静默收摊。
+  mocks.latestSession.mockRejectedValue(new Error("404 no session"));
   select.mockResolvedValue(undefined);
 });
 
@@ -218,14 +222,45 @@ describe("策略选中的启动恢复与镜像（三期 v2）", () => {
     expect(stored?.id).toBe("a1");
   });
 
-  it("无镜像时按签名认领：当前工作配置正是一个策略，就把它认回来", async () => {
-    // mount() 的 references = {endpoint: "default", prompt: "caption", skills: []}
-    // 与库里唯一策略的签名一致——启动即认领，不再显示「新建策略」。
+  it("会话域认领写回的骨架镜像（名称为空）：按 id 恢复并从库里补全名称", async () => {
+    // v3：认领只归会话域（Provider），它写回的镜像只有 id 骨架；工具栏按 id
+    // 恢复选中并补全名称，同时把镜像落回完整版。
+    localStorage.setItem(
+      "dsf-workbench-strategy",
+      JSON.stringify({
+        id: "a1",
+        name: "",
+        description: "",
+        endpoint: "",
+        prompt: "",
+        skills: [],
+      }),
+    );
     mount();
 
     await waitFor(() =>
       expect(screen.getByLabelText("策略名称")).toHaveValue("详细描述"),
     );
+    expect(screen.getByLabelText("策略描述")).toHaveValue("训练用");
+    const stored = JSON.parse(localStorage.getItem("dsf-workbench-strategy") ?? "null");
+    expect(stored?.name).toBe("详细描述");
+  });
+
+  it("镜像键为 null（新建态定案）：停在新建态，不认领", async () => {
+    localStorage.setItem("dsf-workbench-strategy", "null");
+    mount();
+
+    await waitFor(() => expect(mocks.listStrategies).toHaveBeenCalled());
+    await expect(screen.getByLabelText("策略名称")).toHaveValue("");
+  });
+
+  it("镜像键缺失：本组件不自行认领（不发请求），等会话域落盘", async () => {
+    mount();
+
+    await waitFor(() => expect(mocks.listStrategies).toHaveBeenCalled());
+    await expect(screen.getByLabelText("策略名称")).toHaveValue("");
+    // 认领请求只归会话域：工具栏 boot 零请求（boot 请求面确定性，E2E 基线不再竞速）。
+    expect(mocks.latestSession).not.toHaveBeenCalled();
   });
 
   it("镜像指向已删除的策略：保持新建态，不按签名认领", async () => {
@@ -268,6 +303,7 @@ describe("策略选中的启动恢复与镜像（三期 v2）", () => {
           skills={[]}
           locked={false}
           onSelect={select}
+          onStrategySaved={vi.fn()}
           onNewStrategy={onNewStrategy}
         />
       </TooltipProvider>,

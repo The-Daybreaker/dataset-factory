@@ -404,6 +404,9 @@ export interface paths {
         /**
          * Latest Session
          * @description 最新会话快照（重启恢复入口）；一个会话都没有时 404。
+         *
+         *     带 ``strategy_id`` 查询时按归属桶取最新（三期 v3：每策略各自的最近会话），
+         *     该桶为空同样 404；不带时为全局最新（存量认领垫层用）。
          */
         get: operations["latest_session_api_sessions_latest_get"];
         put?: never;
@@ -423,12 +426,16 @@ export interface paths {
         };
         /**
          * Get Session
-         * @description 某会话快照（设置 + 对话历史）。
+         * @description 某会话快照（设置 + 对话历史 + 归属）。
          */
         get: operations["get_session_api_sessions__session_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Session Endpoint
+         * @description 删除一个会话（事件流 + 附件 + 归属；有轮次在写时拒绝）。
+         */
+        delete: operations["delete_session_endpoint_api_sessions__session_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -451,6 +458,26 @@ export interface paths {
         get: operations["session_attachment_api_sessions__session_id__attachments__name__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/strategy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Assign Session Strategy
+         * @description 改挂会话归属（三期 v3）：保存新策略时把当前草稿会话从 ``__new__`` 挂到新 id。
+         */
+        post: operations["assign_session_strategy_api_sessions__session_id__strategy_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -689,6 +716,10 @@ export interface paths {
         /**
          * Delete Library Entry
          * @description 删除库策略（已应用的批次不受影响——copy-on-apply 持有内容副本）。
+         *
+         *     级联删除（三期 v3 用户定夺）：该策略名下的会话一并删除（滚动保留后至多一份
+         *     + 可能的失败半截会话）——用户明确不要孤儿会话。删除前检查进行中的打标轮次，
+         *     有则 409 拒绝整次删除（策略与会话同进退，不删一半）。
          */
         delete: operations["delete_library_entry_api_strategies__strategy_id__delete"];
         options?: never;
@@ -1631,6 +1662,17 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * AssignStrategyRequest
+         * @description POST /api/sessions/{id}/strategy 的请求体（保存新策略时改挂草稿会话）。
+         */
+        AssignStrategyRequest: {
+            /**
+             * Strategy Id
+             * @description 新归属（策略 id）
+             */
+            strategy_id: string;
+        };
+        /**
          * BatchCreateRequest
          * @description POST /api/workdirs/{wid}/batches 的请求体：新建批次。
          *
@@ -2553,6 +2595,11 @@ export interface components {
              */
             skill_names?: string[] | null;
             /**
+             * Strategy Id
+             * @description 会话归属（策略 id 或 __new__ 草稿桶）：新建会话时盖章，续接时忽略（归属跟随既有会话）
+             */
+            strategy_id?: string | null;
+            /**
              * Video Base64
              * @description 视频（data URL 或纯 base64）；与图片互斥（一期单素材/次）
              */
@@ -3000,6 +3047,11 @@ export interface components {
             /** Session Id */
             session_id: string;
             settings: components["schemas"]["SettingsView"];
+            /**
+             * Strategy Id
+             * @description 会话归属（策略 id / __new__ 草稿桶）；无归属为 null
+             */
+            strategy_id?: string | null;
         };
         /**
          * SettingsView
@@ -4440,7 +4492,9 @@ export interface operations {
     };
     latest_session_api_sessions_latest_get: {
         parameters: {
-            query?: never;
+            query?: {
+                strategy_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4463,6 +4517,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -4489,6 +4552,53 @@ export interface operations {
             };
             /** @description 会话不存在 */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_session_endpoint_api_sessions__session_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 会话不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description 会话有进行中的打标轮次 */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4536,6 +4646,59 @@ export interface operations {
                 };
             };
             /** @description 会话或附件不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    assign_session_strategy_api_sessions__session_id__strategy_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssignStrategyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionSnapshotResponse"];
+                };
+            };
+            /** @description strategy_id 非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description 会话不存在 */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -5174,6 +5337,16 @@ export interface operations {
             };
             /** @description 库策略不存在（problem+json: strategy-not-found） */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": unknown;
+                };
+            };
+            /** @description 策略的会话正在打标（problem+json: strategy-session-busy） */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

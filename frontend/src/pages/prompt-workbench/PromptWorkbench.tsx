@@ -43,6 +43,7 @@ import { reportError } from "../../lib/feedback";
 import { formatBytes } from "../../lib/format";
 import {
   isWorkbenchEditorMirror,
+  NEW_STRATEGY_ID,
   WORKBENCH_EDITOR_KEY,
   type WorkbenchEditorMirror,
 } from "../../lib/ui-storage";
@@ -98,7 +99,8 @@ export function PromptWorkbench({
     stopGeneration,
     newSession,
     clearConversation,
-    reattachOrClear,
+    attachBucket,
+    assignActiveSession,
     toggleSkill,
     applySkillNames,
     setInstruction,
@@ -160,10 +162,10 @@ export function PromptWorkbench({
         setIsNewDraft(false);
         setEditorFeedback(null);
         if (options?.resetSession === true) {
-          // 切提示词 = 下一轮换 system 底座（N1 同源③）。会话处理（v2）：磁盘最近
-          // 会话若正是这个提示词的（Skill 组合沿用当前勾选），切走再切回不丢历史；
-          // 真换了底座才清空。
-          reattachOrClear({ promptName: full.name });
+          // 切提示词 = 下一轮换 system 底座（N1 同源③）：旧对话接着新配置只会
+          // 让产出来源混乱——直接清空（桶不变，下轮发送的新会话仍记在当前桶名下；
+          // 切回原提示词后的接续靠切桶，不靠签名猜测）。
+          clearConversation();
         }
       } catch (err) {
         if (
@@ -174,7 +176,7 @@ export function PromptWorkbench({
         failEditor(err);
       }
     },
-    [reattachOrClear, failEditor],
+    [clearConversation, failEditor],
   );
 
   useEffect(
@@ -478,18 +480,16 @@ export function PromptWorkbench({
                   "",
               );
               // 切策略 = 换端点 + 提示词 + Skill 的整套口径（N1 同源③）。会话处理
-              // （v2）：磁盘最近会话若正属于这个策略（提示词 + Skill 签名一致）就
-              // 接续显示——「切走再切回」不丢历史；真换了底座才清空。
+              // （v3，归属即身份）：进该策略的桶——拉它名下最近会话接上（「切走
+              // 再切回」不丢历史），桶里还没有会话就空白起步。
               applySkillNames(strategy.skills);
-              reattachOrClear({
-                promptName: full.name,
-                skills: strategy.skills,
-              });
+              attachBucket(strategy.id);
             } finally {
               setStrategyBusy(false);
             }
           }}
-          onNewStrategy={() => clearConversation()}
+          onNewStrategy={() => attachBucket(NEW_STRATEGY_ID)}
+          onStrategySaved={(strategy) => assignActiveSession(strategy.id)}
         />
         <fieldset
           // N1④（2026-09-21 审计）：发送中只锁配置类操作、不锁整页——「能打字 /

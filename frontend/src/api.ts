@@ -546,8 +546,24 @@ export const api = {
       `/api/workdirs/${encodeURIComponent(wid)}/batches/${encodeURIComponent(batch)}/items`,
     ),
 
-  /** 取最新会话快照（重启后恢复界面的入口）。 */
-  latestSession: () => request<SessionSnapshotResponse>("GET", "/api/sessions/latest"),
+  /**
+   * 取最新会话快照（重启后恢复界面的入口）。
+   * 带 strategyId 时按归属桶取最新（三期 v3：每策略各自的最近会话）；
+   * 不带为全局最新（存量认领垫层）。
+   */
+  latestSession: (strategyId?: string) =>
+    request<SessionSnapshotResponse>(
+      "GET",
+      `/api/sessions/latest${strategyId === undefined ? "" : `?strategy_id=${encodeURIComponent(strategyId)}`}`,
+    ),
+
+  /** 改挂会话归属（保存新策略时把草稿会话从 __new__ 挂到新策略 id）。 */
+  assignSessionStrategy: (sessionId: string, strategyId: string) =>
+    request<SessionSnapshotResponse>(
+      "POST",
+      `/api/sessions/${encodeURIComponent(sessionId)}/strategy`,
+      { strategy_id: strategyId },
+    ),
 
   /**
    * 会话附件的字节地址（B5）：历史缩略图直接指向它，刷新 / 重开页面仍能显示。
