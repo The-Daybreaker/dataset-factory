@@ -98,6 +98,7 @@ export function PromptWorkbench({
     stopGeneration,
     newSession,
     clearConversation,
+    reattachOrClear,
     toggleSkill,
     applySkillNames,
     setInstruction,
@@ -159,9 +160,10 @@ export function PromptWorkbench({
         setIsNewDraft(false);
         setEditorFeedback(null);
         if (options?.resetSession === true) {
-          // 切提示词 = 下一轮换 system 底座（N1 同源③）：旧对话接着新配置只会
-          // 让产出来源混乱——直接重开会话，界面上的清空就是最直白的告知。
-          clearConversation();
+          // 切提示词 = 下一轮换 system 底座（N1 同源③）。会话处理（v2）：磁盘最近
+          // 会话若正是这个提示词的（Skill 组合沿用当前勾选），切走再切回不丢历史；
+          // 真换了底座才清空。
+          reattachOrClear({ promptName: full.name });
         }
       } catch (err) {
         if (
@@ -172,7 +174,7 @@ export function PromptWorkbench({
         failEditor(err);
       }
     },
-    [clearConversation, failEditor],
+    [reattachOrClear, failEditor],
   );
 
   useEffect(
@@ -475,13 +477,19 @@ export function PromptWorkbench({
                 endpoints.find((entry) => entry.name === strategy.endpoint)?.model ??
                   "",
               );
-              // 切策略 = 换端点 + 提示词 + Skill 的整套口径（N1 同源③）：旧对话的
-              // 产出来自旧配置，接着聊只会混淆出处——直接重开会话。
-              clearConversation();
+              // 切策略 = 换端点 + 提示词 + Skill 的整套口径（N1 同源③）。会话处理
+              // （v2）：磁盘最近会话若正属于这个策略（提示词 + Skill 签名一致）就
+              // 接续显示——「切走再切回」不丢历史；真换了底座才清空。
+              applySkillNames(strategy.skills);
+              reattachOrClear({
+                promptName: full.name,
+                skills: strategy.skills,
+              });
             } finally {
               setStrategyBusy(false);
             }
           }}
+          onNewStrategy={() => clearConversation()}
         />
         <fieldset
           // N1④（2026-09-21 审计）：发送中只锁配置类操作、不锁整页——「能打字 /

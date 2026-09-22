@@ -14,6 +14,7 @@ import {
   type PromptInfo,
   type SkillInfo,
 } from "../../api";
+import type { components } from "../../api-types.gen";
 import { ChatSessionProvider } from "./chat-session";
 import { PromptWorkbench } from "./PromptWorkbench";
 
@@ -801,5 +802,101 @@ describe("编辑器镜像与恢复优先级（三期）", () => {
     expect(screen.getByLabelText("名称")).toHaveValue("");
     // 交互让位已发生：后端快照 / 首条都不应覆盖新建态。
     expect(apiMock.getPrompt).not.toHaveBeenCalled();
+  });
+});
+
+describe("策略与会话的一致性（三期 v2）", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  const WORKBENCH_STRATEGY: components["schemas"]["StrategyView"] = {
+    id: "s1",
+    name: "测试策略",
+    description: "回归用",
+    endpoint: "default",
+    prompt: "h3-video",
+    skills: [],
+    body_chars: 100,
+    available: true,
+    missing_refs: [],
+    created_at: "2026-09-22T00:00:00Z",
+    updated_at: "2026-09-22T00:00:00Z",
+  };
+
+  it("用户实测场景回归：重启后策略选中恢复、对话历史在策略下而非新建策略页", async () => {
+    localStorage.setItem(
+      "dsf-workbench-strategy",
+      JSON.stringify({
+        id: "s1",
+        name: "测试策略",
+        description: "回归用",
+        endpoint: "default",
+        prompt: "h3-video",
+        skills: [],
+      }),
+    );
+    apiMock.listStrategies.mockResolvedValue([WORKBENCH_STRATEGY]);
+    apiMock.latestSession.mockResolvedValue({
+      session_id: "s-old",
+      settings: { prompt_name: "h3-video", skill_names: [] },
+      messages: [{ role: "user", text: "重启前的策略对话", attachment: null }],
+    });
+    renderWorkbench();
+
+    // 策略选中恢复（此前：工具栏回落「新建策略」）
+    await waitFor(() =>
+      expect(screen.getByLabelText("策略名称")).toHaveValue("测试策略"),
+    );
+    // 会话恢复（此前：历史挂在新建策略页 / 或被切策略动作清掉）
+    expect(await screen.findByText("重启前的策略对话")).toBeInTheDocument();
+  });
+
+  it("策略镜像的 Skill 组合与快照不符：会话不复活，Skill 组合以策略为准带回", async () => {
+    localStorage.setItem(
+      "dsf-workbench-strategy",
+      JSON.stringify({
+        id: "s1",
+        name: "测试策略",
+        description: "回归用",
+        endpoint: "default",
+        prompt: "h3-video",
+        skills: ["h3-skill"],
+      }),
+    );
+    apiMock.listStrategies.mockResolvedValue([
+      { ...WORKBENCH_STRATEGY, skills: ["h3-skill"] },
+    ]);
+    apiMock.latestSession.mockResolvedValue({
+      session_id: "s-old",
+      settings: { prompt_name: "h3-video", skill_names: ["别的组合"] },
+      messages: [{ role: "user", text: "别的配置的会话", attachment: null }],
+    });
+    renderWorkbench();
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("策略名称")).toHaveValue("测试策略"),
+    );
+    // 快照的 Skill 组合与策略不符 = 会话属于别的配置 → 不复活
+    expect(screen.queryByText("别的配置的会话")).not.toBeInTheDocument();
+    // 但策略维度的状态照常回来：Skill 组合以策略为准
+    expect(await screen.findByText("h3-skill")).toBeInTheDocument();
+  });
+
+  it("切走再切回：签名一致的会话接续（应用策略不清历史）", async () => {
+    apiMock.listStrategies.mockResolvedValue([WORKBENCH_STRATEGY]);
+    apiMock.latestSession.mockResolvedValue({
+      session_id: "s-old",
+      settings: { prompt_name: "h3-video", skill_names: [] },
+      messages: [{ role: "user", text: "策略会话的历史", attachment: null }],
+    });
+    renderWorkbench();
+    await screen.findByText("策略会话的历史");
+
+    // 用户在工具栏再次应用同一策略（切走又切回的终点）：签名一致 → 接续而非清空
+    await userEvent.click(screen.getByRole("button", { name: "切换策略" }));
+    await userEvent.click(await screen.findByRole("button", { name: /^测试策略/ }));
+
+    await expect(screen.getByText("策略会话的历史")).toBeInTheDocument();
   });
 });

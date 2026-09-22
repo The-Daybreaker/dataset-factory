@@ -8,7 +8,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../api-types.gen";
 import { TooltipProvider } from "../../components/ui/tooltip";
 import { StrategyToolbar } from "./StrategyToolbar";
@@ -50,6 +50,7 @@ function mount(strict = false): void {
         skills={[]}
         locked={false}
         onSelect={select}
+        onNewStrategy={() => {}}
       />
     </TooltipProvider>
   );
@@ -187,4 +188,100 @@ it("下拉行给出注入字数，悬停可见出身三参数", async () => {
   expect(tip).toHaveTextContent("提示词");
   expect(tip).toHaveTextContent("caption");
   expect(tip).toHaveTextContent("Skill");
+});
+
+describe("策略选中的启动恢复与镜像（三期 v2）", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("镜像按 id 恢复选中：重启后不再是新建策略，名称/描述用镜像缓冲", async () => {
+    localStorage.setItem(
+      "dsf-workbench-strategy",
+      JSON.stringify({
+        id: "a1",
+        name: "详细描述（未保存改名）",
+        description: "训练用",
+        endpoint: "default",
+        prompt: "caption",
+        skills: [],
+      }),
+    );
+    mount();
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("策略名称")).toHaveValue("详细描述（未保存改名）"),
+    );
+    expect(screen.getByLabelText("策略描述")).toHaveValue("训练用");
+    // 恢复不触碰门闩：镜像原样保留（不会被挂载首帧的空白冲掉）。
+    const stored = JSON.parse(localStorage.getItem("dsf-workbench-strategy") ?? "null");
+    expect(stored?.id).toBe("a1");
+  });
+
+  it("无镜像时按签名认领：当前工作配置正是一个策略，就把它认回来", async () => {
+    // mount() 的 references = {endpoint: "default", prompt: "caption", skills: []}
+    // 与库里唯一策略的签名一致——启动即认领，不再显示「新建策略」。
+    mount();
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("策略名称")).toHaveValue("详细描述"),
+    );
+  });
+
+  it("镜像指向已删除的策略：保持新建态，不按签名认领", async () => {
+    localStorage.setItem(
+      "dsf-workbench-strategy",
+      JSON.stringify({
+        id: "ghost",
+        name: "已删除的策略",
+        description: "",
+        endpoint: "default",
+        prompt: "caption",
+        skills: [],
+      }),
+    );
+    mount();
+
+    await waitFor(() => expect(mocks.listStrategies).toHaveBeenCalled());
+    await expect(screen.getByLabelText("策略名称")).toHaveValue("");
+  });
+
+  it("新建策略回调：离开当前配置时通知工作域清会话", async () => {
+    const onNewStrategy = vi.fn();
+    localStorage.setItem(
+      "dsf-workbench-strategy",
+      JSON.stringify({
+        id: "a1",
+        name: "详细描述",
+        description: "训练用",
+        endpoint: "default",
+        prompt: "caption",
+        skills: [],
+      }),
+    );
+    render(
+      <TooltipProvider>
+        <StrategyToolbar
+          references={{ endpoint: "default", prompt: "caption", skills: [] }}
+          prompts={[{ name: "caption", description: "" }]}
+          endpoints={[]}
+          skills={[]}
+          locked={false}
+          onSelect={select}
+          onNewStrategy={onNewStrategy}
+        />
+      </TooltipProvider>,
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("策略名称")).toHaveValue("详细描述"),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "切换策略" }));
+    await userEvent.click(screen.getByRole("button", { name: "新建策略" }));
+
+    expect(onNewStrategy).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("策略名称")).toHaveValue("");
+    // 明确离开：镜像如实落 null，重启不再认领旧策略。
+    expect(localStorage.getItem("dsf-workbench-strategy")).toBe("null");
+  });
 });

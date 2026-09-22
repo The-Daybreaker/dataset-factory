@@ -37,6 +37,13 @@ import {
 } from "../../components/ui/tooltip";
 import { reportError } from "../../lib/feedback";
 import { formatChars } from "../../lib/format";
+import {
+  isStrategySelection,
+  readStoredJson,
+  sameSkills,
+  WORKBENCH_STRATEGY_KEY,
+  writeStoredJson,
+} from "../../lib/ui-storage";
 
 type Strategy = components["schemas"]["StrategyView"];
 type References = Pick<Strategy, "endpoint" | "prompt" | "skills">;
@@ -64,6 +71,7 @@ export function StrategyToolbar({
   endpoints,
   locked,
   onSelect,
+  onNewStrategy,
 }: {
   references: References;
   prompts: PromptInfo[];
@@ -71,6 +79,8 @@ export function StrategyToolbar({
   endpoints: EndpointConfigSummary[];
   locked: boolean;
   onSelect: (strategy: Strategy) => Promise<void>;
+  /** 点「新建策略」时回调：换底座语义，工作域据此清空会话（与切策略一致）。 */
+  onNewStrategy: () => void;
 }): ReactElement {
   const [entries, setEntries] = useState<Strategy[]>([]);
   const [selected, setSelected] = useState<Strategy | null>(null);
@@ -91,6 +101,11 @@ export function StrategyToolbar({
   });
   const mounted = useRef(true);
   const pending = useRef(false);
+  // 策略选中镜像的写入门闩：挂载首帧不写（防止空白态冲掉既有镜像），任何真实
+  // 交互（新建 / 改名 / 选中等）后才落盘。见下方持久化与恢复两个 effect。
+  const selectionTouched = useRef(false);
+  // 启动恢复的一次性门闩：镜像认领 + 签名认领只试一轮，之后交给用户。
+  const selectionResolved = useRef(false);
 
   useEffect(() => {
     mounted.current = true;
@@ -99,8 +114,13 @@ export function StrategyToolbar({
     };
   }, []);
 
+  // 策略库列表：挂载即拉（三期 v2——boot 要恢复「我在哪个策略里」，不能等首次
+  // 打开下拉），此后每次打开下拉重拉一份；关闭后跳过（保留当前清单），取消链随
+  // 依赖变化级联（旧响应迟到不覆盖新清单，见 StrictMode 用例）。
+  const firstLoad = useRef(true);
   useEffect(() => {
-    if (!open) return;
+    if (!open && !firstLoad.current) return;
+    firstLoad.current = false;
     let cancelled = false;
     setLoading(true);
     void api
@@ -125,6 +145,65 @@ export function StrategyToolbar({
     };
   }, [open]);
 
+  // 策略选中镜像落盘：id + 名称/描述缓冲 + 签名四元组（会话域对账与重启恢复都认它）。
+  // 新建态（无选中）落 null——新建草稿缓冲不跨重启；门闩未开不写，防止挂载首帧
+  // 用空白冲掉既有镜像。
+  useEffect(() => {
+    if (!selectionTouched.current) return;
+    writeStoredJson(
+      WORKBENCH_STRATEGY_KEY,
+      selected === null
+        ? null
+        : {
+            id: selected.id,
+            name,
+            description,
+            endpoint: selected.endpoint,
+            prompt: selected.prompt,
+            skills: selected.skills,
+          },
+    );
+  }, [selected, name, description]);
+
+  // 策略选中的启动恢复（三期 v2，修「重启变成新建策略、历史挂在新建策略页」）：
+  // ① 镜像按 id 对号入座（名称/描述用镜像缓冲——未保存的改动也是用户意图）；
+  // ② 镜像缺失时按当前工作配置的签名（提示词 + Skill 组合）从库里认领——
+  //    「历史挂在新建策略页」的反向兜底；镜像指向已删除的策略则不认领（空着）。
+  // 一次性：条件不成熟（列表 / 配置未就绪）可推迟，尝试过或用户已动手即收摊。
+  useEffect(() => {
+    if (selectionResolved.current || selectionTouched.current) return;
+    if (loading || entries.length === 0) return;
+    if (selected !== null || name !== "" || description !== "") {
+      selectionResolved.current = true;
+      return;
+    }
+    const mirror = readStoredJson(WORKBENCH_STRATEGY_KEY, isStrategySelection);
+    if (mirror !== null) {
+      const byId = entries.find((entry) => entry.id === mirror.id);
+      if (byId !== undefined) {
+        setSelected(byId);
+        setName(mirror.name);
+        setDescription(mirror.description);
+      }
+      // 镜像指向已删除的策略：不按签名认领（用户明确选过它，它没了就空着）。
+      selectionResolved.current = true;
+      return;
+    }
+    if (references.prompt === "") return;
+    const match = entries.find(
+      (entry) =>
+        entry.available &&
+        entry.prompt === references.prompt &&
+        sameSkills(entry.skills, references.skills),
+    );
+    if (match !== undefined) {
+      setSelected(match);
+      setName(match.name);
+      setDescription(match.description);
+    }
+    selectionResolved.current = true;
+  }, [entries, loading, selected, name, description, references]);
+
   const remember = (entry: Strategy): void => {
     setEntries((current) =>
       [...current.filter((item) => item.id !== entry.id), entry].sort((a, b) =>
@@ -135,6 +214,7 @@ export function StrategyToolbar({
   const operate = async (operation: () => Promise<void>): Promise<void> => {
     if (pending.current) return;
     pending.current = true;
+    selectionTouched.current = true;
     setBusy(true);
     setError("");
     try {
@@ -205,7 +285,10 @@ export function StrategyToolbar({
             placeholder="新建策略"
             value={name}
             disabled={busy}
-            onChange={(event) => setName(event.currentTarget.value)}
+            onChange={(event) => {
+              selectionTouched.current = true;
+              setName(event.currentTarget.value);
+            }}
             className="min-w-24 max-w-full field-sizing-content rounded-md border border-transparent bg-transparent py-1 pr-7 pl-2 text-t-2xl font-semibold hover:border-border hover:bg-card focus:border-input"
           />
           <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -248,10 +331,14 @@ export function StrategyToolbar({
                       aria-label="新建策略"
                       disabled={busy || loading || locked}
                       onClick={() => {
+                        selectionTouched.current = true;
+                        selectionResolved.current = true;
                         setSelected(null);
                         setName("");
                         setDescription("");
                         setOpen(false);
+                        // 新建 = 离开当前配置（换底座）：会话清空，与切策略同语义。
+                        onNewStrategy();
                       }}
                     >
                       <PlusIcon />
@@ -357,7 +444,10 @@ export function StrategyToolbar({
           placeholder="描述"
           value={description}
           disabled={busy}
-          onChange={(event) => setDescription(event.currentTarget.value)}
+          onChange={(event) => {
+            selectionTouched.current = true;
+            setDescription(event.currentTarget.value);
+          }}
           className="min-w-24 max-w-full field-sizing-content rounded-md border border-transparent bg-transparent px-2 py-1 text-t-md text-text-3 hover:border-border hover:bg-card focus:border-input"
         />
         <span className="hidden flex-1 sm:block" />

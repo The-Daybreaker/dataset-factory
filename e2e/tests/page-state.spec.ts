@@ -61,4 +61,42 @@ test.describe("页面状态保持（三期）", () => {
     await expect(page.getByTestId("page-prompts")).toBeVisible();
     await expect(page.getByLabel("名称", { exact: true })).toHaveValue("重启草稿");
   });
+
+  test("策略会话跨重启：策略选中恢复、对话接续、切走再切回不丢（v2）", async ({ page }) => {
+    await page.goto("/");
+    // 建提示词 → 存 → 建策略 → 存 → 下拉点选应用 → 发消息等回复。
+    await page.getByRole("button", { name: "切换提示词" }).click();
+    await page.getByRole("button", { name: "新建提示词" }).click();
+    await page.getByLabel("名称", { exact: true }).fill("状态保持策略提示词");
+    await page.getByLabel("正文（Markdown）").fill("客观描述可见画面。");
+    await page.getByRole("button", { name: "保存", exact: true }).click();
+    await expect(page.getByText(/已保存提示词/)).toBeVisible();
+    await page.getByLabel("策略名称", { exact: true }).fill("E2E 状态策略");
+    await page.getByRole("button", { name: "保存策略" }).click();
+    await page.getByRole("button", { name: "切换策略" }).click();
+    await page.getByRole("button", { name: /^E2E 状态策略/ }).click();
+    await page.getByLabel("打标指令").fill("策略会话第一句");
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(page.getByText("E2E 假模型的打标结果").last()).toBeVisible({
+      timeout: 15_000,
+    });
+
+    await page.reload();
+
+    // 用户实测场景：重启后策略仍是「E2E 状态策略」，对话历史挂在它下面。
+    await expect(page.getByLabel("策略名称", { exact: true })).toHaveValue(
+      "E2E 状态策略",
+    );
+    await expect(page.getByText("E2E 假模型的打标结果").last()).toBeVisible();
+
+    // 切走（新建策略 = 换底座）→ 会话清空。
+    await page.getByRole("button", { name: "切换策略" }).click();
+    await page.getByRole("button", { name: "新建策略" }).click();
+    await expect(page.getByText(/暂无消息/)).toBeVisible();
+
+    // 切回 → 签名一致，磁盘最近会话接续，历史回来。
+    await page.getByRole("button", { name: "切换策略" }).click();
+    await page.getByRole("button", { name: /^E2E 状态策略/ }).click();
+    await expect(page.getByText("E2E 假模型的打标结果").last()).toBeVisible();
+  });
 });

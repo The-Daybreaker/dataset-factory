@@ -57,9 +57,45 @@ export function isWorkbenchEditorMirror(
 /** 会话域：输入框草稿（未发送的指令文本）。 */
 export const CHAT_INSTRUCTION_KEY = "dsf-chat-instruction";
 
+/**
+ * 策略页：当前选中的策略（策略工具栏的「我在哪个策略里工作」）。与编辑器镜像
+ * 成对落盘——策略与提示词是两个维度：两条策略可共用同一篇提示词，只凭提示词
+ * 名分不出是谁。会话恢复的签名对账同时用两者（见 chat-session.tsx）。
+ */
+export const WORKBENCH_STRATEGY_KEY = "dsf-workbench-strategy";
+export interface StrategySelection {
+  id: string;
+  name: string;
+  description: string;
+  endpoint: string;
+  prompt: string;
+  skills: string[];
+}
+export function isStrategySelection(value: unknown): value is StrategySelection {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.id === "string" &&
+    typeof v.name === "string" &&
+    typeof v.description === "string" &&
+    typeof v.endpoint === "string" &&
+    typeof v.prompt === "string" &&
+    Array.isArray(v.skills) &&
+    v.skills.every((item) => typeof item === "string")
+  );
+}
+
 /** 打标页：左列筛选词 / 选中素材（素材 id 批次内有效，恢复时对装载结果校验）。 */
 export const LABELING_QUERY_KEY = "dsf-labeling-query";
 export const LABELING_SELECTED_ITEM_KEY = "dsf-labeling-selected-item";
+
+/** Skill 组合等值：顺序不敏感（组合是集合语义，落盘顺序随写入口可能漂移）。 */
+export function sameSkills(a: string[], b: string[]): boolean {
+  return (
+    a.length === b.length &&
+    JSON.stringify([...a].sort()) === JSON.stringify([...b].sort())
+  );
+}
 
 function isStringValue(value: unknown): value is string {
   return typeof value === "string";

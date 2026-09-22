@@ -28,11 +28,16 @@ import { usePersistedState } from "../../hooks/use-persisted-state";
 import { reportError } from "../../lib/feedback";
 import {
   CHAT_INSTRUCTION_KEY,
+  isStrategySelection,
   isWorkbenchEditorMirror,
   readStoredJson,
+  sameSkills,
   WORKBENCH_EDITOR_KEY,
+  WORKBENCH_STRATEGY_KEY,
 } from "../../lib/ui-storage";
 import type { ChatMessage, PendingMedia } from "./types";
+
+type SessionSnapshot = Awaited<ReturnType<typeof api.latestSession>>;
 
 /** 抽视频首帧与时长（L26/V8）：本地 <video> 解码，失败静默降级为图标（不打扰发送）。 */
 function captureVideoMeta(
@@ -100,6 +105,8 @@ interface ChatSessionValue {
   newSession(): void;
   /** 清对话列（切提示词 / 切策略 = 换 system 底座）：保留输入与附件，不重开输入状态。 */
   clearConversation(): void;
+  /** 切换「工作配置」时的会话处理：签名一致接续磁盘最近会话，否则清空（见实现注）。 */
+  reattachOrClear(sig: { promptName: string | null; skills?: string[] }): void;
   toggleSkill(name: string): void;
   /** 整组替换 Skill 组合（策略应用时用；与 toggleSkill 同为会话域状态）。 */
   applySkillNames(names: string[]): void;
@@ -149,53 +156,70 @@ export function ChatSessionProvider({
   // 快照就是过时的，整体放弃应用（迟到的恢复不覆盖当前状态）。
   const userActedRef = useRef(0);
 
+  // 会话快照的统一应用口：启动恢复与「切回同配置接续」（reattachOrClear）共用。
+  // 历史附件直连会话附件端点（B5）：缩略图不再依赖内存 dataURL，刷新不丢。
+  const applySnapshot = useCallback((snapshot: SessionSnapshot): void => {
+    setRestoredPromptName(snapshot.settings.prompt_name);
+    setSessionId(snapshot.session_id);
+    setSkillNames(snapshot.settings.skill_names);
+    setMessages(
+      snapshot.messages.map((item, index) => ({
+        ...item,
+        id: index,
+        ...(item.attachment !== null
+          ? {
+              attachmentUrl: api.sessionAttachmentUrl(
+                snapshot.session_id,
+                item.attachment,
+              ),
+            }
+          : {}),
+      })),
+    );
+    setRestoreState("restored");
+  }, []);
+
   // 恢复最近一次会话（「还没有会话」404 是首次使用的正常情况，不当错误展示）。
+  // 与工作配置对账（v2，2026-09-22 用户实测曝光的策略维度缺口）：会话属于哪个
+  // 「配置」由签名决定——提示词名 + Skill 组合。
+  //   · 编辑器镜像的选中提示词 ≠ 快照 → 用户切了选择没发（切选择清空会话），不复活；
+  //   · 策略镜像存在且其 Skill 组合 ≠ 快照 → 同理（两条策略可共用一篇提示词，
+  //     只凭提示词名分不出是谁）；无论会话是否恢复，策略维度的状态都要带回来——
+  //     Skill 组合以策略为准回到会话域，工具栏的策略选中由它自己的镜像恢复。
   useEffect(() => {
     let cancelled = false;
+    const strategy = readStoredJson(WORKBENCH_STRATEGY_KEY, isStrategySelection);
     void (async () => {
       try {
         const snapshot = await api.latestSession();
         if (cancelled || userActedRef.current > 0) {
           return;
         }
-        // 与编辑器镜像对账：镜像指向另一个提示词 = 用户切了选择没发——切选择
-        // （下拉选提示词 / 应用策略）在产品语义里会清空会话，重启不复活它。
-        // 新建草稿（selectedName 为空）不清会话，不算分叉；镜像与快照一致
-        // （或没有镜像 / 没有快照）才照旧恢复。
         const mirror = readStoredJson(WORKBENCH_EDITOR_KEY, isWorkbenchEditorMirror);
-        if (
+        const promptMismatch =
           mirror !== null &&
           mirror.selectedName !== "" &&
-          mirror.selectedName !== (snapshot.settings.prompt_name ?? "")
-        ) {
+          mirror.selectedName !== (snapshot.settings.prompt_name ?? "");
+        const skillsMismatch =
+          strategy !== null &&
+          !sameSkills(strategy.skills, snapshot.settings.skill_names ?? []);
+        if (promptMismatch || skillsMismatch) {
+          if (strategy !== null) {
+            setSkillNames(strategy.skills);
+          }
           setRestoreState("empty");
           return;
         }
-        setRestoredPromptName(snapshot.settings.prompt_name);
-        setSessionId(snapshot.session_id);
-        setSkillNames(snapshot.settings.skill_names);
-        // 历史附件直连会话附件端点（B5）：缩略图不再依赖内存 dataURL，刷新不丢。
-        setMessages(
-          snapshot.messages.map((item, index) => ({
-            ...item,
-            id: index,
-            ...(item.attachment !== null
-              ? {
-                  attachmentUrl: api.sessionAttachmentUrl(
-                    snapshot.session_id,
-                    item.attachment,
-                  ),
-                }
-              : {}),
-          })),
-        );
-        setRestoreState("restored");
+        applySnapshot(snapshot);
       } catch (err) {
         if (cancelled || userActedRef.current > 0) {
           return;
         }
         const noSessionYet = err instanceof ApiError && err.status === 404;
         if (noSessionYet) {
+          if (strategy !== null) {
+            setSkillNames(strategy.skills);
+          }
           setRestoreState("empty");
         } else {
           setChatErrorState(reportError(err) ?? "");
@@ -206,7 +230,7 @@ export function ChatSessionProvider({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [applySnapshot]);
 
   // 发送期间每秒累加等待时间；结束（成功 / 失败）时归零。
   useEffect(() => {
@@ -396,6 +420,37 @@ export function ChatSessionProvider({
     setChatErrorState("");
   }, []);
 
+  /** 切换「工作配置」（应用策略 / 切提示词）时的会话处理：磁盘上最近的会话若属于
+   * 同一配置（签名一致：提示词名必比；sig.skills 给出时 Skill 组合也必比）就接续
+   * 显示——「切走再切回」不丢历史；配置真换了（换底座）才清空。404（还没有会话）
+   * 等同清空；其余错误清空并照常报错。 */
+  const reattachOrClear = useCallback(
+    (sig: { promptName: string | null; skills?: string[] }): void => {
+      userActedRef.current += 1;
+      void (async () => {
+        try {
+          const snapshot = await api.latestSession();
+          const promptMatches =
+            (snapshot.settings.prompt_name ?? "") === (sig.promptName ?? "");
+          const skillsMatch =
+            sig.skills === undefined ||
+            sameSkills(snapshot.settings.skill_names ?? [], sig.skills);
+          if (promptMatches && skillsMatch) {
+            applySnapshot(snapshot);
+          } else {
+            clearConversation();
+          }
+        } catch (err) {
+          clearConversation();
+          if (!(err instanceof ApiError && err.status === 404)) {
+            setChatErrorState(reportError(err) ?? "");
+          }
+        }
+      })();
+    },
+    [applySnapshot, clearConversation],
+  );
+
   const toggleSkill = useCallback((name: string): void => {
     if (sendingRef.current) return;
     userActedRef.current += 1;
@@ -500,6 +555,7 @@ export function ChatSessionProvider({
         stopGeneration,
         newSession,
         clearConversation,
+        reattachOrClear,
         toggleSkill,
         applySkillNames,
         setInstruction,
