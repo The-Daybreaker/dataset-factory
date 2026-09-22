@@ -101,7 +101,7 @@ describe("SettingsPage · 连接·端点配置", () => {
     expect(await screen.findByText(/写入失败/)).toBeVisible();
   });
 
-  it("列表 + 详情回填：名称只读、密钥只报来源不回内容", async () => {
+  it("列表 + 详情回填：名称可编辑、密钥只报来源不回内容", async () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
@@ -109,7 +109,7 @@ describe("SettingsPage · 连接·端点配置", () => {
     });
     expect(screen.getByText("backup")).toBeInTheDocument();
     expect(screen.getByLabelText("名称")).toHaveValue("default");
-    expect(screen.getByLabelText("名称")).toBeDisabled();
+    expect(screen.getByLabelText("名称")).toBeEnabled();
     expect(screen.getByLabelText("模型名称")).toHaveValue("model-a");
     expect(screen.getByText(/已配置 · 来源：credentials 文件/)).toBeInTheDocument();
   });
@@ -132,6 +132,43 @@ describe("SettingsPage · 连接·端点配置", () => {
       });
     });
     expect(await screen.findByText("已保存「default」的更改")).toBeInTheDocument();
+  });
+
+  it("改名保存：带 new_name 调 updateEndpoint，反馈与详情切到新名", async () => {
+    const renamed: EndpointConfigSummary = {
+      name: "renamed",
+      base_url: "https://a/v1",
+      model: "model-a",
+      api_format: "openai-chat-completions",
+      has_api_key: true,
+      is_active: true,
+      request_params: {},
+    };
+    // 改名后 reload 拿到含新名的列表，详情区保持在新配置上（同「添加配置」的两次 mock 口径）。
+    apiMock.listEndpoints
+      .mockResolvedValueOnce(ENDPOINTS)
+      .mockResolvedValue([ENDPOINTS[1], renamed]);
+    apiMock.updateEndpoint.mockResolvedValue(renamed);
+    render(<SettingsPage />);
+
+    await waitFor(() => screen.getByLabelText("Base URL"));
+    await userEvent.clear(screen.getByLabelText("名称"));
+    await userEvent.type(screen.getByLabelText("名称"), "renamed");
+    await userEvent.click(screen.getByRole("button", { name: "保存更改" }));
+
+    await waitFor(() => {
+      expect(apiMock.updateEndpoint).toHaveBeenCalledWith("default", {
+        base_url: "https://a/v1",
+        model: "model-a",
+        api_format: "openai-chat-completions",
+        request_params: {},
+        new_name: "renamed",
+      });
+    });
+    expect(
+      await screen.findByText("已改名并保存：「default」→「renamed」"),
+    ).toBeInTheDocument();
+    expect(await screen.findByLabelText("名称")).toHaveValue("renamed");
   });
 
   it("添加配置：创建后给出成功反馈", async () => {

@@ -21,6 +21,7 @@ const PARAM_LABELS: Record<string, string> = {
   temperature: "温度 temperature",
   top_p: "多样性 top_p",
   max_tokens: "输出上限 max_tokens",
+  enable_thinking: "思考模式 enable_thinking",
   timeout_seconds: "超时（秒）",
   max_retries: "自动重试",
   extra_body: "透传参数 extra_body",

@@ -4,17 +4,26 @@
  */
 import type { EndpointRequestParams } from "../../api";
 
-/** 「模型通用参数」的表单键——JSON ⇄ 表单双向同步只发生在这些键上。 */
+/** 「模型通用参数」的文本表单键——JSON ⇄ 文本表单双向同步只发生在这些键上。 */
 const ADV_STANDARD_KEYS: readonly string[] = ["temperature", "top_p", "max_tokens"];
 
+/** JSON 里的「已知键」= 文本表单键 + extra_body（透传对象）+ enable_thinking（思考开关，由三态控件管）。 */
+const ADV_KNOWN_KEYS: readonly string[] = [
+  ...ADV_STANDARD_KEYS,
+  "enable_thinking",
+  "extra_body",
+];
+
 /**
- * 思考模式三态（A1，2026-09-21 审计定案）：
+ * 思考模式三态（A1 定案 → B 方案一等参数化，2026-09-23）：
  * - default「跟随模型默认」= 不主动发思考参数（行为与不设置完全一致）；
- * - on / off = 写 `extra_body.chat_template_kwargs.enable_thinking`（Qwen 系口径）。
+ * - on / off = 请求体顶层的 `enable_thinking` 布尔参数（SiliconFlow / DashScope 官方口径，
+ *   覆盖 Qwen3.x、DeepSeek-V3.2+、GLM、Kimi 等）。
  *
- * 走 extra_body 是刻意的：它是端点配置白名单里现成的透传通道（llm/endpoints.py），
- * 新增白名单键要动后端契约，而透传对象零契约变更、对其他厂商字段同样适用——
- * 其他推理模型（reasoning_effort 等）直接手写进 extra_body JSON 即可（逃生门）。
+ * 历史口径说明：A1 曾写 `extra_body.chat_template_kwargs.enable_thinking`（vLLM 自部署
+ * 形状），SiliconFlow 对 Qwen3.5 静默忽略——2026-09-22 用户报「关闭仍思考」的根因。
+ * 读取兼容旧形状（把旧键识别为当前态），保存 / 设开关时迁移到一等键并清掉旧键。
+ *
  * 一个开关对话与跑批共用：值存进端点配置后，对话页实时读、建批次时随快照复制，
  * 「先试标再跑批」的口径天然一致。
  */
@@ -25,12 +34,17 @@ interface ThinkingExtraBody {
   [key: string]: unknown;
 }
 
-/** 从参数 JSON 读思考模式（JSON 无效 / 缺失按「跟随模型默认」）。 */
+/** 从参数 JSON 读思考模式三态：一等键优先，缺失回读旧形状（兼容未迁移配置）。 */
 export function thinkingOfJson(json: string): ThinkingMode {
   try {
     const parsed = JSON.parse(json) as {
+      enable_thinking?: unknown;
       extra_body?: ThinkingExtraBody;
     };
+    if (parsed?.enable_thinking === true) return "on";
+    if (parsed?.enable_thinking === false) return "off";
+    // 旧形状（A1 时代）：extra_body.chat_template_kwargs.enable_thinking——识别为当前态，
+    // 让开关如实显示存量配置的意图；保存 / 拨开关时迁移到一等键。
     const kwargs = parsed?.extra_body?.chat_template_kwargs;
     if (typeof kwargs === "object" && kwargs !== null) {
       const flag = (kwargs as { enable_thinking?: unknown }).enable_thinking;
@@ -43,8 +57,25 @@ export function thinkingOfJson(json: string): ThinkingMode {
   return "default";
 }
 
+/** 把 JSON 里旧形状的思考键清干净（chat_template_kwargs.enable_thinking 与 extra_body.enable_thinking），返回新 extra_body。 */
+function stripLegacyThinkingKeys(
+  extra: ThinkingExtraBody | undefined,
+): ThinkingExtraBody {
+  const next: ThinkingExtraBody = { ...(extra ?? {}) };
+  delete next.enable_thinking;
+  const kwargs = next.chat_template_kwargs;
+  if (typeof kwargs === "object" && kwargs !== null) {
+    const rest = { ...(kwargs as Record<string, unknown>) };
+    delete rest.enable_thinking;
+    if (Object.keys(rest).length === 0) delete next.chat_template_kwargs;
+    else next.chat_template_kwargs = rest;
+  }
+  return next;
+}
+
 /**
  * 把思考模式写进参数 JSON，返回新 JSON（全空 = 空串，与 paramsToJson 同一口径）。
+ * 写一等键的同时清掉旧形状键——动过开关即完成迁移。
  * JSON 无效返回 null——调用方不动原值、给 invalid 提示，绝不静默清空用户内容。
  */
 export function setThinkingInJson(json: string, mode: ThinkingMode): string | null {
@@ -55,24 +86,19 @@ export function setThinkingInJson(json: string, mode: ThinkingMode): string | nu
   } catch {
     return null;
   }
+  const cleanedExtra = stripLegacyThinkingKeys(
+    obj.extra_body as ThinkingExtraBody | undefined,
+  );
   if (mode === "default") {
-    // 回到「跟随模型默认」：只摘掉开关本身，extra_body 里其余透传键原样保留。
-    const extra = { ...(obj.extra_body as ThinkingExtraBody | undefined) };
-    const kwargs = {
-      ...((extra.chat_template_kwargs ?? {}) as Record<string, unknown>),
-    };
-    delete kwargs.enable_thinking;
-    if (Object.keys(kwargs).length === 0) delete extra.chat_template_kwargs;
-    else extra.chat_template_kwargs = kwargs;
-    if (Object.keys(extra).length === 0) delete obj.extra_body;
-    else obj.extra_body = extra;
+    // 回到「跟随模型默认」：摘掉一等键，extra_body 里其余透传键原样保留。
+    delete obj.enable_thinking;
+    if (Object.keys(cleanedExtra).length === 0) delete obj.extra_body;
+    else obj.extra_body = cleanedExtra;
   } else {
-    const extra = { ...(obj.extra_body as ThinkingExtraBody | undefined) };
-    extra.chat_template_kwargs = {
-      ...((extra.chat_template_kwargs ?? {}) as Record<string, unknown>),
-      enable_thinking: mode === "on",
-    };
-    obj.extra_body = extra;
+    obj.enable_thinking = mode === "on";
+    // 清空即摘除：extra_body 只剩旧形状键时，迁移后不残留空对象。
+    if (Object.keys(cleanedExtra).length === 0) delete obj.extra_body;
+    else obj.extra_body = cleanedExtra;
   }
   if (Object.keys(obj).length === 0) {
     return "";
@@ -97,6 +123,9 @@ export function paramsToJson(params: EndpointRequestParams): string {
   }
   if (params.max_tokens !== null && params.max_tokens !== undefined) {
     obj.max_tokens = params.max_tokens;
+  }
+  if (params.enable_thinking !== null && params.enable_thinking !== undefined) {
+    obj.enable_thinking = params.enable_thinking;
   }
   if (params.extra_body !== null && params.extra_body !== undefined) {
     obj.extra_body = params.extra_body;
@@ -129,8 +158,8 @@ export function formToJson(
       obj[key] = parsedNumber;
     }
   }
-  // 当前 JSON 里非标准键（extra_body 与厂商专有键）随表单编辑一起带走，不被抹掉；
-  // 当前 JSON 无效时带不走既有内容（与原型稿同口径），保存会被拦下。
+  // 当前 JSON 里非文本键（enable_thinking / extra_body 与厂商专有键）随表单编辑一起
+  // 带走，不被抹掉；当前 JSON 无效时带不走既有内容（与原型稿同口径），保存会被拦下。
   try {
     const parsed = JSON.parse(currentJson) as Record<string, unknown>;
     for (const key of Object.keys(parsed)) {
@@ -173,9 +202,7 @@ export function syncFormFromJson(text: string): {
     const value = parsed[key];
     return value === undefined || value === null ? "" : String(value);
   };
-  const ignored = Object.keys(parsed).filter(
-    (key) => !ADV_STANDARD_KEYS.includes(key) && key !== "extra_body",
-  );
+  const ignored = Object.keys(parsed).filter((key) => !ADV_KNOWN_KEYS.includes(key));
   return {
     form: {
       temperature: read("temperature"),
@@ -251,6 +278,44 @@ export function collectAdvParams(input: {
       error: "高级参数「extra_body」应是 JSON 对象（键值对）——请检查写法。",
     };
   }
+  // 思考开关：一等键优先；缺失时回读旧形状（A1 时代的 chat_template_kwargs / 直写的
+  // extra_body.enable_thinking）并顺手迁移——旧形状在 wire 上被端点忽略，搬到一等键
+  // 才算真正生效。用户无需感知：保存一次即迁移完成。
+  let enableThinking: boolean | null = null;
+  if (parsed.enable_thinking !== undefined && parsed.enable_thinking !== null) {
+    if (typeof parsed.enable_thinking !== "boolean") {
+      return {
+        params: {},
+        error: "高级参数「enable_thinking」应是 true / false——请检查写法。",
+      };
+    }
+    enableThinking = parsed.enable_thinking;
+  }
+  const legacyExtra = extraBody as ThinkingExtraBody | undefined;
+  if (enableThinking === null && typeof legacyExtra?.enable_thinking === "boolean") {
+    enableThinking = legacyExtra.enable_thinking;
+  }
+  if (enableThinking === null) {
+    const kwargs = legacyExtra?.chat_template_kwargs;
+    if (typeof kwargs === "object" && kwargs !== null) {
+      const flag = (kwargs as { enable_thinking?: unknown }).enable_thinking;
+      if (typeof flag === "boolean") {
+        enableThinking = flag;
+      }
+    }
+  }
+  const cleanedExtra =
+    extraBody !== undefined && extraBody !== null && typeof extraBody === "object"
+      ? (stripLegacyThinkingKeys(legacyExtra as ThinkingExtraBody) as Record<
+          string,
+          unknown
+        >)
+      : undefined;
+  // 被迁移清空的 extra_body 摘除（等价于清除）；本来就空的 {} 是用户粘贴的模板，保留。
+  const emptiedByMigration =
+    cleanedExtra !== undefined &&
+    Object.keys(cleanedExtra).length === 0 &&
+    Object.keys(extraBody as Record<string, unknown>).length > 0;
   const params: EndpointRequestParams = {};
   if (temperature !== null) {
     params.temperature = temperature;
@@ -261,8 +326,11 @@ export function collectAdvParams(input: {
   if (maxTokens !== null) {
     params.max_tokens = maxTokens;
   }
-  if (extraBody !== undefined && extraBody !== null) {
-    params.extra_body = extraBody as Record<string, unknown>;
+  if (enableThinking !== null) {
+    params.enable_thinking = enableThinking;
+  }
+  if (cleanedExtra !== undefined && !emptiedByMigration) {
+    params.extra_body = cleanedExtra;
   }
   if (timeoutSeconds !== null) {
     params.timeout_seconds = timeoutSeconds;

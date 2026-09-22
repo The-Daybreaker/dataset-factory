@@ -88,8 +88,9 @@ export function EndpointConfigPanel(): ReactElement {
     kind: "ok",
     text: "已同步",
   });
-  // 思考模式三态（A1）：跟着 advJson 里的 extra_body 走——JSON 是唯一事实，
-  // 三态控件只是它的可视化快捷键（手写 reasoning_effort 等其他厂商字段走 JSON）。
+  // 思考模式三态（A1 → B 方案一等参数，2026-09-23）：跟着参数 JSON 里的顶层
+  // enable_thinking 走——JSON 是唯一事实，三态控件只是它的可视化快捷键（手写
+  // reasoning_effort 等其他厂商字段仍走 JSON 的 extra_body）。
   const [thinking, setThinking] = useState<ThinkingMode>("default");
 
   /** 失败分流：连接类失败改弹浮层（不占界面位置），后端返回的业务错误仍就地展示。 */
@@ -276,6 +277,8 @@ export function EndpointConfigPanel(): ReactElement {
         setCreating(false);
         setSelected(created.name);
       } else {
+        const nextName = draftName.trim();
+        const renamed = nextName !== selected;
         const updated = await api.updateEndpoint(selected, {
           base_url: draftBaseUrl,
           model: draftModel,
@@ -283,8 +286,19 @@ export function EndpointConfigPanel(): ReactElement {
           request_params: adv.params,
           // 没填新密钥就整个不传：后端沿用该配置已存密钥，不必重输。
           ...(key === "" ? {} : { api_key: key }),
+          // 名称有变才带 new_name：改名在后端是目录重命名 + 指针同步。
+          ...(renamed ? { new_name: nextName } : {}),
         });
-        setFeedback({ kind: "success", text: `已保存「${updated.name}」的更改` });
+        setFeedback({
+          kind: "success",
+          text: renamed
+            ? `已改名并保存：「${selected}」→「${updated.name}」`
+            : `已保存「${updated.name}」的更改`,
+        });
+        // 先把选中切到新名再刷新：目录已改名，旧名在新列表里已不存在。
+        if (renamed) {
+          setSelected(updated.name);
+        }
       }
       setDraftKey("");
       await reload();
@@ -411,14 +425,13 @@ export function EndpointConfigPanel(): ReactElement {
               <Input
                 id="endpoint-name"
                 value={draftName}
-                disabled={!creating}
                 placeholder="如 siliconflow"
                 onInput={(event) => setDraftName(event.currentTarget.value)}
               />
               <p className="text-t-sm text-muted-foreground">
                 {creating
-                  ? "即数据目录名，创建后不可改。"
-                  : "名称即目录名，创建后不可改。"}
+                  ? "即数据目录名，创建后也可再改。"
+                  : "名称可改（数据目录随之改名）；历史跑批里记录的仍是当时的名称。"}
               </p>
             </div>
             <div className="space-y-1">
@@ -582,9 +595,11 @@ export function EndpointConfigPanel(): ReactElement {
                     <p className="text-t-xs text-muted-foreground">
                       关闭思考可显著加快推理型模型的响应。对话试标与跑批共用这一个值——
                       只影响新请求与**新建**的批次；已有批次想换参数，请新建一个批次
-                      （快照冻结在应用时刻）。默认写 Qwen 系的
-                      chat_template_kwargs.enable_thinking；其他厂商字段（如
-                      reasoning_effort）可直接手写进下方 JSON 的 extra_body。
+                      （快照冻结在应用时刻）。开关走 SiliconFlow / DashScope 官方的顶层
+                      enable_thinking 参数，仅部分模型支持（Qwen3.x、DeepSeek-V3.2+、
+                      GLM、Kimi 等）；不支持的模型会收到端点 400 报错，拨回「跟随模型
+                      默认」即可恢复。其他厂商字段（如 reasoning_effort）可直接手写进
+                      下方 JSON 的 extra_body。
                     </p>
                   </div>
                   <div className="space-y-2">

@@ -90,6 +90,9 @@ export interface paths {
         /**
          * Update
          * @description 更新一套配置的端点字段；api_key 缺省沿用已存密钥、参数块缺省沿用已有参数。
+         *
+         *     带 ``new_name`` 时改名字段更新成功之后执行——参数校验失败时名字不动，报错不会
+         *     引用一个不存在的新名字。
          */
         put: operations["update_api_endpoints__name__put"];
         post?: never;
@@ -2040,8 +2043,13 @@ export interface components {
          */
         EndpointRequestParams: {
             /**
+             * Enable Thinking
+             * @description 思考模式开关（一等参数）；null = 不传（跟随模型默认）。按 SiliconFlow / DashScope 官方口径进请求体顶层；仅部分模型支持（Qwen3.x / DeepSeek-V3.2+ / GLM / Kimi 等），不支持的模型会收到端点 400
+             */
+            enable_thinking?: boolean | null;
+            /**
              * Extra Body
-             * @description 端点专有参数透传（openai SDK 的 extra_body，原样转发不解释）；null = 不传。厂商文档里的专有参数（如开关思考模式）放这里
+             * @description 端点专有参数透传（openai SDK 的 extra_body，原样转发不解释）；null = 不传。厂商文档里的专有参数（如 reasoning_effort）放这里；与 enable_thinking 同名时一等参数优先
              */
             extra_body?: {
                 [key: string]: unknown;
@@ -2150,6 +2158,11 @@ export interface components {
             base_url: string;
             /** Model */
             model: string;
+            /**
+             * New Name
+             * @description 新配置名（改名）；null = 不改名。字段更新成功后再执行改名
+             */
+            new_name?: string | null;
             /** @description 请求参数（生成 + 传输）；缺省 = 沿用已有参数不变；提供 = 整体替换（未提供的参数键视为清除） */
             request_params?: components["schemas"]["EndpointRequestParams"] | null;
         };
@@ -3744,7 +3757,7 @@ export interface operations {
                     "application/json": components["schemas"]["EndpointConfigSummary"];
                 };
             };
-            /** @description 字段为空 / API 格式暂未支持 */
+            /** @description 字段为空 / API 格式暂未支持 / 新名称不合法 */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -3755,6 +3768,15 @@ export interface operations {
             };
             /** @description 配置不存在 */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description 新名称与既有配置重名（不区分大小写） */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
