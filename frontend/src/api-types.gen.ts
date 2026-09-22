@@ -454,6 +454,10 @@ export interface paths {
          *
          *     安全口径与素材域的 /asset 同源：附件名经 sessions 域的单段安全名校验（路径穿越
          *     与非法字符在数据域拦下），只读、越界即 404。
+         *
+         *     Content-Type 显式按扩展名给（PRD-0004）：``FileResponse`` 缺省靠 mimetypes 猜，
+         *     猜不中的扩展名回落 octet-stream 会令 ``<video>``（历史封面 / 大图预览）拒播；
+         *     映射与素材域 /asset 同一份（MIME 单一事实源在 llm.messages）。
          */
         get: operations["session_attachment_api_sessions__session_id__attachments__name__get"];
         put?: never;
