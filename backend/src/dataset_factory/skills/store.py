@@ -502,7 +502,7 @@ def set_enabled(ref: str, enabled: bool) -> None:
     """启用 / 停用某个 skill（停用不删除：只改 _state.json 清单，skill 目录原样保留）。
 
     Args:
-        sid: skill ID。
+        ref: skill ID 或唯一显示名。
         enabled: True 启用、False 停用。
 
     Raises:
@@ -528,10 +528,10 @@ def delete_skill(ref: str) -> None:
     """删除某个 skill：移除整目录 + 从启用状态清单里清掉（显式删除；只想收起请改用停用）。
 
     Args:
-        sid: skill ID。
+        ref: skill ID 或唯一显示名。
 
     Raises:
-        SkillNotFoundError: 没有这个 ID 的 skill。
+        SkillNotFoundError: 没有这个 ID / 显示名的 skill。
         SkillError: 删除失败，或启用状态清单读写失败。
     """
     sid = _resolve_read_ref(ref)
@@ -556,7 +556,7 @@ def rename_skill(ref: str, new_name: str) -> None:
     原子写，无劈叉窗口、无回滚路径。启用状态清单存 ID，不受改名影响。
 
     Args:
-        sid: skill ID。
+        ref: skill ID 或唯一显示名。
         new_name: 目标显示名（允许重名；只挡空与离谱长度）。
 
     Raises:
@@ -686,7 +686,7 @@ def list_skill_files(ref: str) -> list[SkillFileEntry]:
     """列出技能包内全部文件（角色标注），SKILL.md 恒排最前、其余按路径排序。
 
     Args:
-        sid: skill ID。
+        ref: skill ID 或唯一显示名。
 
     Returns:
         文件条目列表（含 assets / scripts——它们被列出但不开放内容预览，供界面灰显）。
@@ -715,7 +715,7 @@ def read_skill_file(ref: str, path: str) -> str:
     路径）→ resolve 后核对仍在包目录内（防符号链接逃逸）。
 
     Args:
-        sid: skill ID。
+        ref: skill ID 或唯一显示名。
         path: 包内相对路径（POSIX 风格）。
 
     Returns:
@@ -765,7 +765,7 @@ def save_skill_file(
     """校验并原子写回现有文本文件，拒绝覆盖读取后已被修改的内容。
 
     Args:
-        sid: skill ID。
+        ref: skill ID 或唯一显示名。
         path: 包内可预览文件的相对路径。
         content: 待保存的完整 UTF-8 文本。
         original_content: 编辑器读取时的文本，用于检测并发修改。
