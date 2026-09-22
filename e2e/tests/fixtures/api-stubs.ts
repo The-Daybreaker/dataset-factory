@@ -13,19 +13,21 @@ const PNG_1PX =
 /** 路由桩表：键 = `方法 路径`（不含 query），值 = 响应体；值为 null 表示回 404。 */
 export const API_STUBS: Record<string, unknown> = {
   "GET /api/prompts": [
-    { name: "详细描述", description: "通用详细描述提示词" },
-    { name: "简短描述", description: "一句话描述" },
+    { id: "p-1", name: "详细描述", description: "通用详细描述提示词" },
+    { id: "p-2", name: "简短描述", description: "一句话描述" },
   ],
-  "GET /api/prompts/详细描述": {
+  "GET /api/prompts/p-1": {
+    id: "p-1",
     name: "详细描述",
     description: "通用详细描述提示词",
     body: "请用中文详细描述这张图的主体、姿态、背景与光线。",
   },
   "GET /api/skills": [
-    { name: "caption-style", description: "风格约束", enabled: true, body_chars: 1234 },
-    { name: "anatomy-check", description: "结构检查", enabled: false, body_chars: 567 },
+    { id: "k-1", name: "caption-style", description: "风格约束", enabled: true, body_chars: 1234 },
+    { id: "k-2", name: "anatomy-check", description: "结构检查", enabled: false, body_chars: 567 },
   ],
   "GET /api/config": {
+    id: "e-1",
     name: "default",
     base_url: "https://api.example.test/v1",
     model: "example-caption-model",
@@ -34,6 +36,7 @@ export const API_STUBS: Record<string, unknown> = {
   },
   "GET /api/endpoints": [
     {
+      id: "e-1",
       name: "default",
       base_url: "https://api.example.test/v1",
       model: "example-caption-model",
@@ -43,6 +46,7 @@ export const API_STUBS: Record<string, unknown> = {
       request_params: {},
     },
     {
+      id: "e-2",
       name: "offline",
       base_url: "http://127.0.0.1:9/v1",
       model: "offline-model",
@@ -73,9 +77,9 @@ export const API_STUBS: Record<string, unknown> = {
       name: "基线策略",
       description: "视觉基线用策略",
       enabled: true,
-      prompt: "详细描述",
-      skills: ["caption-style"],
-      endpoint: "default",
+      prompt_id: "p-1",
+      skill_ids: ["k-1"],
+      endpoint_id: "e-1",
       updated_at: "2026-01-01T00:00:00+00:00",
     },
   ],
@@ -157,6 +161,7 @@ export const API_STUBS: Record<string, unknown> = {
     built_at: "2026-01-01T00:00:00+00:00",
     changed: false,
     endpoint: {
+      id: "e-1",
       name: "default",
       model: "example-caption-model",
       api_format: "openai-chat",

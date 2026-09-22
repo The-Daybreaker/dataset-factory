@@ -232,9 +232,9 @@ export function NewBatchForm({
             ? {
                 type: "scratch",
                 name: name.trim(),
-                endpoint,
-                prompt,
-                skills: selectedSkills,
+                endpoint_id: endpoint,
+                prompt_id: prompt,
+                skill_ids: selectedSkills,
               }
             : { type: "library", id: library, name: name.trim() || null },
         );
@@ -496,7 +496,7 @@ export function NewBatchForm({
               endpoint,
               setEndpoint,
               endpoints.map((entry) => ({
-                value: entry.name,
+                value: entry.id,
                 label: `${entry.name} · ${entry.model}`,
               })),
               {
@@ -509,7 +509,7 @@ export function NewBatchForm({
               prompt,
               setPrompt,
               prompts.map((entry) => ({
-                value: entry.name,
+                value: entry.id,
                 label: `${entry.name} · ${entry.description}`,
               })),
               { count: prompts.length, onManage: onNavigateToSettings },
@@ -540,7 +540,7 @@ export function NewBatchForm({
                     type="checkbox"
                     className="cb"
                     disabled={!skill.enabled}
-                    checked={selectedSkills.includes(skill.name)}
+                    checked={selectedSkills.includes(skill.id)}
                     onChange={(event) => {
                       const checked = event.currentTarget.checked;
                       setSelectedSkills((previous) =>

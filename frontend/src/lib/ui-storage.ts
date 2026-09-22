@@ -27,11 +27,12 @@ export const SHELL_SETTINGS_SECTION_KEY = "dsf-settings-section";
  */
 export const WORKBENCH_EDITOR_KEY = "dsf-workbench-editor";
 export interface WorkbenchEditorMirror {
-  selectedName: string;
+  /** 选中提示词的稳定 ID（ID 化后镜像按 ID 认领；空串 = 无选中）。 */
+  selectedId: string;
   draftName: string;
   draftDescription: string;
   draftBody: string;
-  savedPrompt: { name: string; description: string; body: string };
+  savedPrompt: { id: string; name: string; description: string; body: string };
   isNewDraft: boolean;
 }
 export function isWorkbenchEditorMirror(
@@ -41,13 +42,14 @@ export function isWorkbenchEditorMirror(
   const v = value as Record<string, unknown>;
   const saved = v.savedPrompt;
   return (
-    typeof v.selectedName === "string" &&
+    typeof v.selectedId === "string" &&
     typeof v.draftName === "string" &&
     typeof v.draftDescription === "string" &&
     typeof v.draftBody === "string" &&
     typeof v.isNewDraft === "boolean" &&
     typeof saved === "object" &&
     saved !== null &&
+    typeof (saved as Record<string, unknown>).id === "string" &&
     typeof (saved as Record<string, unknown>).name === "string" &&
     typeof (saved as Record<string, unknown>).description === "string" &&
     typeof (saved as Record<string, unknown>).body === "string"
@@ -78,9 +80,9 @@ export interface StrategySelection {
   id: string;
   name: string;
   description: string;
-  endpoint: string;
-  prompt: string;
-  skills: string[];
+  endpoint_id: string;
+  prompt_id: string;
+  skill_ids: string[];
 }
 export function isStrategySelection(value: unknown): value is StrategySelection {
   if (typeof value !== "object" || value === null) return false;
@@ -89,10 +91,10 @@ export function isStrategySelection(value: unknown): value is StrategySelection 
     typeof v.id === "string" &&
     typeof v.name === "string" &&
     typeof v.description === "string" &&
-    typeof v.endpoint === "string" &&
-    typeof v.prompt === "string" &&
-    Array.isArray(v.skills) &&
-    v.skills.every((item) => typeof item === "string")
+    typeof v.endpoint_id === "string" &&
+    typeof v.prompt_id === "string" &&
+    Array.isArray(v.skill_ids) &&
+    v.skill_ids.every((item) => typeof item === "string")
   );
 }
 

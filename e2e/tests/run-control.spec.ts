@@ -51,9 +51,11 @@ test("停止保留产物，选择重试可覆盖旧产物，运行中隐藏需�
       data: {
         type: "scratch",
         name: "停止验证",
-        endpoint: endpointName,
-        prompt: prompts[0].name,
-        skills: [],
+        endpoint_id: (
+          await (await request.get("/api/endpoints")).json()
+        ).find((entry) => entry.name === endpointName)?.id,
+        prompt_id: prompts[0].id,
+        skill_ids: [],
       },
     },
   );

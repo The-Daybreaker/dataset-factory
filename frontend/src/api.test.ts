@@ -38,14 +38,14 @@ describe("策略库请求", () => {
     const body = {
       name: "详细描述",
       description: "训练素材",
-      endpoint: "default",
-      prompt: "caption",
-      skills: ["visual"],
+      endpoint_id: "default",
+      prompt_id: "caption",
+      skill_ids: ["visual"],
     };
 
     await api.createStrategy(body);
     await api.updateStrategy("a1", body);
-    await api.rebindStrategy("a1", { prompt: "caption-new" });
+    await api.rebindStrategy("a1", { prompt_id: "caption-new" });
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
@@ -62,7 +62,7 @@ describe("策略库请求", () => {
       "/api/strategies/a1/rebind",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ prompt: "caption-new" }),
+        body: JSON.stringify({ prompt_id: "caption-new" }),
       }),
     );
   });
@@ -175,7 +175,7 @@ describe("labelStream SSE 解析", () => {
 
     await api.labelStream(
       {
-        prompt_name: "p",
+        prompt_id: "p",
         instruction: "写",
         image_name: "image.png",
         video_name: "video.mp4",
@@ -209,7 +209,7 @@ describe("labelStream SSE 解析", () => {
     await expect(
       api.labelStream(
         {
-          prompt_name: "缺失",
+          prompt_id: "缺失",
           instruction: "x",
           image_name: "image.png",
           video_name: "video.mp4",

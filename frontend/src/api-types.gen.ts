@@ -79,7 +79,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/endpoints/{name}": {
+    "/api/endpoints/{cid}": {
         parameters: {
             query?: never;
             header?: never;
@@ -91,22 +91,22 @@ export interface paths {
          * Update
          * @description 更新一套配置的端点字段；api_key 缺省沿用已存密钥、参数块缺省沿用已有参数。
          *
-         *     带 ``new_name`` 时改名字段更新成功之后执行——参数校验失败时名字不动，报错不会
-         *     引用一个不存在的新名字。
+         *     带 ``new_name`` 时改显示名（只写 config.json 的 name 字段；显示名允许重名，
+         *     无冲突语义——身份是 ID）。
          */
-        put: operations["update_api_endpoints__name__put"];
+        put: operations["update_api_endpoints__cid__put"];
         post?: never;
         /**
          * Remove
          * @description 删除一套端点配置（连同其密钥文件）。
          */
-        delete: operations["remove_api_endpoints__name__delete"];
+        delete: operations["remove_api_endpoints__cid__delete"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/endpoints/{name}/activate": {
+    "/api/endpoints/{cid}/activate": {
         parameters: {
             query?: never;
             header?: never;
@@ -119,7 +119,7 @@ export interface paths {
          * Activate
          * @description 把一套配置设为当前使用；对新请求立即生效。
          */
-        post: operations["activate_api_endpoints__name__activate_post"];
+        post: operations["activate_api_endpoints__cid__activate_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -282,14 +282,18 @@ export interface paths {
          */
         get: operations["list_all_api_prompts_get"];
         put?: never;
-        post?: never;
+        /**
+         * Create
+         * @description 新建一条提示词（服务端分配 ID）。
+         */
+        post: operations["create_api_prompts_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/prompts/{name}": {
+    "/api/prompts/{pid}": {
         parameters: {
             query?: never;
             header?: never;
@@ -300,24 +304,24 @@ export interface paths {
          * Get One
          * @description 读某条提示词全文。
          */
-        get: operations["get_one_api_prompts__name__get"];
+        get: operations["get_one_api_prompts__pid__get"];
         /**
          * Save
-         * @description 保存提示词（不存在即新建、已存在即覆盖——旧版进 _history 滚动备份）。
+         * @description 覆盖保存提示词全文（旧版进 _history 滚动备份；显示名一并更新）。
          */
-        put: operations["save_api_prompts__name__put"];
+        put: operations["save_api_prompts__pid__put"];
         post?: never;
         /**
          * Remove
          * @description 删除提示词。
          */
-        delete: operations["remove_api_prompts__name__delete"];
+        delete: operations["remove_api_prompts__pid__delete"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/prompts/{name}/rename": {
+    "/api/prompts/{pid}/rename": {
         parameters: {
             query?: never;
             header?: never;
@@ -328,9 +332,9 @@ export interface paths {
         put?: never;
         /**
          * Rename
-         * @description 重命名提示词（改文件名）；历史备份随改名迁移。
+         * @description 改显示名（只写 frontmatter 的 name 字段；引用存 ID、不受影响）。
          */
-        post: operations["rename_api_prompts__name__rename_post"];
+        post: operations["rename_api_prompts__pid__rename_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -526,6 +530,7 @@ export interface paths {
          *
          *     目录源走 agentskills.io 标准整包复制；指向一个 ``.md`` 文件时视为「无文件夹结构的
          *     单文件 skill」——文件整体按 SKILL.md 交付，名称 / 描述取自它的 frontmatter。
+         *     同显示名的包可并存（身份是 ID，导入不再拒绝重名）。
          */
         post: operations["import_one_api_skills_import_post"];
         delete?: never;
@@ -554,7 +559,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/skills/{name}": {
+    "/api/skills/{sid}": {
         parameters: {
             query?: never;
             header?: never;
@@ -568,13 +573,13 @@ export interface paths {
          * Remove
          * @description 删除 skill（整目录移除）。
          */
-        delete: operations["remove_api_skills__name__delete"];
+        delete: operations["remove_api_skills__sid__delete"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/skills/{name}/disable": {
+    "/api/skills/{sid}/disable": {
         parameters: {
             query?: never;
             header?: never;
@@ -587,14 +592,14 @@ export interface paths {
          * Disable
          * @description 停用 skill（保留在库中，打标不注入）。
          */
-        post: operations["disable_api_skills__name__disable_post"];
+        post: operations["disable_api_skills__sid__disable_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/skills/{name}/enable": {
+    "/api/skills/{sid}/enable": {
         parameters: {
             query?: never;
             header?: never;
@@ -607,14 +612,14 @@ export interface paths {
          * Enable
          * @description 启用 skill。
          */
-        post: operations["enable_api_skills__name__enable_post"];
+        post: operations["enable_api_skills__sid__enable_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/skills/{name}/files": {
+    "/api/skills/{sid}/files": {
         parameters: {
             query?: never;
             header?: never;
@@ -625,7 +630,7 @@ export interface paths {
          * List Package Files
          * @description 列出技能包内文件（角色标注：SKILL.md 与 references/ 可预览，assets / scripts 灰显占位）。
          */
-        get: operations["list_package_files_api_skills__name__files_get"];
+        get: operations["list_package_files_api_skills__sid__files_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -634,7 +639,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/skills/{name}/files/{path}": {
+    "/api/skills/{sid}/files/{path}": {
         parameters: {
             query?: never;
             header?: never;
@@ -645,12 +650,12 @@ export interface paths {
          * Read Package File
          * @description 读技能包内一个可预览文件的文本内容（UTF-8；仅 SKILL.md 与 references/ 开放）。
          */
-        get: operations["read_package_file_api_skills__name__files__path__get"];
+        get: operations["read_package_file_api_skills__sid__files__path__get"];
         /**
          * Save Package File
          * @description 写回现有技能文本文件，SKILL.md 同时校验其 frontmatter。
          */
-        put: operations["save_package_file_api_skills__name__files__path__put"];
+        put: operations["save_package_file_api_skills__sid__files__path__put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -658,7 +663,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/skills/{name}/rename": {
+    "/api/skills/{sid}/rename": {
         parameters: {
             query?: never;
             header?: never;
@@ -669,9 +674,9 @@ export interface paths {
         put?: never;
         /**
          * Rename
-         * @description 重命名 skill：目录改名，SKILL.md frontmatter 的 name 同步改写。
+         * @description 改显示名（只写 SKILL.md frontmatter 的 name 字段；引用存 ID、不受影响）。
          */
-        post: operations["rename_api_skills__name__rename_post"];
+        post: operations["rename_api_skills__sid__rename_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1693,10 +1698,10 @@ export interface components {
              */
             description?: string | null;
             /**
-             * Endpoint
-             * @description 端点配置名（scratch 必填）
+             * Endpoint Id
+             * @description 端点配置 ID（scratch 必填）
              */
-            endpoint?: string | null;
+            endpoint_id?: string | null;
             /**
              * Id
              * @description 库策略 ID（type = library 时必填）
@@ -1708,15 +1713,15 @@ export interface components {
              */
             name?: string | null;
             /**
-             * Prompt
-             * @description 基础提示词名（scratch 必填）
+             * Prompt Id
+             * @description 基础提示词 ID（scratch 必填）
              */
-            prompt?: string | null;
+            prompt_id?: string | null;
             /**
-             * Skills
-             * @description 启用 Skill 名清单（scratch 可缺省 = 空）
+             * Skill Ids
+             * @description 启用 Skill ID 清单（scratch 可缺省 = 空）
              */
-            skills?: string[] | null;
+            skill_ids?: string[] | null;
             /**
              * Type
              * @description 新建方式：library（应用库策略）或 scratch（从零配置）
@@ -1873,11 +1878,19 @@ export interface components {
             api_key_configured: boolean;
             /** Base Url */
             base_url: string | null;
+            /**
+             * Id
+             * @description 当前使用的配置 ID；未配置为 null
+             */
+            id?: string | null;
             /** Key Source */
             key_source: string | null;
             /** Model */
             model: string | null;
-            /** Name */
+            /**
+             * Name
+             * @description 当前使用的配置显示名；未配置为 null
+             */
             name?: string | null;
         };
         /**
@@ -1994,6 +2007,11 @@ export interface components {
              */
             has_api_key: boolean;
             /**
+             * Id
+             * @description 配置 ID（内部稳定身份，目录名即 ID，不随改名变化）
+             */
+            id: string;
+            /**
              * Is Active
              * @description 是否为当前使用的配置
              */
@@ -2005,7 +2023,7 @@ export interface components {
             model: string;
             /**
              * Name
-             * @description 配置名（endpoints/ 下的目录名）
+             * @description 显示名（可改、允许重名）
              */
             name: string;
             /** @description 已设置的请求参数（生成 + 传输）；未设置的键为 null */
@@ -2102,15 +2120,15 @@ export interface components {
              */
             base_url: string;
             /**
+             * Id
+             * @description 配置 ID（回落该配置已存密钥时用它定位；缺省 = 表单密钥与环境变量通道）
+             */
+            id?: string | null;
+            /**
              * Model
              * @description 模型名
              */
             model: string;
-            /**
-             * Name
-             * @description 配置名（回落已存密钥时用它定位）
-             */
-            name?: string | null;
             /** @description 表单当前的高级参数（生成参数随探测一起发；传输参数由探测专用值覆盖） */
             request_params?: components["schemas"]["EndpointRequestParams"] | null;
         };
@@ -2597,20 +2615,20 @@ export interface components {
              */
             instruction: string;
             /**
-             * Prompt Name
-             * @description 基础提示词名称；续接时缺省沿用会话设置
+             * Prompt Id
+             * @description 基础提示词 ID；续接时缺省沿用会话设置
              */
-            prompt_name?: string | null;
+            prompt_id?: string | null;
             /**
              * Session Id
              * @description 续接的会话 id；缺省新建
              */
             session_id?: string | null;
             /**
-             * Skill Names
-             * @description 启用的 skill 清单；缺省沿用会话设置
+             * Skill Ids
+             * @description 启用的 skill ID 清单；缺省沿用会话设置
              */
-            skill_names?: string[] | null;
+            skill_ids?: string[] | null;
             /**
              * Strategy Id
              * @description 会话归属（策略 id 或 __new__ 草稿桶）：新建会话时盖章，续接时忽略（归属跟随既有会话）
@@ -2692,6 +2710,24 @@ export interface components {
             type: string;
         };
         /**
+         * PromptCreated
+         * @description POST /api/prompts 的响应体（服务端分配 ID）。
+         */
+        PromptCreated: {
+            /** Description */
+            description: string;
+            /**
+             * Id
+             * @description 提示词 ID（内部稳定身份，不随改名变化）
+             */
+            id: string;
+            /**
+             * Name
+             * @description 显示名（可改、允许重名）
+             */
+            name: string;
+        };
+        /**
          * PromptFull
          * @description 提示词全文。
          */
@@ -2700,7 +2736,15 @@ export interface components {
             body: string;
             /** Description */
             description: string;
-            /** Name */
+            /**
+             * Id
+             * @description 提示词 ID（内部稳定身份，不随改名变化）
+             */
+            id: string;
+            /**
+             * Name
+             * @description 显示名（可改、允许重名）
+             */
             name: string;
         };
         /**
@@ -2710,20 +2754,31 @@ export interface components {
         PromptInfo: {
             /** Description */
             description: string;
-            /** Name */
+            /**
+             * Id
+             * @description 提示词 ID（内部稳定身份，不随改名变化）
+             */
+            id: string;
+            /**
+             * Name
+             * @description 显示名（可改、允许重名）
+             */
             name: string;
         };
         /**
          * PromptRenameRequest
-         * @description POST /api/prompts/{name}/rename 的请求体。
+         * @description POST /api/prompts/{id}/rename 的请求体。
          */
         PromptRenameRequest: {
-            /** New Name */
+            /**
+             * New Name
+             * @description 新显示名（可改、允许重名）
+             */
             new_name: string;
         };
         /**
          * PromptSaveRequest
-         * @description PUT /api/prompts/{name} 的请求体。
+         * @description POST /api/prompts 与 PUT /api/prompts/{id} 的请求体。
          */
         PromptSaveRequest: {
             /** Body */
@@ -2733,6 +2788,12 @@ export interface components {
              * @default
              */
             description: string;
+            /**
+             * Name
+             * @description 显示名；缺省 = 沿用现有显示名
+             * @default
+             */
+            name: string;
         };
         /**
          * ReimportRequest
@@ -3072,13 +3133,13 @@ export interface components {
         };
         /**
          * SettingsView
-         * @description 会话当前设置。
+         * @description 会话当前设置（引用存各资产的稳定 ID）。
          */
         SettingsView: {
-            /** Prompt Name */
-            prompt_name: string | null;
-            /** Skill Names */
-            skill_names: string[];
+            /** Prompt Id */
+            prompt_id: string | null;
+            /** Skill Ids */
+            skill_ids: string[];
         };
         /**
          * SkillFileContent
@@ -3125,11 +3186,13 @@ export interface components {
         };
         /**
          * SkillFilesResponse
-         * @description GET /api/skills/{name}/files 的响应体。
+         * @description GET /api/skills/{id}/files 的响应体。
          */
         SkillFilesResponse: {
             /** Files */
             files: components["schemas"]["SkillFileInfo"][];
+            /** Id */
+            id: string;
             /** Name */
             name: string;
         };
@@ -3153,6 +3216,11 @@ export interface components {
             description: string;
             /** Enabled */
             enabled: boolean;
+            /**
+             * Id
+             * @description 新 skill 的稳定 ID（后续寻址用）
+             */
+            id: string;
             /** Name */
             name: string;
             /** Total Bytes */
@@ -3172,29 +3240,41 @@ export interface components {
             description: string;
             /** Enabled */
             enabled: boolean;
-            /** Name */
+            /**
+             * Id
+             * @description skill ID（内部稳定身份，不随改名变化）
+             */
+            id: string;
+            /**
+             * Name
+             * @description 显示名（取自 SKILL.md frontmatter，可改、允许重名）
+             */
             name: string;
         };
         /**
          * SkillRenameRequest
-         * @description POST /api/skills/{name}/rename 的请求体。
+         * @description POST /api/skills/{id}/rename 的请求体。
          */
         SkillRenameRequest: {
             /**
              * New Name
-             * @description 目标名称（目录名即名称，校验规则与导入相同）
+             * @description 新显示名（可改、允许重名）
              */
             new_name: string;
         };
         /**
          * SnapshotEndpointView
          * @description 快照端点的公开配置白名单，不返回凭据字段。
+         *
+         *     id 仅 ID 化（2026-09-23）之后建的批次携带——旧快照没有这个键，视图按 None 呈现。
          */
         SnapshotEndpointView: {
             /** Api Format */
             api_format: string;
             /** Base Url */
             base_url: string;
+            /** Id */
+            id?: string | null;
             /** Model */
             model: string;
             /** Name */
@@ -3227,20 +3307,20 @@ export interface components {
          */
         StrategyRebindRequest: {
             /**
-             * Endpoint
-             * @description 新的端点配置名；缺省 = 不变
+             * Endpoint Id
+             * @description 新的端点配置 ID；缺省 = 不变
              */
-            endpoint?: string | null;
+            endpoint_id?: string | null;
             /**
-             * Prompt
-             * @description 新的基础提示词名；缺省 = 不变
+             * Prompt Id
+             * @description 新的基础提示词 ID；缺省 = 不变
              */
-            prompt?: string | null;
+            prompt_id?: string | null;
             /**
-             * Skills
-             * @description 新的 Skill 清单（整体替换）；缺省 = 不变
+             * Skill Ids
+             * @description 新的 Skill ID 清单（整体替换）；缺省 = 不变
              */
-            skills?: string[] | null;
+            skill_ids?: string[] | null;
         };
         /**
          * StrategyReferenceView
@@ -3283,25 +3363,25 @@ export interface components {
              */
             description: string;
             /**
-             * Endpoint
-             * @description 端点配置名（必须已存在）
+             * Endpoint Id
+             * @description 端点配置 ID（必须已存在）
              */
-            endpoint: string;
+            endpoint_id: string;
             /**
              * Name
              * @description 显示名（非空）
              */
             name: string;
             /**
-             * Prompt
-             * @description 基础提示词名（必须已存在）
+             * Prompt Id
+             * @description 基础提示词 ID（必须已存在）
              */
-            prompt: string;
+            prompt_id: string;
             /**
-             * Skills
-             * @description 启用 Skill 名清单（必须已存在）
+             * Skill Ids
+             * @description 启用 Skill ID 清单（必须已存在）
              */
-            skills?: string[];
+            skill_ids?: string[];
         };
         /**
          * StrategyView
@@ -3309,6 +3389,7 @@ export interface components {
          *
          *     available = 引用健康度（现查）：任一引用（端点配置 / 提示词 / Skill）已不存在
          *     则为 False，missing_refs 给出缺失清单（界面置灰、禁止应用、走重新指定）。
+         *     引用一律存各资产的稳定 ID（2026-09-23 ID 化；显示名由前端从各资产列表现查）。
          */
         StrategyView: {
             /**
@@ -3332,10 +3413,10 @@ export interface components {
              */
             description: string;
             /**
-             * Endpoint
-             * @description 端点配置名引用
+             * Endpoint Id
+             * @description 端点配置 ID 引用
              */
-            endpoint: string;
+            endpoint_id: string;
             /**
              * Id
              * @description 库策略 ID（内部稳定标识，改名不变）
@@ -3352,15 +3433,15 @@ export interface components {
              */
             name: string;
             /**
-             * Prompt
-             * @description 基础提示词名引用
+             * Prompt Id
+             * @description 基础提示词 ID 引用
              */
-            prompt: string;
+            prompt_id: string;
             /**
-             * Skills
-             * @description 启用 Skill 名引用清单（有序）
+             * Skill Ids
+             * @description 启用 Skill ID 引用清单（有序）
              */
-            skills: string[];
+            skill_ids: string[];
             /**
              * Updated At
              * @description 最近更新时刻（UTC ISO 8601）
@@ -3671,17 +3752,8 @@ export interface operations {
                     "application/json": components["schemas"]["EndpointConfigSummary"];
                 };
             };
-            /** @description 名称不合法 / 字段为空 / API 格式暂未支持 */
+            /** @description 显示名不合法 / 字段为空 / API 格式暂未支持 */
             400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorDetail"];
-                };
-            };
-            /** @description 已存在同名（不区分大小写）配置 */
-            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3733,12 +3805,12 @@ export interface operations {
             };
         };
     };
-    update_api_endpoints__name__put: {
+    update_api_endpoints__cid__put: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                name: string;
+                cid: string;
             };
             cookie?: never;
         };
@@ -3757,7 +3829,7 @@ export interface operations {
                     "application/json": components["schemas"]["EndpointConfigSummary"];
                 };
             };
-            /** @description 字段为空 / API 格式暂未支持 / 新名称不合法 */
+            /** @description 字段为空 / API 格式暂未支持 / 显示名不合法 */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -3768,15 +3840,6 @@ export interface operations {
             };
             /** @description 配置不存在 */
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorDetail"];
-                };
-            };
-            /** @description 新名称与既有配置重名（不区分大小写） */
-            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3795,12 +3858,12 @@ export interface operations {
             };
         };
     };
-    remove_api_endpoints__name__delete: {
+    remove_api_endpoints__cid__delete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                name: string;
+                cid: string;
             };
             cookie?: never;
         };
@@ -3842,12 +3905,12 @@ export interface operations {
             };
         };
     };
-    activate_api_endpoints__name__activate_post: {
+    activate_api_endpoints__cid__activate_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                name: string;
+                cid: string;
             };
             cookie?: never;
         };
@@ -4229,12 +4292,45 @@ export interface operations {
             };
         };
     };
-    get_one_api_prompts__name__get: {
+    create_api_prompts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PromptSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromptCreated"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_one_api_prompts__pid__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                name: string;
+                pid: string;
             };
             cookie?: never;
         };
@@ -4278,12 +4374,12 @@ export interface operations {
             };
         };
     };
-    save_api_prompts__name__put: {
+    save_api_prompts__pid__put: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                name: string;
+                pid: string;
             };
             cookie?: never;
         };
@@ -4300,8 +4396,17 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description 名称不合法（含路径分隔符等） */
+            /** @description 显示名不合法 */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+            /** @description 提示词不存在 */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4329,12 +4434,12 @@ export interface operations {
             };
         };
     };
-    remove_api_prompts__name__delete: {
+    remove_api_prompts__pid__delete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                name: string;
+                pid: string;
             };
             cookie?: never;
         };
@@ -4367,12 +4472,12 @@ export interface operations {
             };
         };
     };
-    rename_api_prompts__name__rename_post: {
+    rename_api_prompts__pid__rename_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                name: string;
+                pid: string;
             };
             cookie?: never;
         };
@@ -4389,7 +4494,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description 新名称不合法（含路径分隔符等） */
+            /** @description 新名称不合法 */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -4400,15 +4505,6 @@ export interface operations {
             };
             /** @description 要改名的提示词不存在 */
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorDetail"];
-                };
-            };
-            /** @description 新名称的提示词已存在 */
-            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4795,15 +4891,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorDetail"];
                 };
             };
-            /** @description 同名 skill 已存在（重名不合并） */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorDetail"];
-                };
-            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -4846,15 +4933,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorDetail"];
                 };
             };
-            /** @description 同名 skill 已存在（重名不合并） */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorDetail"];
-                };
-            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -4866,12 +4944,12 @@ export interface operations {
             };
         };
     };
-    remove_api_skills__name__delete: {
+    remove_api_skills__sid__delete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                name: string;
+                sid: string;
             };
             cookie?: never;
         };
@@ -4904,12 +4982,12 @@ export interface operations {
             };
         };
     };
-    disable_api_skills__name__disable_post: {
+    disable_api_skills__sid__disable_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                name: string;
+                sid: string;
             };
             cookie?: never;
         };
@@ -4942,12 +5020,12 @@ export interface operations {
             };
         };
     };
-    enable_api_skills__name__enable_post: {
+    enable_api_skills__sid__enable_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                name: string;
+                sid: string;
             };
             cookie?: never;
         };
@@ -4980,12 +5058,12 @@ export interface operations {
             };
         };
     };
-    list_package_files_api_skills__name__files_get: {
+    list_package_files_api_skills__sid__files_get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                name: string;
+                sid: string;
             };
             cookie?: never;
         };
@@ -5020,12 +5098,12 @@ export interface operations {
             };
         };
     };
-    read_package_file_api_skills__name__files__path__get: {
+    read_package_file_api_skills__sid__files__path__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                name: string;
+                sid: string;
                 path: string;
             };
             cookie?: never;
@@ -5070,12 +5148,12 @@ export interface operations {
             };
         };
     };
-    save_package_file_api_skills__name__files__path__put: {
+    save_package_file_api_skills__sid__files__path__put: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                name: string;
+                sid: string;
                 path: string;
             };
             cookie?: never;
@@ -5133,12 +5211,12 @@ export interface operations {
             };
         };
     };
-    rename_api_skills__name__rename_post: {
+    rename_api_skills__sid__rename_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                name: string;
+                sid: string;
             };
             cookie?: never;
         };
@@ -5157,15 +5235,6 @@ export interface operations {
             };
             /** @description skill 不存在 */
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorDetail"];
-                };
-            };
-            /** @description 新名称已被占用 */
-            409: {
                 headers: {
                     [name: string]: unknown;
                 };

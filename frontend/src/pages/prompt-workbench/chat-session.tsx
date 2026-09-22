@@ -93,13 +93,13 @@ interface ChatSessionValue {
   waitSeconds: number;
   chatError: string;
   copiedId: number | null;
-  skillNames: string[];
+  skillIds: string[];
   instruction: string;
   media: PendingMedia | null;
   restoreState: ChatRestoreState;
-  restoredPromptName: string | null;
-  /** 发送一轮打标：promptName / activeModel 由组件在发送时刻传入（配置仍归页面管）。 */
-  send(input: { promptName: string | null; activeModel: string }): void;
+  restoredPromptId: string | null;
+  /** 发送一轮打标：promptId / activeModel 由组件在发送时刻传入（配置仍归页面管）。 */
+  send(input: { promptId: string | null; activeModel: string }): void;
   stopGeneration(): void;
   newSession(): void;
   /** 清对话列（切提示词 = 换 system 底座）：保留输入与附件，不重开输入状态。 */
@@ -114,9 +114,9 @@ interface ChatSessionValue {
    * 一起更新；没有活跃会话则只换桶。
    */
   assignActiveSession(strategyId: string): void;
-  toggleSkill(name: string): void;
-  /** 整组替换 Skill 组合（策略应用时用；与 toggleSkill 同为会话域状态）。 */
-  applySkillNames(names: string[]): void;
+  toggleSkill(sid: string): void;
+  /** 整组替换 Skill 组合（策略应用时用；与 toggleSkill 同为会话域状态；元素是 skill ID）。 */
+  applySkillIds(ids: string[]): void;
   setInstruction(value: string): void;
   pickMedia(file: File | undefined): void;
   setMediaFps(fps: number): void;
@@ -145,13 +145,14 @@ export function ChatSessionProvider({
   const [waitSeconds, setWaitSeconds] = useState(0);
   const [chatError, setChatErrorState] = useState("");
   const [copiedId, setCopiedId] = useState<number | null>(null);
-  const [skillNames, setSkillNames] = useState<string[]>([]);
+  // 会话勾选的 Skill 与基础提示词一律存稳定 ID（发送直接进 prompt_id / skill_ids）。
+  const [skillIds, setSkillIds] = useState<string[]>([]);
   const [streaming, setStreaming] = useState<{
     reasoning: string;
     content: string;
   } | null>(null);
   const [restoreState, setRestoreState] = useState<ChatRestoreState>("pending");
-  const [restoredPromptName, setRestoredPromptName] = useState<string | null>(null);
+  const [restoredPromptId, setRestoredPromptId] = useState<string | null>(null);
 
   const sendingRef = useRef(false);
   // 「停止生成」（N1④）：发送期间持有的 AbortController，停止钮触发即中止本轮。
@@ -185,9 +186,9 @@ export function ChatSessionProvider({
   // 会话快照的统一应用口：启动恢复与切桶接续共用。历史附件直连会话附件端点（B5）：
   // 缩略图不再依赖内存 dataURL，刷新不丢。
   const applySnapshot = useCallback((snapshot: SessionSnapshot): void => {
-    setRestoredPromptName(snapshot.settings.prompt_name);
+    setRestoredPromptId(snapshot.settings.prompt_id);
     setSessionId(snapshot.session_id);
-    setSkillNames(snapshot.settings.skill_names);
+    setSkillIds(snapshot.settings.skill_ids);
     setMessages(
       snapshot.messages.map((item, index) => ({
         ...item,
@@ -288,10 +289,10 @@ export function ChatSessionProvider({
 
   const send = useCallback(
     ({
-      promptName,
+      promptId,
       activeModel,
     }: {
-      promptName: string | null;
+      promptId: string | null;
       activeModel: string;
     }): void => {
       if (sendingRef.current) return;
@@ -363,8 +364,8 @@ export function ChatSessionProvider({
           await api.labelStream(
             {
               session_id: sessionId,
-              prompt_name: promptName,
-              skill_names: skillNames,
+              prompt_id: promptId,
+              skill_ids: skillIds,
               instruction: sentInstruction,
               image_base64: sentMedia?.kind === "image" ? sentMedia.dataUrl : null,
               image_name: sentMedia?.kind === "image" ? sentMedia.name : "image.png",
@@ -441,7 +442,7 @@ export function ChatSessionProvider({
         }
       })();
     },
-    [instruction, media, sessionId, skillNames, setInstructionForBucket],
+    [instruction, media, sessionId, skillIds, setInstructionForBucket],
   );
 
   /** 停止生成（N1④）：中止当前请求；已收到的部分按半截消息留痕。 */
@@ -459,7 +460,7 @@ export function ChatSessionProvider({
     // 旧输入 / 旧附件 / 旧 Skill 不带进新会话（N1 同源②）。
     setInstructionForBucket("");
     setMedia(null);
-    setSkillNames([]);
+    setSkillIds([]);
   }, [setInstructionForBucket]);
 
   const clearConversation = useCallback((): void => {
@@ -520,19 +521,19 @@ export function ChatSessionProvider({
     [sessionId],
   );
 
-  const toggleSkill = useCallback((name: string): void => {
+  const toggleSkill = useCallback((sid: string): void => {
     if (sendingRef.current) return;
     userActedRef.current += 1;
-    setSkillNames((current) =>
-      current.includes(name)
-        ? current.filter((item) => item !== name)
-        : [...current, name],
+    setSkillIds((current) =>
+      current.includes(sid)
+        ? current.filter((item) => item !== sid)
+        : [...current, sid],
     );
   }, []);
 
-  const applySkillNames = useCallback((names: string[]): void => {
+  const applySkillIds = useCallback((ids: string[]): void => {
     userActedRef.current += 1;
-    setSkillNames(names);
+    setSkillIds(ids);
   }, []);
 
   const setInstruction = useCallback(
@@ -615,11 +616,11 @@ export function ChatSessionProvider({
         waitSeconds,
         chatError,
         copiedId,
-        skillNames,
+        skillIds,
         instruction,
         media,
         restoreState,
-        restoredPromptName,
+        restoredPromptId,
         send,
         stopGeneration,
         newSession,
@@ -627,7 +628,7 @@ export function ChatSessionProvider({
         attachBucket,
         assignActiveSession,
         toggleSkill,
-        applySkillNames,
+        applySkillIds,
         setInstruction,
         pickMedia,
         setMediaFps,

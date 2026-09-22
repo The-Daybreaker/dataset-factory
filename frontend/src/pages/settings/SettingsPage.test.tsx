@@ -34,6 +34,7 @@ vi.mock("../../api", async (original) => ({
 
 const ENDPOINTS: EndpointConfigSummary[] = [
   {
+    id: "e-default-x1",
     name: "default",
     base_url: "https://a/v1",
     model: "model-a",
@@ -43,6 +44,7 @@ const ENDPOINTS: EndpointConfigSummary[] = [
     request_params: {},
   },
   {
+    id: "e-backup-x1",
     name: "backup",
     base_url: "https://b/v1",
     model: "model-b",
@@ -54,8 +56,20 @@ const ENDPOINTS: EndpointConfigSummary[] = [
 ];
 
 const SKILLS: SkillInfo[] = [
-  { name: "h3-skill", description: "H3 官方要求", enabled: true, body_chars: 1240 },
-  { name: "old-skill", description: "", enabled: false, body_chars: 320 },
+  {
+    id: "k-h3-skill-01",
+    name: "h3-skill",
+    description: "H3 官方要求",
+    enabled: true,
+    body_chars: 1240,
+  },
+  {
+    id: "k-old-skill-01",
+    name: "old-skill",
+    description: "",
+    enabled: false,
+    body_chars: 320,
+  },
 ];
 
 const SKILL_FILES = {
@@ -136,6 +150,7 @@ describe("SettingsPage · 连接·端点配置", () => {
 
   it("改名保存：带 new_name 调 updateEndpoint，反馈与详情切到新名", async () => {
     const renamed: EndpointConfigSummary = {
+      id: "e-renamed-x1",
       name: "renamed",
       base_url: "https://a/v1",
       model: "model-a",
@@ -173,6 +188,7 @@ describe("SettingsPage · 连接·端点配置", () => {
 
   it("添加配置：创建后给出成功反馈", async () => {
     const created: EndpointConfigSummary = {
+      id: "e-new-one-x1",
       name: "new-one",
       base_url: "https://n/v1",
       model: "m",
@@ -282,6 +298,7 @@ describe("SettingsPage · 端点配置·测试连接", () => {
 
 describe("SettingsPage · 端点配置·高级参数", () => {
   const TUNED: EndpointConfigSummary = {
+    id: "e-tuned-x111",
     name: "tuned",
     base_url: "https://t/v1",
     model: "model-t",
@@ -435,6 +452,7 @@ describe("SettingsPage · 能力·技能", () => {
   it("损坏包降级呈现：description 以「文件损坏：」开头时原文照排、不吞不替换（宽容降级口径）", async () => {
     apiMock.listSkills.mockResolvedValue([
       {
+        id: "k-bad-x111111",
         name: "bad",
         description:
           "文件损坏：SKILL.md 的 frontmatter 未闭合（开头有 ---，但找不到结束的 ---）。",

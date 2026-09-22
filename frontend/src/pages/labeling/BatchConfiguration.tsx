@@ -42,7 +42,14 @@ function reprobe(name: string): void {
 
 function useEndpointHealth(
   name: string,
-  target: { base_url: string; model: string; api_format: string } | undefined,
+  target:
+    | {
+        id?: string | null;
+        base_url: string;
+        model: string;
+        api_format: string;
+      }
+    | undefined,
 ): EndpointHealth {
   const [, force] = useReducer((count: number) => count + 1, 0);
   useEffect(() => {
@@ -63,7 +70,12 @@ function useEndpointHealth(
     if (cached !== undefined && Date.now() - cached.at < HEALTH_TTL_MS) return;
     setHealth(name, { status: "probing", message: "正在探测端点连通性…" });
     void api
-      .testEndpoint({ base_url: baseUrl, model, api_format: apiFormat ?? "", name })
+      .testEndpoint({
+        base_url: baseUrl,
+        model,
+        api_format: apiFormat ?? "",
+        id: target?.id ?? null,
+      })
       .then((result) =>
         setHealth(
           name,

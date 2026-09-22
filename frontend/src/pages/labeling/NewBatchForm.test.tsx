@@ -48,9 +48,12 @@ beforeEach(() => {
   });
   vi.mocked(api.listStrategies).mockResolvedValue([]);
   vi.mocked(api.listSkills).mockResolvedValue([]);
-  vi.mocked(api.listPrompts).mockResolvedValue([{ name: "caption", description: "" }]);
+  vi.mocked(api.listPrompts).mockResolvedValue([
+    { id: "p-caption-01", name: "caption", description: "" },
+  ]);
   vi.mocked(api.listEndpoints).mockResolvedValue([
     {
+      id: "e-model-x1111",
       name: "model",
       model: "test",
       is_active: true,

@@ -126,7 +126,7 @@ test("重建导入记录经真实任务恢复登记并自动刷新概览", async
   const accepted = await created.json();
   await expect.poll(async () => (await (await request.get(`/api/tasks/${accepted.task_id}`)).json()).status).toBe("succeeded");
   const prompts = await (await request.get("/api/prompts")).json();
-  const batch = await request.post(`/api/workdirs/${accepted.workdir.id}/batches`, { data: { type: "scratch", name: "重建验证", endpoint: "default", prompt: prompts[0].name, skills: [] } });
+  const batch = await request.post(`/api/workdirs/${accepted.workdir.id}/batches`, { data: { type: "scratch", name: "重建验证", endpoint_id: ((await (await request.get("/api/endpoints")).json()).find((e) => e.name === "default")?.id ?? "default"), prompt_id: prompts[0].id, skill_ids: [] } });
   expect(batch.ok()).toBeTruthy();
   await writeFile(path.join(directory, "s1__sample.txt"), "Existing caption");
   await rename(path.join(directory, ".dsf", "imports.jsonl"), path.join(directory, ".dsf", "imports.backup"));

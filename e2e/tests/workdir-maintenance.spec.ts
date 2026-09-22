@@ -20,7 +20,7 @@ test("工作目录搬迁经界面确认后保留素材与快照并更新登记",
   const wid = accepted.workdir.id;
   await expect.poll(async () => (await (await request.get(`/api/tasks/${accepted.task_id}`)).json()).status).toBe("succeeded");
   const prompts = await (await request.get("/api/prompts")).json();
-  const batch = await request.post(`/api/workdirs/${wid}/batches`, { data: { type: "scratch", name: "搬迁验证", endpoint: "default", prompt: prompts[0].name, skills: [] } });
+  const batch = await request.post(`/api/workdirs/${wid}/batches`, { data: { type: "scratch", name: "搬迁验证", endpoint_id: ((await (await request.get("/api/endpoints")).json()).find((e) => e.name === "default")?.id ?? "default"), prompt_id: prompts[0].id, skill_ids: [] } });
   expect(batch.ok()).toBeTruthy();
   const snapshot = await readFile(path.join(source, ".dsf", "strategies", "s1.json"));
   const moves: unknown[] = [];

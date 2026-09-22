@@ -14,6 +14,7 @@ export type HistoryMessageView = components["schemas"]["HistoryMessageView"];
 export type SessionSnapshotResponse = components["schemas"]["SessionSnapshotResponse"];
 export type PromptInfo = components["schemas"]["PromptInfo"];
 export type PromptFull = components["schemas"]["PromptFull"];
+export type PromptCreated = components["schemas"]["PromptCreated"];
 export type PromptSaveRequest = components["schemas"]["PromptSaveRequest"];
 export type PromptRenameRequest = components["schemas"]["PromptRenameRequest"];
 export type SkillInfo = components["schemas"]["SkillInfo"];
@@ -572,24 +573,28 @@ export const api = {
   sessionAttachmentUrl: (sessionId: string, name: string) =>
     `/api/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(name)}`,
 
-  /** 列出提示词（名称 + 描述）。 */
+  /** 列出提示词（ID + 显示名 + 描述）。 */
   listPrompts: () => request<PromptInfo[]>("GET", "/api/prompts"),
 
+  /** 新建提示词（服务端分配 ID）。 */
+  createPrompt: (payload: PromptSaveRequest) =>
+    request<PromptCreated>("POST", "/api/prompts", payload),
+
   /** 取某个提示词的全文。 */
-  getPrompt: (name: string) =>
-    request<PromptFull>("GET", `/api/prompts/${encodeURIComponent(name)}`),
+  getPrompt: (pid: string) =>
+    request<PromptFull>("GET", `/api/prompts/${encodeURIComponent(pid)}`),
 
-  /** 新建或覆盖提示词（名称即文件名）。 */
-  savePrompt: (name: string, payload: PromptSaveRequest) =>
-    request<void>("PUT", `/api/prompts/${encodeURIComponent(name)}`, payload),
+  /** 覆盖保存提示词全文（按 ID 寻址；旧版进 _history 滚动备份）。 */
+  savePrompt: (pid: string, payload: PromptSaveRequest) =>
+    request<void>("PUT", `/api/prompts/${encodeURIComponent(pid)}`, payload),
 
-  /** 重命名提示词（改文件名；历史备份随迁）。 */
-  renamePrompt: (name: string, payload: PromptRenameRequest) =>
-    request<void>("POST", `/api/prompts/${encodeURIComponent(name)}/rename`, payload),
+  /** 改显示名（只写 frontmatter 的 name；ID 不变、引用不受影响）。 */
+  renamePrompt: (pid: string, payload: PromptRenameRequest) =>
+    request<void>("POST", `/api/prompts/${encodeURIComponent(pid)}/rename`, payload),
 
   /** 删除提示词。 */
-  deletePrompt: (name: string) =>
-    request<void>("DELETE", `/api/prompts/${encodeURIComponent(name)}`),
+  deletePrompt: (pid: string) =>
+    request<void>("DELETE", `/api/prompts/${encodeURIComponent(pid)}`),
 
   /** 列出 skill（含启用状态）。 */
   listSkills: () => request<SkillInfo[]>("GET", "/api/skills"),
@@ -615,20 +620,20 @@ export const api = {
     return request<SkillImportResponse>("POST", "/api/skills/import-upload", form);
   },
 
-  /** 重命名 skill（目录改名，SKILL.md 的 name 同步改写；重名报 409）。 */
-  renameSkill: (name: string, payload: SkillRenameRequest) =>
-    request<void>("POST", `/api/skills/${encodeURIComponent(name)}/rename`, payload),
+  /** 改 skill 显示名（只写 SKILL.md frontmatter 的 name；ID 不变、引用不受影响）。 */
+  renameSkill: (sid: string, payload: SkillRenameRequest) =>
+    request<void>("POST", `/api/skills/${encodeURIComponent(sid)}/rename`, payload),
 
   /** 启用 / 停用 skill（停用不删除）。 */
-  setSkillEnabled: (name: string, enabled: boolean) =>
+  setSkillEnabled: (sid: string, enabled: boolean) =>
     request<void>(
       "POST",
-      `/api/skills/${encodeURIComponent(name)}/${enabled ? "enable" : "disable"}`,
+      `/api/skills/${encodeURIComponent(sid)}/${enabled ? "enable" : "disable"}`,
     ),
 
   /** 从库中移除 skill（整目录）。 */
-  deleteSkill: (name: string) =>
-    request<void>("DELETE", `/api/skills/${encodeURIComponent(name)}`),
+  deleteSkill: (sid: string) =>
+    request<void>("DELETE", `/api/skills/${encodeURIComponent(sid)}`),
 
   /** 读当前端点配置（密钥只报来源、绝不回内容）。 */
   getConfig: () => request<ConfigResponse>("GET", "/api/config"),
@@ -644,21 +649,21 @@ export const api = {
   createEndpoint: (payload: EndpointCreateRequest) =>
     request<EndpointConfigSummary>("POST", "/api/endpoints", payload),
 
-  /** 更新一套端点配置（api_key 缺省沿用已存密钥）。 */
-  updateEndpoint: (name: string, payload: EndpointUpdateRequest) =>
+  /** 更新一套端点配置（按 ID 寻址；api_key 缺省沿用已存密钥；new_name 改显示名）。 */
+  updateEndpoint: (cid: string, payload: EndpointUpdateRequest) =>
     request<EndpointConfigSummary>(
       "PUT",
-      `/api/endpoints/${encodeURIComponent(name)}`,
+      `/api/endpoints/${encodeURIComponent(cid)}`,
       payload,
     ),
 
   /** 删除一套端点配置（当前使用中的会被后端拒绝）。 */
-  deleteEndpoint: (name: string) =>
-    request<void>("DELETE", `/api/endpoints/${encodeURIComponent(name)}`),
+  deleteEndpoint: (cid: string) =>
+    request<void>("DELETE", `/api/endpoints/${encodeURIComponent(cid)}`),
 
   /** 把一套配置设为当前使用；对新请求立即生效。 */
-  activateEndpoint: (name: string) =>
-    request<void>("POST", `/api/endpoints/${encodeURIComponent(name)}/activate`),
+  activateEndpoint: (cid: string) =>
+    request<void>("POST", `/api/endpoints/${encodeURIComponent(cid)}/activate`),
 
   /** 测试端点连通性（用表单当前值发极小真实请求；密钥缺省回落该配置已存密钥）。 */
   testEndpoint: (payload: EndpointTestRequest) =>
@@ -670,14 +675,14 @@ export const api = {
     ),
 
   /** 列出技能包内文件（角色标注：SKILL.md / references 可预览，assets / scripts 不可）。 */
-  listSkillFiles: (name: string) =>
-    request<SkillFilesResponse>("GET", `/api/skills/${encodeURIComponent(name)}/files`),
+  listSkillFiles: (sid: string) =>
+    request<SkillFilesResponse>("GET", `/api/skills/${encodeURIComponent(sid)}/files`),
 
   /** 读技能包内一个可预览文件的文本内容（UTF-8）。 */
-  readSkillFile: (name: string, path: string) =>
+  readSkillFile: (sid: string, path: string) =>
     request<SkillFileContent>(
       "GET",
-      `/api/skills/${encodeURIComponent(name)}/files/${path
+      `/api/skills/${encodeURIComponent(sid)}/files/${path
         .split("/")
         .map(encodeURIComponent)
         .join("/")}`,
@@ -685,13 +690,13 @@ export const api = {
 
   /** 保存技能文本，原始内容用于检测并发修改。 */
   saveSkillFile: (
-    name: string,
+    sid: string,
     path: string,
     payload: components["schemas"]["SkillFileSaveRequest"],
   ) =>
     request<SkillFileContent>(
       "PUT",
-      `/api/skills/${encodeURIComponent(name)}/files/${path.split("/").map(encodeURIComponent).join("/")}`,
+      `/api/skills/${encodeURIComponent(sid)}/files/${path.split("/").map(encodeURIComponent).join("/")}`,
       payload,
     ),
 

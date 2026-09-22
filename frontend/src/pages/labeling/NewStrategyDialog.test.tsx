@@ -20,9 +20,12 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(api.listStrategies).mockResolvedValue([]);
   vi.mocked(api.listSkills).mockResolvedValue([]);
-  vi.mocked(api.listPrompts).mockResolvedValue([{ name: "caption", description: "" }]);
+  vi.mocked(api.listPrompts).mockResolvedValue([
+    { id: "p-caption-01", name: "caption", description: "" },
+  ]);
   vi.mocked(api.listEndpoints).mockResolvedValue([
     {
+      id: "e-model-x1111",
       name: "model",
       model: "vision",
       is_active: true,
@@ -51,9 +54,9 @@ it("从库应用提交库 ID，读取失败后可以重试", async () => {
       id: "lib1",
       name: "库策略",
       description: "",
-      endpoint: "model",
-      prompt: "caption",
-      skills: [],
+      endpoint_id: "e-model-x1111",
+      prompt_id: "p-caption-01",
+      skill_ids: [],
       body_chars: 12_400,
       available: true,
       missing_refs: [],
@@ -130,9 +133,9 @@ it("只在指定目录创建策略，不启动跑批", async () => {
   expect(api.createBatch).toHaveBeenCalledExactlyOnceWith("work", {
     type: "scratch",
     name: "新策略",
-    endpoint: "model",
-    prompt: "caption",
-    skills: [],
+    endpoint_id: "e-model-x1111",
+    prompt_id: "p-caption-01",
+    skill_ids: [],
   });
   expect(api.startRun).not.toHaveBeenCalled();
 });

@@ -66,11 +66,13 @@ export function PromptWorkbench({
 }): ReactElement {
   // ---------- 列表与编辑器 ----------
   const [prompts, setPrompts] = useState<PromptInfo[]>([]);
-  const [selectedName, setSelectedName] = useState("");
+  // 当前选中的提示词 ID（发送 / 策略应用直接用它；显示名单独存草稿）。
+  const [selectedId, setSelectedId] = useState("");
   const [draftName, setDraftName] = useState("");
   const [draftDescription, setDraftDescription] = useState("");
   const [draftBody, setDraftBody] = useState("");
   const [savedPrompt, setSavedPrompt] = useState({
+    id: "",
     name: "",
     description: "",
     body: "",
@@ -91,14 +93,14 @@ export function PromptWorkbench({
     messages,
     streaming,
     copiedId,
-    skillNames,
+    skillIds,
     instruction,
     media,
     sending,
     waitSeconds,
     chatError,
     restoreState,
-    restoredPromptName,
+    restoredPromptId,
     send,
     stopGeneration,
     newSession,
@@ -106,7 +108,7 @@ export function PromptWorkbench({
     attachBucket,
     assignActiveSession,
     toggleSkill,
-    applySkillNames,
+    applySkillIds,
     setInstruction,
     pickMedia,
     setMediaFps,
@@ -125,6 +127,8 @@ export function PromptWorkbench({
   const restoredPromptRef = useRef(false);
   const promptRequestRef = useRef(0);
   const savingPromptRef = useRef(false);
+  // 本轮保存已成功 rename 过的显示名（重试保存时防重复 rename；成功后清空）。
+  const renamedToRef = useRef<string | null>(null);
   const interactionRef = useRef(0);
   const activatingEndpointRef = useRef(false);
 
@@ -148,17 +152,17 @@ export function PromptWorkbench({
   }, []);
 
   const selectPrompt = useCallback(
-    async (name: string, options?: { resetSession?: boolean }): Promise<void> => {
+    async (pid: string, options?: { resetSession?: boolean }): Promise<void> => {
       const request = ++promptRequestRef.current;
       const interaction = interactionRef.current;
       try {
-        const full = await api.getPrompt(name);
+        const full = await api.getPrompt(pid);
         if (
           request !== promptRequestRef.current ||
           interaction !== interactionRef.current
         )
           return;
-        setSelectedName(full.name);
+        setSelectedId(full.id);
         setDraftName(full.name);
         setDraftDescription(full.description);
         setDraftBody(full.body);
@@ -197,7 +201,7 @@ export function PromptWorkbench({
   useEffect(() => {
     if (
       !isNewDraft &&
-      selectedName === "" &&
+      selectedId === "" &&
       draftName === "" &&
       draftDescription === "" &&
       draftBody === ""
@@ -205,7 +209,7 @@ export function PromptWorkbench({
       return;
     }
     setEditorMirror({
-      selectedName,
+      selectedId,
       draftName,
       draftDescription,
       draftBody,
@@ -214,7 +218,7 @@ export function PromptWorkbench({
     });
   }, [
     isNewDraft,
-    selectedName,
+    selectedId,
     draftName,
     draftDescription,
     draftBody,
@@ -249,24 +253,24 @@ export function PromptWorkbench({
         if (mirror?.isNewDraft) {
           restoredPromptRef.current = true;
           interactionRef.current += 1;
-          setSelectedName("");
+          setSelectedId("");
           setDraftName("");
           setDraftDescription("");
           setDraftBody("");
-          setSavedPrompt({ name: "", description: "", body: "" });
+          setSavedPrompt({ id: "", name: "", description: "", body: "" });
           setIsNewDraft(true);
           setEditorFeedback(null);
           return;
         }
         if (mirror !== null) {
           const exists =
-            mirror.selectedName !== "" &&
-            promptList.some((entry) => entry.name === mirror.selectedName);
+            mirror.selectedId !== "" &&
+            promptList.some((entry) => entry.id === mirror.selectedId);
           // 「无选中但有草稿」同样恢复：空白编辑器里直接打字的草稿也是用户意图。
-          if (exists || mirror.selectedName === "") {
+          if (exists || mirror.selectedId === "") {
             restoredPromptRef.current = true;
             interactionRef.current += 1;
-            setSelectedName(mirror.selectedName);
+            setSelectedId(mirror.selectedId);
             setDraftName(mirror.draftName);
             setDraftDescription(mirror.draftDescription);
             setDraftBody(mirror.draftBody);
@@ -283,7 +287,7 @@ export function PromptWorkbench({
           interactionRef.current === 0 &&
           first !== undefined
         ) {
-          await selectPrompt(first.name);
+          await selectPrompt(first.id);
         }
       } catch (err) {
         if (!cancelled) {
@@ -302,9 +306,9 @@ export function PromptWorkbench({
   useEffect(() => {
     if (restoreState !== "restored") return;
     restoredPromptRef.current = true;
-    if (restoredPromptName === null || interactionRef.current !== 0) return;
-    void selectPrompt(restoredPromptName);
-  }, [restoreState, restoredPromptName, selectPrompt]);
+    if (restoredPromptId === null || interactionRef.current !== 0) return;
+    void selectPrompt(restoredPromptId);
+  }, [restoreState, restoredPromptId, selectPrompt]);
 
   const reloadPrompts = useCallback(async (): Promise<void> => {
     try {
@@ -317,11 +321,11 @@ export function PromptWorkbench({
   const startNewDraft = (): void => {
     interactionRef.current += 1;
     promptRequestRef.current += 1;
-    setSelectedName("");
+    setSelectedId("");
     setDraftName("");
     setDraftDescription("");
     setDraftBody("");
-    setSavedPrompt({ name: "", description: "", body: "" });
+    setSavedPrompt({ id: "", name: "", description: "", body: "" });
     setIsNewDraft(true);
     setPromptMenuOpen(false);
     setEditorFeedback(null);
@@ -339,18 +343,34 @@ export function PromptWorkbench({
     savingPromptRef.current = true;
     setPromptBusy(true);
     try {
-      if (!isNewDraft && selectedName !== "" && name !== selectedName) {
-        await api.renamePrompt(selectedName, { new_name: name });
-        setSelectedName(name);
+      // ID 语义：新建走 POST（服务端分配 ID）；已有条目按 ID 覆盖，显示名变化
+      // 用 rename 写 frontmatter（文件名是 ID、永不动，引用不受影响）。
+      let pid = selectedId;
+      if (isNewDraft || pid === "") {
+        const created = await api.createPrompt({
+          name,
+          description: draftDescription,
+          body: draftBody,
+        });
+        pid = created.id;
+      } else {
+        // rename 幂等跟踪：正文写入失败重试时不再重复 rename（savedPrompt.name
+        // 保持旧值，让 promptDirty 仍为 true、保存按钮可点）。
+        if (name !== savedPrompt.name && name !== renamedToRef.current) {
+          await api.renamePrompt(pid, { new_name: name });
+          renamedToRef.current = name;
+        }
+        await api.savePrompt(pid, {
+          name,
+          description: draftDescription,
+          body: draftBody,
+        });
       }
-      await api.savePrompt(name, {
-        description: draftDescription,
-        body: draftBody,
-      });
       setIsNewDraft(false);
-      setSelectedName(name);
+      setSelectedId(pid);
       setDraftName(name);
-      setSavedPrompt({ name, description: draftDescription, body: draftBody });
+      renamedToRef.current = null;
+      setSavedPrompt({ id: pid, name, description: draftDescription, body: draftBody });
       setEditorFeedback({ kind: "success", text: `已保存提示词「${name}」` });
       await reloadPrompts();
     } catch (err) {
@@ -369,7 +389,7 @@ export function PromptWorkbench({
     setPromptBusy(true);
     try {
       await api.deletePrompt(deleteName);
-      if (deleteName === selectedName) startNewDraft();
+      if (deleteName === selectedId) startNewDraft();
       setEditorFeedback({ kind: "success", text: `已删除「${deleteName}」` });
       setDeleteDialogOpen(false);
       await reloadPrompts();
@@ -381,18 +401,18 @@ export function PromptWorkbench({
     }
   };
 
-  const activateEndpoint = async (name: string): Promise<void> => {
+  const activateEndpoint = async (cid: string): Promise<void> => {
     if (activatingEndpointRef.current || sending || strategyBusy) return;
     interactionRef.current += 1;
     activatingEndpointRef.current = true;
     setEndpointBusy(true);
     setChatError("");
     try {
-      await api.activateEndpoint(name);
+      await api.activateEndpoint(cid);
       setEndpoints((current) =>
-        current.map((item) => ({ ...item, is_active: item.name === name })),
+        current.map((item) => ({ ...item, is_active: item.id === cid })),
       );
-      setActiveModel(endpoints.find((item) => item.name === name)?.model ?? "");
+      setActiveModel(endpoints.find((item) => item.id === cid)?.model ?? "");
     } catch (err) {
       setChatError(reportError(err) ?? "");
     } finally {
@@ -420,7 +440,7 @@ export function PromptWorkbench({
   const handleSend = (): void => {
     if (endpointBusy || strategyBusy || promptBusy) return;
     interactionRef.current += 1;
-    send({ promptName: selectedName === "" ? null : selectedName, activeModel });
+    send({ promptId: selectedId === "" ? null : selectedId, activeModel });
   };
 
   // 中文输入法的回车上屏不属于「发送」（isComposing 判定），Shift+Enter 换行。
@@ -437,6 +457,7 @@ export function PromptWorkbench({
   const canSend = !controlsBusy && (instruction.trim() !== "" || media !== null);
   const bodySize = formatBytes(bodyBytes, "KiB", 1);
   const promptDirty =
+    isNewDraft ||
     draftName !== savedPrompt.name ||
     draftDescription !== savedPrompt.description ||
     draftBody !== savedPrompt.body;
@@ -446,9 +467,9 @@ export function PromptWorkbench({
       <div className="flex h-full min-h-0 flex-col">
         <StrategyToolbar
           references={{
-            endpoint: endpoints.find((entry) => entry.is_active)?.name ?? "",
-            prompt: selectedName,
-            skills: skillNames,
+            endpoint_id: endpoints.find((entry) => entry.is_active)?.id ?? "",
+            prompt_id: selectedId,
+            skill_ids: skillIds,
           }}
           prompts={prompts}
           skills={skills}
@@ -459,34 +480,34 @@ export function PromptWorkbench({
             const request = ++promptRequestRef.current;
             setStrategyBusy(true);
             try {
-              const full = await api.getPrompt(strategy.prompt);
+              const full = await api.getPrompt(strategy.prompt_id);
               if (request !== promptRequestRef.current)
                 throw new Error("当前编辑状态已改变，请重新选择策略");
-              await api.activateEndpoint(strategy.endpoint);
+              await api.activateEndpoint(strategy.endpoint_id);
               if (request !== promptRequestRef.current)
                 throw new Error("当前编辑状态已改变，请重新选择策略");
               restoredPromptRef.current = true;
-              setSelectedName(full.name);
+              setSelectedId(full.id);
               setDraftName(full.name);
               setDraftDescription(full.description);
               setDraftBody(full.body);
               setSavedPrompt(full);
               setIsNewDraft(false);
-              applySkillNames(strategy.skills);
+              applySkillIds(strategy.skill_ids);
               setEndpoints((current) =>
                 current.map((entry) => ({
                   ...entry,
-                  is_active: entry.name === strategy.endpoint,
+                  is_active: entry.id === strategy.endpoint_id,
                 })),
               );
               setActiveModel(
-                endpoints.find((entry) => entry.name === strategy.endpoint)?.model ??
+                endpoints.find((entry) => entry.id === strategy.endpoint_id)?.model ??
                   "",
               );
               // 切策略 = 换端点 + 提示词 + Skill 的整套口径（N1 同源③）。会话处理
               // （v3，归属即身份）：进该策略的桶——拉它名下最近会话接上（「切走
               // 再切回」不丢历史），桶里还没有会话就空白起步。
-              applySkillNames(strategy.skills);
+              applySkillIds(strategy.skill_ids);
               attachBucket(strategy.id);
             } finally {
               setStrategyBusy(false);
@@ -690,7 +711,7 @@ export function PromptWorkbench({
               <EndpointSwitcher
                 endpoints={endpoints}
                 disabled={endpointBusy || strategyBusy || promptBusy}
-                onActivate={(name) => void activateEndpoint(name)}
+                onActivate={(cid) => void activateEndpoint(cid)}
                 onManage={onNavigateToSettings}
               />
               <Tooltip>
@@ -753,12 +774,12 @@ export function PromptWorkbench({
                     </DropdownMenuLabel>
                     {skills.map((skill) => (
                       <DropdownMenuCheckboxItem
-                        key={skill.name}
-                        checked={skillNames.includes(skill.name)}
+                        key={skill.id}
+                        checked={skillIds.includes(skill.id)}
                         disabled={!skill.enabled || controlsBusy}
                         onSelect={(event) => {
                           event.preventDefault();
-                          handleToggleSkill(skill.name);
+                          handleToggleSkill(skill.id);
                         }}
                       >
                         <span className="truncate">
@@ -772,21 +793,24 @@ export function PromptWorkbench({
               }
               selectedSkills={
                 <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-                  {skillNames.map((name) => (
-                    <span
-                      key={name}
-                      className="inline-flex h-(--h-xs) shrink-0 items-center gap-1 rounded-full border border-border px-2 text-t-sm"
-                    >
-                      {name}
-                      <button
-                        type="button"
-                        aria-label={`移除 Skill ${name}`}
-                        onClick={() => handleToggleSkill(name)}
+                  {skillIds.map((sid) => {
+                    const label = skills.find((entry) => entry.id === sid)?.name ?? sid;
+                    return (
+                      <span
+                        key={sid}
+                        className="inline-flex h-(--h-xs) shrink-0 items-center gap-1 rounded-full border border-border px-2 text-t-sm"
                       >
-                        <XIcon className="size-3.5" />
-                      </button>
-                    </span>
-                  ))}
+                        {label}
+                        <button
+                          type="button"
+                          aria-label={`移除 Skill ${label}`}
+                          onClick={() => handleToggleSkill(sid)}
+                        >
+                          <XIcon className="size-3.5" />
+                        </button>
+                      </span>
+                    );
+                  })}
                 </div>
               }
               instruction={instruction}

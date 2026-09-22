@@ -86,11 +86,11 @@ export function NewStrategyDialog({
         setEndpoint(
           (value) =>
             value ||
-            endpoints.find((entry) => entry.is_active)?.name ||
-            endpoints[0]?.name ||
+            endpoints.find((entry) => entry.is_active)?.id ||
+            endpoints[0]?.id ||
             "",
         );
-        setPrompt((value) => value || prompts[0]?.name || "");
+        setPrompt((value) => value || prompts[0]?.id || "");
       },
       (reason: unknown) => {
         if (lifetime.current === current) setError(errorMessage(reason));
@@ -119,7 +119,13 @@ export function NewStrategyDialog({
       batch = await api.createBatch(
         wid,
         library === "scratch"
-          ? { type: "scratch", name: name.trim(), endpoint, prompt, skills }
+          ? {
+              type: "scratch",
+              name: name.trim(),
+              endpoint_id: endpoint,
+              prompt_id: prompt,
+              skill_ids: skills,
+            }
           : { type: "library", id: library, name: name.trim() || null },
       );
     } catch (reason) {
@@ -218,20 +224,20 @@ export function NewStrategyDialog({
           <legend className="mb-2 text-t-sm text-text-4">策略内容</legend>
           {picker(
             "端点配置",
-            source?.endpoint ?? endpoint,
+            source?.endpoint_id ?? endpoint,
             setEndpoint,
             (catalog?.endpoints ?? []).map((entry) => ({
-              value: entry.name,
+              value: entry.id,
               label: `${entry.name} · ${entry.model}`,
             })),
             library !== "scratch",
           )}
           {picker(
             "基础提示词",
-            source?.prompt ?? prompt,
+            source?.prompt_id ?? prompt,
             setPrompt,
             (catalog?.prompts ?? []).map((entry) => ({
-              value: entry.name,
+              value: entry.id,
               label: entry.name,
             })),
             library !== "scratch",
@@ -247,7 +253,13 @@ export function NewStrategyDialog({
                   disabled={busy || !catalog || library !== "scratch"}
                 >
                   <span className="truncate">
-                    {(source?.skills ?? skills).join(" · ") || "无"}
+                    {(source?.skill_ids ?? skills)
+                      .map(
+                        (sid) =>
+                          catalog?.skills.find((entry) => entry.id === sid)?.name ??
+                          sid,
+                      )
+                      .join(" · ") || "无"}
                   </span>
                   <ChevronDownIcon />
                 </Button>

@@ -22,6 +22,7 @@ import { PromptWorkbench } from "./PromptWorkbench";
 const apiMock = vi.hoisted(() => ({
   listPrompts: vi.fn(),
   getPrompt: vi.fn(),
+  createPrompt: vi.fn(),
   savePrompt: vi.fn(),
   renamePrompt: vi.fn(),
   deletePrompt: vi.fn(),
@@ -40,11 +41,12 @@ vi.mock("../../api", async (original) => ({
 }));
 
 const PROMPTS: PromptInfo[] = [
-  { name: "h3-video", description: "视频打标" },
-  { name: "simple", description: "" },
+  { id: "p-h3-video-01", name: "h3-video", description: "视频打标" },
+  { id: "p-simple-001", name: "simple", description: "" },
 ];
 
 const FULL_PROMPT = {
+  id: "p-h3-video-01",
   name: "h3-video",
   description: "视频打标",
   body: "你是打标助手。",
@@ -52,6 +54,7 @@ const FULL_PROMPT = {
 
 const ENDPOINTS: EndpointConfigSummary[] = [
   {
+    id: "e-default-x1",
     name: "default",
     base_url: "https://a/v1",
     model: "model-a",
@@ -61,6 +64,7 @@ const ENDPOINTS: EndpointConfigSummary[] = [
     request_params: {},
   },
   {
+    id: "e-backup-x1",
     name: "backup",
     base_url: "https://b/v1",
     model: "model-b",
@@ -72,7 +76,13 @@ const ENDPOINTS: EndpointConfigSummary[] = [
 ];
 
 const SKILLS: SkillInfo[] = [
-  { name: "h3-skill", description: "H3 要求", enabled: true, body_chars: 860 },
+  {
+    id: "k-h3-skill-01",
+    name: "h3-skill",
+    description: "H3 要求",
+    enabled: true,
+    body_chars: 860,
+  },
 ];
 
 beforeEach(() => {
@@ -179,7 +189,7 @@ describe("PromptWorkbench", () => {
     await act(async () =>
       resolveSession({
         session_id: "old",
-        settings: { prompt_name: "simple", skill_names: [] },
+        settings: { prompt_id: "p-simple-001", skill_ids: [] },
         messages: [{ role: "user", text: "旧对话", attachment: null }],
       }),
     );
@@ -190,13 +200,13 @@ describe("PromptWorkbench", () => {
       screen.getByRole("button", { name: "移除 Skill h3-skill" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("旧对话")).not.toBeInTheDocument();
-    expect(apiMock.getPrompt).not.toHaveBeenCalledWith("simple");
+    expect(apiMock.getPrompt).not.toHaveBeenCalledWith("p-simple-001");
   });
 
   it("历史恢复的助手消息带思考过程：折叠区跟着回来", async () => {
     apiMock.latestSession.mockResolvedValueOnce({
       session_id: "s-old",
-      settings: { prompt_name: "h3-video", skill_names: ["h3-skill"] },
+      settings: { prompt_id: "p-h3-video-01", skill_ids: ["k-h3-skill-01"] },
       messages: [
         { role: "user", text: "给这张图打个标", attachment: null },
         {
@@ -236,9 +246,9 @@ describe("PromptWorkbench", () => {
     id: "a1",
     name: "备用策略",
     description: "",
-    prompt: "simple",
-    endpoint: "backup",
-    skills: ["h3-skill"],
+    prompt_id: "p-simple-001",
+    endpoint_id: "e-backup-x1",
+    skill_ids: ["k-h3-skill-01"],
     body_chars: 1200,
     available: true,
     missing_refs: [],
@@ -262,6 +272,7 @@ describe("PromptWorkbench", () => {
       expect(screen.getByRole("button", { name: "切换策略" })).toBeEnabled(),
     );
     apiMock.getPrompt.mockResolvedValue({
+      id: "p-simple-001",
       name: "simple",
       description: "",
       body: "简短",
@@ -282,6 +293,7 @@ describe("PromptWorkbench", () => {
     renderWorkbench();
     await waitFor(() => expect(screen.getByLabelText("名称")).toHaveValue("h3-video"));
     apiMock.getPrompt.mockResolvedValue({
+      id: "p-simple-001",
       name: "simple",
       description: "",
       body: "简短",
@@ -309,13 +321,13 @@ describe("PromptWorkbench", () => {
     await act(async () =>
       resolveSession({
         session_id: "old",
-        settings: { prompt_name: "simple", skill_names: ["h3-skill"] },
+        settings: { prompt_id: "p-simple-001", skill_ids: ["k-h3-skill-01"] },
         messages: [],
       }),
     );
 
     expect(screen.getByLabelText("描述")).toHaveValue("保留编辑");
-    expect(apiMock.getPrompt).not.toHaveBeenCalledWith("simple");
+    expect(apiMock.getPrompt).not.toHaveBeenCalledWith("p-simple-001");
   });
 
   it("改名后写正文失败，保留草稿并按新名称重试保存", async () => {
@@ -334,7 +346,8 @@ describe("PromptWorkbench", () => {
 
     expect(await screen.findByText("已保存提示词「renamed」")).toBeInTheDocument();
     expect(apiMock.renamePrompt).toHaveBeenCalledTimes(1);
-    expect(apiMock.savePrompt).toHaveBeenLastCalledWith("renamed", {
+    expect(apiMock.savePrompt).toHaveBeenLastCalledWith("p-h3-video-01", {
+      name: "renamed",
       description: FULL_PROMPT.description,
       body: FULL_PROMPT.body,
     });
@@ -348,7 +361,9 @@ describe("PromptWorkbench", () => {
       }),
     );
     renderWorkbench();
-    await waitFor(() => expect(apiMock.getPrompt).toHaveBeenCalledWith("h3-video"));
+    await waitFor(() =>
+      expect(apiMock.getPrompt).toHaveBeenCalledWith("p-h3-video-01"),
+    );
 
     await userEvent.click(screen.getByRole("button", { name: "切换提示词" }));
     await userEvent.click(screen.getByRole("button", { name: "新建提示词" }));
@@ -363,7 +378,7 @@ describe("PromptWorkbench", () => {
     renderWorkbench();
 
     await waitFor(() => {
-      expect(apiMock.getPrompt).toHaveBeenCalledWith("h3-video");
+      expect(apiMock.getPrompt).toHaveBeenCalledWith("p-h3-video-01");
     });
     // 端点切换器 chip 显示「名称 · 模型名」。
     expect(screen.getByText("default · model-a")).toBeInTheDocument();
@@ -386,12 +401,13 @@ describe("PromptWorkbench", () => {
     await userEvent.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => {
-      expect(apiMock.renamePrompt).toHaveBeenCalledWith("h3-video", {
+      expect(apiMock.renamePrompt).toHaveBeenCalledWith("p-h3-video-01", {
         new_name: "h3-renamed",
       });
     });
     await waitFor(() => {
-      expect(apiMock.savePrompt).toHaveBeenCalledWith("h3-renamed", {
+      expect(apiMock.savePrompt).toHaveBeenCalledWith("p-h3-video-01", {
+        name: "h3-renamed",
         description: "视频打标",
         body: "你是打标助手。",
       });
@@ -399,6 +415,11 @@ describe("PromptWorkbench", () => {
   });
 
   it("保存：调 savePrompt（名称 + 描述 + 正文）并刷新列表", async () => {
+    apiMock.createPrompt.mockResolvedValue({
+      id: "p-new-prompt-1",
+      name: "new-prompt",
+      description: "",
+    });
     apiMock.savePrompt.mockResolvedValue(undefined);
     renderWorkbench();
 
@@ -413,7 +434,8 @@ describe("PromptWorkbench", () => {
     await userEvent.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => {
-      expect(apiMock.savePrompt).toHaveBeenCalledWith("new-prompt", {
+      expect(apiMock.createPrompt).toHaveBeenCalledWith({
+        name: "new-prompt",
         description: "新条目",
         body: "新的正文",
       });
@@ -433,9 +455,9 @@ describe("PromptWorkbench", () => {
     await waitFor(() => {
       expect(apiMock.labelStream).toHaveBeenCalledWith(
         expect.objectContaining({
-          prompt_name: "h3-video",
+          prompt_id: "p-h3-video-01",
           instruction: "给这张图打个标",
-          skill_names: [],
+          skill_ids: [],
         }),
         expect.objectContaining({
           onStart: expect.any(Function),
@@ -516,7 +538,7 @@ describe("PromptWorkbench", () => {
 
     await waitFor(() => {
       expect(apiMock.labelStream).toHaveBeenCalledWith(
-        expect.objectContaining({ prompt_name: null }),
+        expect.objectContaining({ prompt_id: null }),
         expect.anything(),
         expect.anything(), // AbortSignal
       );
@@ -532,7 +554,7 @@ describe("PromptWorkbench", () => {
     await userEvent.click(screen.getByText("backup · model-b"));
 
     await waitFor(() => {
-      expect(apiMock.activateEndpoint).toHaveBeenCalledWith("backup");
+      expect(apiMock.activateEndpoint).toHaveBeenCalledWith("e-backup-x1");
     });
     expect(await screen.findByText("backup · model-b")).toBeInTheDocument();
   });
@@ -661,7 +683,7 @@ describe("编辑器镜像与恢复优先级（三期）", () => {
 
   const MIRROR_BASE = {
     draftDescription: "",
-    savedPrompt: { name: "simple", description: "", body: "" },
+    savedPrompt: { id: "p-simple-001", name: "simple", description: "", body: "" },
   };
 
   it("镜像优先：编辑器恢复为离开时刻的样子，且不经服务端取全文", async () => {
@@ -669,7 +691,7 @@ describe("编辑器镜像与恢复优先级（三期）", () => {
       "dsf-workbench-editor",
       JSON.stringify({
         ...MIRROR_BASE,
-        selectedName: "simple",
+        selectedId: "p-simple-001",
         draftName: "simple",
         draftBody: "镜像正文",
         isNewDraft: false,
@@ -688,11 +710,12 @@ describe("编辑器镜像与恢复优先级（三期）", () => {
     localStorage.setItem(
       "dsf-workbench-editor",
       JSON.stringify({
-        selectedName: "h3-video",
+        selectedId: "p-h3-video-01",
         draftName: "h3-video",
         draftDescription: "视频打标",
         draftBody: "未保存的草稿正文",
         savedPrompt: {
+          id: "p-h3-video-01",
           name: "h3-video",
           description: "视频打标",
           body: "你是打标助手。",
@@ -702,7 +725,7 @@ describe("编辑器镜像与恢复优先级（三期）", () => {
     );
     apiMock.latestSession.mockResolvedValue({
       session_id: "s-old",
-      settings: { prompt_name: "h3-video", skill_names: [] },
+      settings: { prompt_id: "p-h3-video-01", skill_ids: [] },
       messages: [{ role: "user", text: "历史消息", attachment: null }],
     });
     renderWorkbench();
@@ -718,7 +741,7 @@ describe("编辑器镜像与恢复优先级（三期）", () => {
       "dsf-workbench-editor",
       JSON.stringify({
         ...MIRROR_BASE,
-        selectedName: "ghost",
+        selectedId: "p-ghost-x1111",
         draftName: "ghost",
         draftBody: "幽灵正文",
         isNewDraft: false,
@@ -726,7 +749,7 @@ describe("编辑器镜像与恢复优先级（三期）", () => {
     );
     apiMock.latestSession.mockResolvedValue({
       session_id: "s-old",
-      settings: { prompt_name: "h3-video", skill_names: [] },
+      settings: { prompt_id: "p-h3-video-01", skill_ids: [] },
       messages: [{ role: "user", text: "旧会话消息", attachment: null }],
     });
     renderWorkbench();
@@ -740,11 +763,11 @@ describe("编辑器镜像与恢复优先级（三期）", () => {
     localStorage.setItem(
       "dsf-workbench-editor",
       JSON.stringify({
-        selectedName: "",
+        selectedId: "",
         draftName: "凭空起的名",
         draftDescription: "",
         draftBody: "写了一半的正文",
-        savedPrompt: { name: "", description: "", body: "" },
+        savedPrompt: { id: "", name: "", description: "", body: "" },
         isNewDraft: false,
       }),
     );
@@ -760,11 +783,11 @@ describe("编辑器镜像与恢复优先级（三期）", () => {
     localStorage.setItem(
       "dsf-workbench-editor",
       JSON.stringify({
-        selectedName: "",
+        selectedId: "",
         draftName: "",
         draftDescription: "",
         draftBody: "",
-        savedPrompt: { name: "", description: "", body: "" },
+        savedPrompt: { id: "", name: "", description: "", body: "" },
         isNewDraft: true,
       }),
     );
@@ -788,9 +811,9 @@ describe("策略与会话的一致性（三期 v2）", () => {
     id: "s1",
     name: "测试策略",
     description: "回归用",
-    endpoint: "default",
-    prompt: "h3-video",
-    skills: [],
+    endpoint_id: "e-default-x1",
+    prompt_id: "p-h3-video-01",
+    skill_ids: [],
     body_chars: 100,
     available: true,
     missing_refs: [],
@@ -813,7 +836,7 @@ describe("策略与会话的一致性（三期 v2）", () => {
     apiMock.listStrategies.mockResolvedValue([WORKBENCH_STRATEGY]);
     apiMock.latestSession.mockResolvedValue({
       session_id: "s-old",
-      settings: { prompt_name: "h3-video", skill_names: [] },
+      settings: { prompt_id: "p-h3-video-01", skill_ids: [] },
       messages: [{ role: "user", text: "重启前的策略对话", attachment: null }],
     });
     renderWorkbench();
@@ -843,7 +866,7 @@ describe("策略与会话的一致性（三期 v2）", () => {
     ]);
     apiMock.latestSession.mockResolvedValue({
       session_id: "s-old",
-      settings: { prompt_name: "h3-video", skill_names: ["旧组合"] },
+      settings: { prompt_id: "p-h3-video-01", skill_ids: ["k-old-combo-1"] },
       messages: [{ role: "user", text: "策略名下的历史会话", attachment: null }],
     });
     renderWorkbench();
@@ -860,7 +883,7 @@ describe("策略与会话的一致性（三期 v2）", () => {
     apiMock.listStrategies.mockResolvedValue([WORKBENCH_STRATEGY]);
     apiMock.latestSession.mockResolvedValue({
       session_id: "s-old",
-      settings: { prompt_name: "h3-video", skill_names: [] },
+      settings: { prompt_id: "p-h3-video-01", skill_ids: [] },
       messages: [{ role: "user", text: "策略会话的历史", attachment: null }],
     });
     renderWorkbench();

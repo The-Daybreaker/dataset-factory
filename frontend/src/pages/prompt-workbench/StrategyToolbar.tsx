@@ -45,19 +45,40 @@ import {
 } from "../../lib/ui-storage";
 
 type Strategy = components["schemas"]["StrategyView"];
-type References = Pick<Strategy, "endpoint" | "prompt" | "skills">;
+type References = Pick<Strategy, "endpoint_id" | "prompt_id" | "skill_ids">;
 
-/** 悬停气泡里的出身三参数（§5.7 键值行：键用弱字、值用次字，键列全站统一 84px）。 */
-function StrategyRefs({ endpoint, prompt, skills }: References): ReactElement {
+/** 悬停气泡里的出身三参数（§5.7 键值行：键用弱字、值用次字，键列全站统一 84px）。
+
+    策略存的是各资产的稳定 ID：展示前按传入的资产列表反查显示名；反查不到
+    （资产已删除）时显示 ID 原样——缺失本身由 available / missing_refs 表达。
+    */
+function StrategyRefs({
+  entry,
+  prompts,
+  skills,
+  endpoints,
+}: {
+  entry: Strategy;
+  prompts: PromptInfo[];
+  skills: SkillInfo[];
+  endpoints: EndpointConfigSummary[];
+}): ReactElement {
+  const endpointName =
+    endpoints.find((item) => item.id === entry.endpoint_id)?.name ?? entry.endpoint_id;
+  const promptName =
+    prompts.find((item) => item.id === entry.prompt_id)?.name ?? entry.prompt_id;
+  const skillNames = entry.skill_ids.map(
+    (sid) => skills.find((item) => item.id === sid)?.name ?? sid,
+  );
   return (
     <span className="grid grid-cols-[84px_minmax(0,1fr)] gap-x-2 gap-y-1 text-left">
       <span className="text-text-4">端点</span>
-      <span className="min-w-0 wrap-anywhere text-text-2">{endpoint}</span>
+      <span className="min-w-0 wrap-anywhere text-text-2">{endpointName}</span>
       <span className="text-text-4">提示词</span>
-      <span className="min-w-0 wrap-anywhere text-text-2">{prompt}</span>
+      <span className="min-w-0 wrap-anywhere text-text-2">{promptName}</span>
       <span className="text-text-4">Skill</span>
       <span className="min-w-0 wrap-anywhere text-text-2">
-        {skills.length === 0 ? "无" : skills.join("、")}
+        {skillNames.length === 0 ? "无" : skillNames.join("、")}
       </span>
     </span>
   );
@@ -97,9 +118,9 @@ export function StrategyToolbar({
   const [remove, setRemove] = useState<Strategy | null>(null);
   const [repair, setRepair] = useState<Strategy | null>(null);
   const [bindings, setBindings] = useState<References>({
-    endpoint: "",
-    prompt: "",
-    skills: [],
+    endpoint_id: "",
+    prompt_id: "",
+    skill_ids: [],
   });
   const mounted = useRef(true);
   const pending = useRef(false);
@@ -160,9 +181,9 @@ export function StrategyToolbar({
             id: selected.id,
             name,
             description,
-            endpoint: selected.endpoint,
-            prompt: selected.prompt,
-            skills: selected.skills,
+            endpoint_id: selected.endpoint_id,
+            prompt_id: selected.prompt_id,
+            skill_ids: selected.skill_ids,
           },
     );
   }, [selected, name, description]);
@@ -245,9 +266,9 @@ export function StrategyToolbar({
     if (pending.current || locked || loading) return;
     if (!entry.available) {
       setBindings({
-        endpoint: entry.endpoint,
-        prompt: entry.prompt,
-        skills: entry.skills,
+        endpoint_id: entry.endpoint_id,
+        prompt_id: entry.prompt_id,
+        skill_ids: entry.skill_ids,
       });
       setRepair(entry);
       setOpen(false);
@@ -266,9 +287,9 @@ export function StrategyToolbar({
     selected !== null &&
     (name !== selected.name ||
       description !== selected.description ||
-      references.endpoint !== selected.endpoint ||
-      references.prompt !== selected.prompt ||
-      JSON.stringify(references.skills) !== JSON.stringify(selected.skills));
+      references.endpoint_id !== selected.endpoint_id ||
+      references.prompt_id !== selected.prompt_id ||
+      JSON.stringify(references.skill_ids) !== JSON.stringify(selected.skill_ids));
   // 有东西可保存 = 已选策略有改动，或正在编辑一份尚未落库的新策略（新建流程不能被「无改动」禁用）。
   const actionable =
     dirty || (selected === null && (name !== "" || description !== ""));
@@ -376,9 +397,10 @@ export function StrategyToolbar({
                     <Tip
                       label={
                         <StrategyRefs
-                          endpoint={entry.endpoint}
-                          prompt={entry.prompt}
-                          skills={entry.skills}
+                          entry={entry}
+                          prompts={prompts}
+                          skills={skills}
+                          endpoints={endpoints}
                         />
                       }
                     >
@@ -481,8 +503,8 @@ export function StrategyToolbar({
               locked ||
               !actionable ||
               !name.trim() ||
-              !references.prompt ||
-              !references.endpoint
+              !references.prompt_id ||
+              !references.endpoint_id
             }
             onClick={save}
           >
@@ -574,22 +596,24 @@ export function StrategyToolbar({
             端点
             {/* L12（2026-09-21 审计）：全站唯一的原生 select 破口 → Radix Select。 */}
             <Select
-              value={bindings.endpoint}
+              value={bindings.endpoint_id}
               disabled={busy}
-              onValueChange={(value) => setBindings({ ...bindings, endpoint: value })}
+              onValueChange={(value) =>
+                setBindings({ ...bindings, endpoint_id: value })
+              }
             >
               <SelectTrigger aria-label="重新指定端点" className="h-(--h-lg)">
                 <SelectValue placeholder="选择端点" />
               </SelectTrigger>
               <SelectContent>
-                {!endpoints.some((entry) => entry.name === bindings.endpoint) &&
-                  bindings.endpoint !== "" && (
-                    <SelectItem value={bindings.endpoint} disabled>
-                      {bindings.endpoint}（缺失）
+                {!endpoints.some((entry) => entry.id === bindings.endpoint_id) &&
+                  bindings.endpoint_id !== "" && (
+                    <SelectItem value={bindings.endpoint_id} disabled>
+                      {bindings.endpoint_id}（缺失）
                     </SelectItem>
                   )}
                 {endpoints.map((entry) => (
-                  <SelectItem key={entry.name} value={entry.name}>
+                  <SelectItem key={entry.id} value={entry.id}>
                     {entry.name}
                   </SelectItem>
                 ))}
@@ -599,22 +623,22 @@ export function StrategyToolbar({
           <div className="grid gap-2 text-t-sm">
             提示词
             <Select
-              value={bindings.prompt}
+              value={bindings.prompt_id}
               disabled={busy}
-              onValueChange={(value) => setBindings({ ...bindings, prompt: value })}
+              onValueChange={(value) => setBindings({ ...bindings, prompt_id: value })}
             >
               <SelectTrigger aria-label="重新指定提示词" className="h-(--h-lg)">
                 <SelectValue placeholder="选择提示词" />
               </SelectTrigger>
               <SelectContent>
-                {!prompts.some((entry) => entry.name === bindings.prompt) &&
-                  bindings.prompt !== "" && (
-                    <SelectItem value={bindings.prompt} disabled>
-                      {bindings.prompt}（缺失）
+                {!prompts.some((entry) => entry.id === bindings.prompt_id) &&
+                  bindings.prompt_id !== "" && (
+                    <SelectItem value={bindings.prompt_id} disabled>
+                      {bindings.prompt_id}（缺失）
                     </SelectItem>
                   )}
                 {prompts.map((entry) => (
-                  <SelectItem key={entry.name} value={entry.name}>
+                  <SelectItem key={entry.id} value={entry.id}>
                     {entry.name}
                   </SelectItem>
                 ))}
@@ -625,26 +649,26 @@ export function StrategyToolbar({
             <legend className="mb-2 text-t-sm">Skill</legend>
             {Array.from(
               new Set([
-                ...bindings.skills,
-                ...skills.filter((entry) => entry.enabled).map((entry) => entry.name),
+                ...bindings.skill_ids,
+                ...skills.filter((entry) => entry.enabled).map((entry) => entry.id),
               ]),
-            ).map((skill) => (
-              <label key={skill} className="flex items-center gap-2 text-t-sm">
+            ).map((sid) => (
+              <label key={sid} className="flex items-center gap-2 text-t-sm">
                 <input
                   type="checkbox"
                   className="cb"
-                  checked={bindings.skills.includes(skill)}
+                  checked={bindings.skill_ids.includes(sid)}
                   onChange={(event) =>
                     setBindings({
                       ...bindings,
-                      skills: event.currentTarget.checked
-                        ? [...bindings.skills, skill]
-                        : bindings.skills.filter((name) => name !== skill),
+                      skill_ids: event.currentTarget.checked
+                        ? [...bindings.skill_ids, sid]
+                        : bindings.skill_ids.filter((item) => item !== sid),
                     })
                   }
                 />
-                {skill}
-                {skills.some((entry) => entry.name === skill && entry.enabled)
+                {skills.find((entry) => entry.id === sid)?.name ?? sid}
+                {skills.some((entry) => entry.id === sid && entry.enabled)
                   ? ""
                   : "（缺失或停用）"}
               </label>
@@ -655,7 +679,7 @@ export function StrategyToolbar({
               取消
             </Button>
             <Button
-              disabled={busy || !bindings.endpoint || !bindings.prompt}
+              disabled={busy || !bindings.endpoint_id || !bindings.prompt_id}
               onClick={() =>
                 void operate(async () => {
                   if (!repair) return;

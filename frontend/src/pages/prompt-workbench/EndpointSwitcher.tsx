@@ -20,7 +20,7 @@ export function EndpointSwitcher({
 }: {
   endpoints: EndpointConfigSummary[];
   disabled?: boolean;
-  onActivate: (name: string) => void;
+  onActivate: (cid: string) => void;
   onManage: () => void;
 }): ReactElement {
   const active = endpoints.find((item) => item.is_active);
@@ -54,7 +54,7 @@ export function EndpointSwitcher({
           <DropdownMenuItem
             key={item.name}
             disabled={disabled}
-            onSelect={() => onActivate(item.name)}
+            onSelect={() => onActivate(item.id)}
           >
             <span className="flex-1 truncate">
               {item.name} · {item.model}

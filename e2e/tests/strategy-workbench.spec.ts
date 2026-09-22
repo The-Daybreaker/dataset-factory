@@ -32,7 +32,7 @@ test("策略保存、切换和对话使用同一组合，工作台匹配两栏�
   expect(response.ok()).toBeTruthy();
   const entries = await response.json();
   expect(entries).toEqual(expect.arrayContaining([expect.objectContaining({
-    name: "E2E 详细策略", description: "真实往返", prompt: "strategy-workbench-prompt", available: true,
+    name: "E2E 详细策略", description: "真实往返", available: true,
   })]));
   await page.getByRole("button", { name: "切换策略" }).click();
   await page.getByRole("button", { name: "新建策略" }).click();

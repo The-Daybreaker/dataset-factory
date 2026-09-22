@@ -31,9 +31,9 @@ const strategy: components["schemas"]["StrategyView"] = {
   id: "a1",
   name: "详细描述",
   description: "训练用",
-  endpoint: "default",
-  prompt: "caption",
-  skills: [],
+  endpoint_id: "e-default-x1",
+  prompt_id: "p-caption-01",
+  skill_ids: [],
   body_chars: 12_400,
   available: true,
   missing_refs: [],
@@ -45,8 +45,12 @@ function mount(strict = false): void {
   const content = (
     <TooltipProvider>
       <StrategyToolbar
-        references={{ endpoint: "default", prompt: "caption", skills: [] }}
-        prompts={[{ name: "caption", description: "" }]}
+        references={{
+          endpoint_id: "e-default-x1",
+          prompt_id: "p-caption-01",
+          skill_ids: [],
+        }}
+        prompts={[{ id: "p-caption-01", name: "caption", description: "" }]}
         endpoints={[]}
         skills={[]}
         locked={false}
@@ -148,9 +152,9 @@ it("编辑策略后锁定切换：列表照开、点了才提示；保存失败�
   expect(mocks.updateStrategy).toHaveBeenLastCalledWith("a1", {
     name: "新名字",
     description: "训练用",
-    endpoint: "default",
-    prompt: "caption",
-    skills: [],
+    endpoint_id: "e-default-x1",
+    prompt_id: "p-caption-01",
+    skill_ids: [],
   });
   expect(select).toHaveBeenCalledTimes(1);
 });
@@ -297,8 +301,12 @@ describe("策略选中的启动恢复与镜像（三期 v2）", () => {
     render(
       <TooltipProvider>
         <StrategyToolbar
-          references={{ endpoint: "default", prompt: "caption", skills: [] }}
-          prompts={[{ name: "caption", description: "" }]}
+          references={{
+            endpoint_id: "e-default-x1",
+            prompt_id: "p-caption-01",
+            skill_ids: [],
+          }}
+          prompts={[{ id: "p-caption-01", name: "caption", description: "" }]}
           endpoints={[]}
           skills={[]}
           locked={false}
