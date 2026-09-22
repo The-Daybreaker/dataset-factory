@@ -247,20 +247,24 @@ def create_batch(
     *,
     name: str,
     description: str,
-    endpoint: str,
-    prompt: str,
-    skills: list[str],
+    endpoint_id: str,
+    prompt_id: str,
+    skill_ids: list[str],
     source: dict[str, object] | None = None,
 ) -> BatchEntry:
     """从零配置新建一个批次：校验引用 → 锁内预占序号 → 锁外写快照 → 锁内登记。
+
+    引用一律传各资产的稳定 ID（2026-09-23 ID 化）。
 
     Raises:
         StrategyRefsError: 引用的端点 / 提示词 / Skill 不存在。
         BatchNotFoundError: state.json 形状不对。
     """
-    require_refs_exist(endpoint, prompt, skills)
+    require_refs_exist(endpoint_id, prompt_id, skill_ids)
     now = now_iso()
-    snapshot = build_snapshot(endpoint, prompt, skills, built_at=now, source=source)
+    snapshot = build_snapshot(
+        endpoint_id, prompt_id, skill_ids, built_at=now, source=source
+    )
     store = WorkdirStore(workdir)
     seq = _reserve_seq(store)
     _write_snapshot(store, seq, snapshot)
@@ -299,9 +303,9 @@ def apply_library_strategy(
         )
     now = now_iso()
     snapshot = build_snapshot(
-        library_entry.endpoint,
-        library_entry.prompt,
-        library_entry.skills,
+        library_entry.endpoint_id,
+        library_entry.prompt_id,
+        library_entry.skill_ids,
         built_at=now,
         source={
             "strategy_id": strategy_id,

@@ -112,11 +112,16 @@ def test_full_labeling_flow_over_real_http(
 ) -> None:
     """全链路：建提示词 → 发图打标 → 模型经真 HTTP 返回 → 会话真的落盘。"""
     # 1. 通过 HTTP 建一条基础提示词（真实走 prompts 库的写盘路径）。
-    save = system_client.put(
-        "/api/prompts/sys-e2e",
-        json={"description": "系统测试用", "body": "你是图片打标助手。"},
+    save = system_client.post(
+        "/api/prompts",
+        json={
+            "name": "sys-e2e",
+            "description": "系统测试用",
+            "body": "你是图片打标助手。",
+        },
     )
-    assert save.status_code == 204, save.text
+    assert save.status_code == 201, save.text
+    pid = save.json()["id"]
 
     # 2. 假端点按脚本回复；发一轮带图打标。
     fake_endpoint.set_responses([{"content": "一只赛博朋克风格的猫"}])
@@ -124,8 +129,8 @@ def test_full_labeling_flow_over_real_http(
         "/api/label",
         json={
             "session_id": None,
-            "prompt_name": "sys-e2e",
-            "skill_names": [],
+            "prompt_id": pid,
+            "skill_ids": [],
             "instruction": "给这张图打个标",
             "image_base64": TINY_PNG_BASE64,
             "image_name": "cat.png",
@@ -184,17 +189,21 @@ def test_error_path_real_http(
     自动重试——假端点会收到 3 次请求（1 次原始 + 2 次重试）。L1 的 mock 永远
     测不出这层语义。
     """
-    system_client.put(
-        "/api/prompts/sys-e2e",
-        json={"description": "系统测试用", "body": "你是图片打标助手。"},
-    )
+    pid = system_client.post(
+        "/api/prompts",
+        json={
+            "name": "sys-e2e",
+            "description": "系统测试用",
+            "body": "你是图片打标助手。",
+        },
+    ).json()["id"]
     fake_endpoint.fail_with(500)
     response = system_client.post(
         "/api/label",
         json={
             "session_id": None,
-            "prompt_name": "sys-e2e",
-            "skill_names": [],
+            "prompt_id": pid,
+            "skill_ids": [],
             "instruction": "打标",
             "image_base64": None,
             "image_name": "x.png",
@@ -209,17 +218,21 @@ def test_session_recovery_over_real_http(
     system_client: httpx.Client, fake_endpoint: FakeLLMEndpoint
 ) -> None:
     """发一轮 → GET /api/sessions/latest 拿到的快照与请求一致（恢复链路）。"""
-    system_client.put(
-        "/api/prompts/sys-e2e",
-        json={"description": "系统测试用", "body": "你是图片打标助手。"},
-    )
+    pid = system_client.post(
+        "/api/prompts",
+        json={
+            "name": "sys-e2e",
+            "description": "系统测试用",
+            "body": "你是图片打标助手。",
+        },
+    ).json()["id"]
     fake_endpoint.set_responses([{"content": "第二轮回复"}])
     first = system_client.post(
         "/api/label",
         json={
             "session_id": None,
-            "prompt_name": "sys-e2e",
-            "skill_names": [],
+            "prompt_id": pid,
+            "skill_ids": [],
             "instruction": "第一轮",
             "image_base64": TINY_PNG_BASE64,
             "image_name": "a.png",
@@ -232,7 +245,7 @@ def test_session_recovery_over_real_http(
     assert snapshot.status_code == 200
     data = snapshot.json()
     assert data["session_id"] == session_id
-    assert data["settings"]["prompt_name"] == "sys-e2e"
+    assert data["settings"]["prompt_id"] == pid
     assert data["messages"][-1] == {
         "role": "assistant",
         "text": "第二轮回复",
@@ -252,10 +265,14 @@ def test_stream_labeling_over_real_http(
     fake_endpoint: FakeLLMEndpoint,
 ) -> None:
     """流式全链路：SSE 事件 start → delta… → done，终稿照落盘（真 TCP + 真流式端点）。"""
-    system_client.put(
-        "/api/prompts/sys-e2e",
-        json={"description": "系统测试用", "body": "你是图片打标助手。"},
-    )
+    pid = system_client.post(
+        "/api/prompts",
+        json={
+            "name": "sys-e2e",
+            "description": "系统测试用",
+            "body": "你是图片打标助手。",
+        },
+    ).json()["id"]
     fake_endpoint.set_responses([{"content": "流式打标结果"}])
 
     with system_client.stream(
@@ -263,8 +280,8 @@ def test_stream_labeling_over_real_http(
         "/api/label/stream",
         json={
             "session_id": None,
-            "prompt_name": "sys-e2e",
-            "skill_names": [],
+            "prompt_id": pid,
+            "skill_ids": [],
             "instruction": "打个标",
             "image_base64": None,
             "image_name": "x.png",

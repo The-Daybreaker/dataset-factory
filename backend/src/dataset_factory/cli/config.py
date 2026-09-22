@@ -5,12 +5,15 @@
 
 - ``set``：更新当前使用的配置（一套都没有时创建 default 并启用）；
 - ``show``：查看当前使用的配置；
-- ``list``：列出全部配置（* 标记当前使用）；
+- ``list``：列出全部配置（* 标记当前使用，显示名 + ID）；
 - ``add``：新增一套配置；
 - ``remove``：删除一套配置（当前使用中的需先切换）；
 - ``use``：把一套配置设为当前使用；
 - ``test``：发一个极小的真实请求测试连通性（不必改配置）；
 - ``params``：查看 / 整体替换一套配置的请求参数（与 Web 设置页「高级参数」同一份配置）。
+
+寻址口径（2026-09-23 ID 化）：命令参数接受**配置 ID 或唯一显示名**（ID 优先；
+显示名重名不唯一时报错列出候选），解析收敛在 _resolve_ref。
 """
 
 from __future__ import annotations
@@ -27,7 +30,8 @@ from ..llm import (
     ConfigError,
     EndpointConfig,
     SecretValue,
-    active_config_name,
+    active_config_id,
+    config_id_by_display_name,
     create_config,
     delete_config,
     describe_config,
@@ -53,6 +57,26 @@ app = typer.Typer(
 _KEY_SOURCE_LABELS = {"env": "环境变量 DSF_API_KEY", "file": "credentials 文件"}
 
 
+def _resolve_ref(ref: str) -> str:
+    """把命令行给的「配置 ID 或唯一显示名」解析成配置 ID（ID 优先）。
+
+    Raises:
+        typer.Exit: 引用解析不到（不存在 / 显示名重名不唯一），给出可操作提示。
+    """
+    if has_config(ref):
+        return ref
+    by_name = config_id_by_display_name(ref)
+    if by_name is not None:
+        return by_name
+    typer.secho(
+        f"错误：端点配置 {ref!r} 不存在（或显示名重名不唯一）；"
+        "用 dsf config list 查看各配置的 ID。",
+        fg=typer.colors.RED,
+        err=True,
+    )
+    raise typer.Exit(1)
+
+
 @app.command("set")
 @handle_domain_errors
 def config_set(
@@ -66,18 +90,21 @@ def config_set(
 ) -> None:
     """设置端点配置：更新当前使用的配置（没有则创建 default 并启用）；API 密钥交互输入（不回显）。"""
     api_key = SecretValue(typer.prompt("API key", hide_input=True))
-    active = active_config_name()
+    active = active_config_id()
     if active is not None and has_config(active):
-        name = active
-        update_config(name, base_url=base_url, model=model, api_key=api_key)
+        cid = active
+        update_config(cid, base_url=base_url, model=model, api_key=api_key)
+        display = next(item.name for item in list_configs() if item.id == cid)
     else:
-        name = DEFAULT_CONFIG_NAME
-        create_config(name, base_url=base_url, model=model, api_key=api_key)
+        cid = create_config(
+            DEFAULT_CONFIG_NAME, base_url=base_url, model=model, api_key=api_key
+        )
         # create_config 只在指针缺失时自动激活；指针悬空（指向已被手动删除的配置）时
         # 这里显式补一次，保证 set 完一定可用。
-        set_active_config(name)
+        set_active_config(cid)
+        display = DEFAULT_CONFIG_NAME
     typer.secho(
-        f"已写入配置 {name}：base_url={base_url} model={model}"
+        f"已写入配置 {display}（{cid}）：base_url={base_url} model={model}"
         "（密钥存该配置的 credentials 文件）",
         fg=typer.colors.GREEN,
     )
@@ -92,6 +119,7 @@ def config_show() -> None:
     except ConfigError as exc:
         typer.secho(f"错误：{exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(1) from exc
+    typer.echo(f"配置 ID:  {desc.id or '（未配置）'}")
     typer.echo(f"配置名:   {desc.name or '（未配置）'}")
     typer.echo(
         f"base_url: {desc.base_url or '（未配置——dsf config add 添加或在 Web 设置页添加）'}"
@@ -121,13 +149,17 @@ def config_list() -> None:
     for item in configs:
         marker = "*" if item.is_active else " "
         key_label = "密钥已配置" if item.has_api_key else "密钥未配置"
-        typer.echo(f"{marker} {item.name}\t{item.model}\t{item.base_url}\t{key_label}")
+        typer.echo(
+            f"{marker} {item.name} ({item.id})\t{item.model}\t{item.base_url}\t{key_label}"
+        )
 
 
 @app.command("add")
 @handle_domain_errors
 def config_add(
-    name: Annotated[str, typer.Argument(help="配置名（即数据目录名）")],
+    name: Annotated[
+        str, typer.Argument(help="显示名（可改、允许重名；身份是自动分配的 ID）")
+    ],
     base_url: Annotated[
         str,
         typer.Option(
@@ -142,16 +174,16 @@ def config_add(
     )
     api_key = SecretValue(raw_key.strip()) if raw_key.strip() else None
     final = create_config(name, base_url=base_url, model=model, api_key=api_key)
-    suffix = "，已设为当前使用" if active_config_name() == final else ""
+    suffix = "，已设为当前使用" if active_config_id() == final else ""
     if api_key is None:
         typer.secho(
-            f"已添加配置 {final}{suffix}（未配密钥——打标前用 dsf config set 补配，"
+            f"已添加配置 {name}（{final}）{suffix}（未配密钥——打标前用 dsf config set 补配，"
             f"或设环境变量 DSF_API_KEY）",
             fg=typer.colors.GREEN,
         )
     else:
         typer.secho(
-            f"已添加配置 {final}{suffix}（密钥存该配置的 credentials 文件）",
+            f"已添加配置 {name}（{final}）{suffix}（密钥存该配置的 credentials 文件）",
             fg=typer.colors.GREEN,
         )
 
@@ -159,44 +191,40 @@ def config_add(
 @app.command("remove")
 @handle_domain_errors
 def config_remove(
-    name: Annotated[str, typer.Argument(help="配置名")],
+    ref: Annotated[str, typer.Argument(help="配置 ID 或唯一显示名")],
     yes: Annotated[bool, typer.Option("--yes", "-y", help="跳过删除确认")] = False,
 ) -> None:
     """删除一套端点配置（连同其密钥；当前使用中的配置需先切换再删）。"""
-    confirm_or_abort(f"确认删除端点配置 {name!r}（含其密钥文件）？", yes)
-    delete_config(name)
-    typer.secho(f"已删除端点配置 {name!r}", fg=typer.colors.GREEN)
+    cid = _resolve_ref(ref)
+    confirm_or_abort(f"确认删除端点配置 {cid!r}（含其密钥文件）？", yes)
+    delete_config(cid)
+    typer.secho(f"已删除端点配置 {cid!r}", fg=typer.colors.GREEN)
 
 
 @app.command("use")
 @handle_domain_errors
 def config_use(
-    name: Annotated[str, typer.Argument(help="配置名")],
+    ref: Annotated[str, typer.Argument(help="配置 ID 或唯一显示名")],
 ) -> None:
     """把一套配置设为当前使用（对新请求立即生效）。"""
-    set_active_config(name)
-    typer.secho(f"当前使用的配置已切换为 {name}", fg=typer.colors.GREEN)
+    cid = _resolve_ref(ref)
+    set_active_config(cid)
+    typer.secho(f"当前使用的配置已切换为 {cid}", fg=typer.colors.GREEN)
 
 
 @app.command("test")
 @handle_domain_errors
 def config_test(
-    name: Annotated[
-        str | None, typer.Argument(help="配置名（缺省 = 当前使用的配置）")
+    ref: Annotated[
+        str | None,
+        typer.Argument(help="配置 ID 或唯一显示名（缺省 = 当前使用的配置）"),
     ] = None,
 ) -> None:
     """测试端点连通性：发一个极小的真实请求（15 秒超时、max_tokens=1），不必先改配置。"""
-    resolved = name if name is not None else active_config_name()
+    resolved = _resolve_ref(ref) if ref is not None else active_config_id()
     if resolved is None:
         typer.secho(
-            "错误：没有可测试的端点配置——dsf config add 添加，或带配置名参数指定。",
-            fg=typer.colors.RED,
-            err=True,
-        )
-        raise typer.Exit(1)
-    if not has_config(resolved):
-        typer.secho(
-            f"错误：端点配置 {resolved!r} 不存在；用 dsf config list 查看现有配置。",
+            "错误：没有可测试的端点配置——dsf config add 添加，或带配置参数指定。",
             fg=typer.colors.RED,
             err=True,
         )
@@ -219,8 +247,10 @@ def config_test(
         )
     )
     if result.ok:
+        display = data.get("name")
+        label = display if isinstance(display, str) and display else resolved
         typer.secho(
-            f"连接成功（{result.latency_ms:.0f} ms）：{resolved} → {cast(str, data['model'])}",
+            f"连接成功（{result.latency_ms:.0f} ms）：{label} → {cast(str, data['model'])}",
             fg=typer.colors.GREEN,
         )
     else:
@@ -235,8 +265,9 @@ def config_test(
 @app.command("params")
 @handle_domain_errors
 def config_params(
-    name: Annotated[
-        str | None, typer.Argument(help="配置名（缺省 = 当前使用的配置）")
+    ref: Annotated[
+        str | None,
+        typer.Argument(help="配置 ID 或唯一显示名（缺省 = 当前使用的配置）"),
     ] = None,
     set_json: Annotated[
         str | None,
@@ -244,24 +275,18 @@ def config_params(
             "--set",
             help=(
                 "以 JSON 对象整体替换该配置的请求参数（如 '{\"temperature\": 0.7}'，"
-                "'{}' = 清空全部）。只认 temperature / top_p / max_tokens / extra_body /"
-                " timeout_seconds / max_retries 六个键，其余键丢弃（厂商专有参数放 extra_body）"
+                "'{}' = 清空全部）。只认 temperature / top_p / max_tokens /"
+                " enable_thinking / extra_body / timeout_seconds / max_retries，"
+                "其余键丢弃（厂商专有参数放 extra_body）"
             ),
         ),
     ] = None,
 ) -> None:
     """查看或设置端点配置的请求参数（生成 + 传输；与 Web 设置页「高级参数」同一份配置）。"""
-    resolved = name if name is not None else active_config_name()
+    resolved = _resolve_ref(ref) if ref is not None else active_config_id()
     if resolved is None:
         typer.secho(
-            "错误：没有可用的端点配置——dsf config add 添加，或带配置名参数指定。",
-            fg=typer.colors.RED,
-            err=True,
-        )
-        raise typer.Exit(1)
-    if not has_config(resolved):
-        typer.secho(
-            f"错误：端点配置 {resolved!r} 不存在；用 dsf config list 查看现有配置。",
+            "错误：没有可用的端点配置——dsf config add 添加，或带配置参数指定。",
             fg=typer.colors.RED,
             err=True,
         )
@@ -291,16 +316,16 @@ def config_params(
         )
 
 
-def _echo_request_params(name: str) -> None:
+def _echo_request_params(cid: str) -> None:
     """打印一套配置当前生效的请求参数（查看用；未设置时给设置指引）。"""
-    params = validated_request_params(read_config_data(name), name)
+    params = validated_request_params(read_config_data(cid), cid)
     if not params:
         typer.echo(
-            f"配置 {name} 未设置请求参数（全部用内置默认）；"
-            f"用 dsf config params {name} --set '<JSON>' 设置。"
+            f"配置 {cid} 未设置请求参数（全部用内置默认）；"
+            f"用 dsf config params {cid} --set '<JSON>' 设置。"
         )
         return
-    typer.echo(f"配置 {name} 的请求参数：")
+    typer.echo(f"配置 {cid} 的请求参数：")
     typer.echo(json.dumps(params, ensure_ascii=False, indent=2))
 
 

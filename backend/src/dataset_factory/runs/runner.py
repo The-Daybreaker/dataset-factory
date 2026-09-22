@@ -43,6 +43,8 @@ from ..llm import (
     Completer,
     EndpointConfig,
     build_completer,
+    config_id_by_display_name,
+    has_config,
     parse_request_params,
     read_stored_api_key,
     resolve_api_key,
@@ -942,9 +944,13 @@ def completer_for_snapshot(endpoint_block: dict[str, Any]) -> Completer:
     绝不进快照，且可能被轮换——双通道判定与 config 层同一份）。API 格式只支持
     当前期唯一格式（快照来自旧版本工具时 fail loud，不静默用错协议）。
 
+    密钥按快照冻结的端点 **ID** 定位（2026-09-23 ID 化——显示名可改、改名不影响
+    已建批次的密钥解析）；旧版快照没有 id，按当时冻结的配置名兜底解析（该名已
+    不存在时给出可操作错误，引导重建批次）。
+
     Args:
-        endpoint_block: 快照 JSON 的 endpoint 块（name / base_url / model /
-            api_format / request_params）。
+        endpoint_block: 快照 JSON 的 endpoint 块（id / name / base_url / model /
+            api_format / request_params；id 仅新快照携带）。
 
     Returns:
         实现 Completer 协议的客户端。
@@ -958,8 +964,20 @@ def completer_for_snapshot(endpoint_block: dict[str, Any]) -> Completer:
             f"快照的 API 格式「{api_format}」暂不支持（当前仅支持 "
             f"{SUPPORTED_API_FORMAT}）；请新建批次重新应用策略。"
         )
-    config_name = str(endpoint_block["name"])
-    api_key = resolve_api_key(read_stored_api_key(config_name))
+    cid = endpoint_block.get("id")
+    if not (isinstance(cid, str) and cid and has_config(cid)):
+        legacy_name = endpoint_block.get("name")
+        cid = (
+            config_id_by_display_name(legacy_name)
+            if isinstance(legacy_name, str)
+            else None
+        )
+        if cid is None:
+            raise ConfigError(
+                f"快照记录的端点配置「{legacy_name}」已不存在（可能已被改名或删除）——"
+                "请新建批次重新选择端点。"
+            )
+    api_key = resolve_api_key(read_stored_api_key(cid))
     params = cast("dict[str, object]", endpoint_block.get("request_params") or {})
     return build_completer(
         EndpointConfig(

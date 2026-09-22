@@ -22,7 +22,7 @@ from typing import cast
 from .endpoints import (
     ConfigError,
     SecretValue,
-    active_config_name,
+    active_config_id,
     has_config,
     has_stored_key,
     read_active_files,
@@ -95,13 +95,15 @@ class ConfigDescription:
     """当前配置状态的诊断视图（不含密钥内容）。
 
     Attributes:
-        name: 当前使用的配置名；None = 没有生效的当前配置（未配置任何端点、指针未设或悬空）。
+        id: 当前使用的配置 ID；None = 没有生效的当前配置（未配置任何端点、指针未设或悬空）。
+        name: 当前使用的配置显示名（id 存在时从条目解析；None 同上）。
         base_url: 端点地址；未配置时 None。
         model: 模型名；未配置时 None。
         key_source: 密钥来源："env"（环境变量 DSF_API_KEY）/ "file"（当前配置的 credentials
             文件）/ None（两通道都没配）。
     """
 
+    id: str | None
     name: str | None
     base_url: str | None
     model: str | None
@@ -119,7 +121,7 @@ def read_config() -> EndpointConfig:
     Raises:
         ConfigError: 未配置任何端点 / 当前配置缺失或损坏 / 密钥两通道都拿不到（消息可操作、不含密钥）。
     """
-    name, data, file_key = read_active_files()
+    cid, data, file_key = read_active_files()
     # read_active_files 已把 base_url / model 校验为非空字符串，这里收窄只是让类型系统知道。
     base_url = cast(str, data["base_url"])
     model = cast(str, data["model"])
@@ -127,7 +129,7 @@ def read_config() -> EndpointConfig:
         base_url=base_url,
         model=model,
         api_key=resolve_api_key(file_key),
-        request=_parse_request_config(name, data),
+        request=_parse_request_config(cid, data),
     )
 
 
@@ -139,22 +141,25 @@ def describe_config() -> ConfigDescription:
     损坏仍会抛 ConfigError——坏文件不该被粉饰成「未配置」。
 
     Returns:
-        ConfigDescription：当前配置的名称 / base_url / model 与密钥来源；没有生效的当前
-        配置时各字段为 None（密钥来源仍可能报 env——环境变量独立于配置存在）。
+        ConfigDescription：当前配置的 ID / 显示名 / base_url / model 与密钥来源；没有生效的
+        当前配置时各字段为 None（密钥来源仍可能报 env——环境变量独立于配置存在）。
 
     Raises:
         ConfigError: 当前配置的 config.json 存在但损坏（非法 JSON / 顶层非对象 / 字段类型错）。
     """
     env_key_present = env_api_key() is not None
-    active = active_config_name()
+    active = active_config_id()
     if active is None or not has_config(active):
         return ConfigDescription(
+            id=None,
             name=None,
             base_url=None,
             model=None,
             key_source="env" if env_key_present else None,
         )
     data = read_config_data(active)
+    raw_name = data.get("name")
+    display = raw_name if isinstance(raw_name, str) and raw_name else active
     key_source: str | None
     if env_key_present:
         key_source = "env"
@@ -163,7 +168,8 @@ def describe_config() -> ConfigDescription:
     else:
         key_source = None
     return ConfigDescription(
-        name=active,
+        id=active,
+        name=display,
         base_url=cast(str, data["base_url"]),
         model=cast(str, data["model"]),
         key_source=key_source,

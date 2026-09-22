@@ -3,7 +3,7 @@
 
  Usage: root skill list [OPTIONS]
 
- 列出全部 skill（启用状态 + 描述）。
+ 列出全部 skill（ID + 启用状态 + 描述）。
 
 ┌─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ --help          Show this message and exit.                                                                          │

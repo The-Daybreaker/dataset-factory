@@ -95,9 +95,9 @@ def batch(temp_data_root: Path, workdir: Path) -> Path:
         workdir,
         name="一号批",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
     return workdir
 
@@ -313,9 +313,9 @@ def test_e1_anchor_is_per_batch_not_global(batch: Path) -> None:
         batch,
         name="二号批",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
     runner_s2_first = _runner(batch, ScriptedCompleter(), seq=2)
     runner_s2_first.run()  # s2 用 v1 打标（产物 s2__cat_001/002.txt + batch=2 流水）

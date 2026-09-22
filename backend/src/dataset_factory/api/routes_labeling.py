@@ -98,8 +98,8 @@ def label(request: LabelRequest) -> LabelResponse:
     video_mime = _VIDEO_MIME.get(Path(request.video_name).suffix.lower(), "video/mp4")
     result = build_engine().label(
         session_id=request.session_id,
-        prompt_name=request.prompt_name,
-        skill_names=request.skill_names,
+        prompt_id=request.prompt_id,
+        skill_ids=request.skill_ids,
         instruction=request.instruction,
         image_bytes=image_bytes,
         image_name=request.image_name,
@@ -143,8 +143,8 @@ def label_stream(request: LabelRequest) -> StreamingResponse:
     video_mime = _VIDEO_MIME.get(Path(request.video_name).suffix.lower(), "video/mp4")
     generator = build_engine().label_stream(
         session_id=request.session_id,
-        prompt_name=request.prompt_name,
-        skill_names=request.skill_names,
+        prompt_id=request.prompt_id,
+        skill_ids=request.skill_ids,
         instruction=request.instruction,
         image_bytes=image_bytes,
         image_name=request.image_name,
@@ -291,8 +291,8 @@ def _snapshot_response(snapshot: SessionSnapshot) -> SessionSnapshotResponse:
         session_id=snapshot.session_id,
         strategy_id=snapshot.strategy_id,
         settings=SettingsView(
-            prompt_name=snapshot.settings.prompt_name,
-            skill_names=list(snapshot.settings.skill_names),
+            prompt_id=snapshot.settings.prompt_id,
+            skill_ids=list(snapshot.settings.skill_ids),
         ),
         messages=[
             HistoryMessageView(

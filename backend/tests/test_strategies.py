@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from dataset_factory.llm import create_config
-from dataset_factory.prompts import Prompt, delete_prompt, save_prompt
-from dataset_factory.skills import import_skill
+from dataset_factory.llm import create_config, list_configs
+from dataset_factory.prompts import Prompt, delete_prompt, read_prompt, save_prompt
+from dataset_factory.skills import get_skill, import_skill
 from dataset_factory.strategies import (
     BatchEntry,
     BatchNotFoundError,
@@ -72,6 +72,11 @@ def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _endpoint_ref(name: str) -> str:
+    """按显示名取端点配置的稳定 ID（fixture 里建的唯一名）。"""
+    return next(info.id for info in list_configs() if info.name == name)
+
+
 # --------------------------------------------------------------------------
 # 策略库
 # --------------------------------------------------------------------------
@@ -81,9 +86,9 @@ def test_create_returns_entry_with_stable_identity(assets: None) -> None:
     """新建库策略：ID 随机分配、时间戳就位、Skill 引用保序。"""
     entry = create_strategy(
         name=" 详细描述A ",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[_SKILL_NAME],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[_SKILL_NAME],
         description="第一套",
     )
 
@@ -98,20 +103,22 @@ def test_create_rejects_missing_reference(assets: None) -> None:
     """引用的提示词不存在 → StrategyRefsError（创建时 fail fast）。"""
     with pytest.raises(StrategyRefsError, match="不存在"):
         create_strategy(
-            name="坏策略", endpoint="main", prompt="没有的提示词", skills=[]
+            name="坏策略", endpoint_id="main", prompt_id="没有的提示词", skill_ids=[]
         )
 
 
 def test_create_rejects_blank_name(assets: None) -> None:
     """空名字（含纯空白）→ StrategyNameError。"""
     with pytest.raises(StrategyNameError):
-        create_strategy(name="  ", endpoint="main", prompt="详细描述", skills=[])
+        create_strategy(
+            name="  ", endpoint_id="main", prompt_id="详细描述", skill_ids=[]
+        )
 
 
 def test_list_sorted_by_name(assets: None) -> None:
     """列表按显示名排序（同名按 ID 稳定序）。"""
-    create_strategy(name="B套", endpoint="main", prompt="详细描述", skills=[])
-    create_strategy(name="A套", endpoint="main", prompt="详细描述", skills=[])
+    create_strategy(name="B套", endpoint_id="main", prompt_id="详细描述", skill_ids=[])
+    create_strategy(name="A套", endpoint_id="main", prompt_id="详细描述", skill_ids=[])
 
     assert [entry.name for entry in list_strategies()] == ["A套", "B套"]
 
@@ -124,21 +131,23 @@ def test_get_unknown_id_raises_not_found(assets: None) -> None:
 
 def test_update_replaces_all_fields(assets: None) -> None:
     """整条更新（策略页「保存」）：组合与元数据整体替换。"""
-    entry = create_strategy(name="旧名", endpoint="main", prompt="详细描述", skills=[])
+    entry = create_strategy(
+        name="旧名", endpoint_id="main", prompt_id="详细描述", skill_ids=[]
+    )
     save_prompt(Prompt(name="另一条", description="", body="另一套正文"))
 
     updated = update_strategy(
         entry.id,
         name="新名",
-        endpoint="main",
-        prompt="另一条",
-        skills=[_SKILL_NAME],
+        endpoint_id="main",
+        prompt_id="另一条",
+        skill_ids=[_SKILL_NAME],
         description="改过",
     )
 
     assert updated.name == "新名"
-    assert updated.prompt == "另一条"
-    assert updated.skills == [_SKILL_NAME]
+    assert updated.prompt_id == read_prompt("另一条").id
+    assert updated.skill_ids == [get_skill(_SKILL_NAME).id]
     assert updated.description == "改过"
 
 
@@ -146,33 +155,35 @@ def test_rebind_updates_only_provided_refs(assets: None) -> None:
     """重新指定：只动提供的引用位，其余保持不变。"""
     save_prompt(Prompt(name="替补", description="", body="替补正文"))
     entry = create_strategy(
-        name="策略", endpoint="main", prompt="详细描述", skills=[_SKILL_NAME]
+        name="策略", endpoint_id="main", prompt_id="详细描述", skill_ids=[_SKILL_NAME]
     )
 
-    rebound = rebind_strategy(entry.id, prompt="替补")
+    rebound = rebind_strategy(entry.id, prompt_id="替补")
 
-    assert rebound.prompt == "替补"
-    assert rebound.endpoint == "main"
-    assert rebound.skills == [_SKILL_NAME]
+    assert rebound.prompt_id == read_prompt("替补").id
+    assert rebound.endpoint_id == _endpoint_ref("main")
+    assert rebound.skill_ids == [get_skill(_SKILL_NAME).id]
 
 
 def test_copy_derives_new_id_same_content(assets: None) -> None:
     """复制一份：新 ID、组合原样（允许重名所以名字不变）。"""
     source = create_strategy(
-        name="原版", endpoint="main", prompt="详细描述", skills=[_SKILL_NAME]
+        name="原版", endpoint_id="main", prompt_id="详细描述", skill_ids=[_SKILL_NAME]
     )
 
     clone = copy_strategy(source.id)
 
     assert clone.id != source.id
     assert clone.name == source.name
-    assert clone.prompt == source.prompt
-    assert clone.skills == source.skills
+    assert clone.prompt_id == source.prompt_id
+    assert clone.skill_ids == source.skill_ids
 
 
 def test_delete_removes_entry(assets: None) -> None:
     """删除库策略；重复删除报不存在。"""
-    entry = create_strategy(name="待删", endpoint="main", prompt="详细描述", skills=[])
+    entry = create_strategy(
+        name="待删", endpoint_id="main", prompt_id="详细描述", skill_ids=[]
+    )
 
     delete_strategy(entry.id)
 
@@ -184,23 +195,25 @@ def test_delete_removes_entry(assets: None) -> None:
 def test_health_turns_unavailable_when_prompt_deleted(assets: None) -> None:
     """引用的提示词被删 → 健康度现查为不可用，missing_refs 给可读原因。"""
     entry = create_strategy(
-        name="策略", endpoint="main", prompt="详细描述", skills=[_SKILL_NAME]
+        name="策略", endpoint_id="main", prompt_id="详细描述", skill_ids=[_SKILL_NAME]
     )
     delete_prompt("详细描述")
 
     problems = missing_refs(get_strategy(entry.id))
 
-    assert problems == ["基础提示词「详细描述」不存在"]
+    assert problems == [f"基础提示词「{get_strategy(entry.id).prompt_id}」不存在"]
 
 
 def test_rebind_restores_health(assets: None) -> None:
     """置灰 → 重新指定 → 恢复可用（PRD 验收 18 的处置闭环）。"""
     save_prompt(Prompt(name="替补", description="", body="替补正文"))
-    entry = create_strategy(name="策略", endpoint="main", prompt="详细描述", skills=[])
+    entry = create_strategy(
+        name="策略", endpoint_id="main", prompt_id="详细描述", skill_ids=[]
+    )
     delete_prompt("详细描述")
     assert missing_refs(get_strategy(entry.id))
 
-    rebind_strategy(entry.id, prompt="替补")
+    rebind_strategy(entry.id, prompt_id="替补")
 
     assert missing_refs(get_strategy(entry.id)) == []
 
@@ -226,9 +239,9 @@ def test_scratch_batch_creates_snapshot_and_state(workdir: Path, assets: None) -
         workdir,
         name="第一套",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[_SKILL_NAME],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[_SKILL_NAME],
     )
 
     assert entry.seq == 1
@@ -252,17 +265,17 @@ def test_seq_increments_and_never_reused(workdir: Path, assets: None) -> None:
         workdir,
         name="一",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
     second = create_batch(
         workdir,
         name="二",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
     delete_batch(workdir, second.seq)
 
@@ -270,9 +283,9 @@ def test_seq_increments_and_never_reused(workdir: Path, assets: None) -> None:
         workdir,
         name="三",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
 
     assert [batch.seq for batch in list_batches(workdir)] == [1, 3]
@@ -294,9 +307,9 @@ def test_concurrent_create_batches_allocate_distinct_seqs(
                     workdir,
                     name=name,
                     description="",
-                    endpoint="main",
-                    prompt="详细描述",
-                    skills=[],
+                    endpoint_id="main",
+                    prompt_id="详细描述",
+                    skill_ids=[],
                 )
             )
         except Exception as exc:  # noqa: BLE001 — 线程内兜底收集，主线程断言
@@ -322,17 +335,17 @@ def test_concurrent_update_batches_keep_both_changes(
         workdir,
         name="一",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
     second = create_batch(
         workdir,
         name="二",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
     barrier = threading.Barrier(2)
     errors: list[Exception] = []
@@ -364,9 +377,9 @@ def test_apply_library_records_copy_on_apply_source(
     """应用库策略：快照记来源（库 ID + 应用时刻组合哈希），名称沿用库策略。"""
     library_entry = create_strategy(
         name="库里的策略",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[_SKILL_NAME],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[_SKILL_NAME],
         description="说明文字",
     )
 
@@ -384,7 +397,7 @@ def test_apply_library_records_copy_on_apply_source(
 def test_apply_library_with_missing_ref_rejected(workdir: Path, assets: None) -> None:
     """置灰策略不可应用（引用缺失 → StrategyRefsError）。"""
     library_entry = create_strategy(
-        name="会失效的策略", endpoint="main", prompt="详细描述", skills=[]
+        name="会失效的策略", endpoint_id="main", prompt_id="详细描述", skill_ids=[]
     )
     delete_prompt("详细描述")
 
@@ -395,14 +408,19 @@ def test_apply_library_with_missing_ref_rejected(workdir: Path, assets: None) ->
 def test_library_edits_do_not_affect_applied_batch(workdir: Path, assets: None) -> None:
     """copy-on-apply 隔离：库端换引用 / 删提示词，已应用批次快照原样。"""
     library_entry = create_strategy(
-        name="策略", endpoint="main", prompt="详细描述", skills=[]
+        name="策略", endpoint_id="main", prompt_id="详细描述", skill_ids=[]
     )
     entry = apply_library_strategy(workdir, library_entry.id)
     before = read_snapshot(workdir, entry.seq)
 
-    save_prompt(Prompt(name="详细描述", description="", body="库端改了正文"))
+    pid = read_prompt("详细描述").id
+    save_prompt(Prompt(id=pid, name="详细描述", description="", body="库端改了正文"))
     update_strategy(
-        library_entry.id, name="策略", endpoint="main", prompt="详细描述", skills=[]
+        library_entry.id,
+        name="策略",
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
 
     after = read_snapshot(workdir, entry.seq)
@@ -415,9 +433,9 @@ def test_update_batch_metadata_keeps_snapshot(workdir: Path, assets: None) -> No
         workdir,
         name="旧名",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
     before = read_snapshot(workdir, entry.seq)
 
@@ -435,9 +453,9 @@ def test_hide_and_unhide_batch(workdir: Path, assets: None) -> None:
         workdir,
         name="策略",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
 
     hidden = set_batch_active(workdir, entry.seq, active=False)
@@ -456,9 +474,9 @@ def test_delete_batch_removes_products_and_snapshot(
         workdir,
         name="策略",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
     (workdir / "s1__cat_001.txt").write_text("产物", encoding="utf-8")
     (workdir / "s1__clip_001.txt").write_text("产物2", encoding="utf-8")
@@ -483,9 +501,9 @@ def test_delete_batch_commits_state_before_removing_files(
         workdir,
         name="策略",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
     product = workdir / "s1__cat_001.txt"
     product.write_text("产物", encoding="utf-8")
@@ -529,9 +547,9 @@ def test_seq_never_wraps_after_deletes(workdir: Path, assets: None) -> None:
             workdir,
             name=name,
             description="",
-            endpoint="main",
-            prompt="详细描述",
-            skills=[],
+            endpoint_id="main",
+            prompt_id="详细描述",
+            skill_ids=[],
         )
     delete_batch(workdir, 3)
     delete_batch(workdir, 2)
@@ -540,9 +558,9 @@ def test_seq_never_wraps_after_deletes(workdir: Path, assets: None) -> None:
         workdir,
         name="四",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
 
     assert fourth.seq == 4
@@ -554,17 +572,17 @@ def test_exclusions_dedupe_and_remove(workdir: Path, assets: None) -> None:
         workdir,
         name="一",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
     second = create_batch(
         workdir,
         name="二",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
 
     added = add_exclusions(workdir, first.seq, ["cat_001", "cat_001", "dog_001"])

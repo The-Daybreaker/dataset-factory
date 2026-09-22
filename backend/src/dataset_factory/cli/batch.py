@@ -7,8 +7,8 @@ from typing import Annotated
 
 import typer
 
-from ..llm import list_configs
-from ..prompts import list_prompts
+from ..llm import config_id_by_display_name, has_config, list_configs
+from ..prompts import PromptError, list_prompts, prompt_id_by_display_name, read_prompt
 from ..runs import (
     RetryItemNotEligibleError,
     add_retry_items,
@@ -20,7 +20,12 @@ from ..runs import (
 from ..runs.control import current_run, request_stop
 from ..runs.items import ITEM_GROUPS, build_item_view
 from ..runs.runner import remove_batch
-from ..skills import list_skills
+from ..skills import (
+    SkillNotFoundError,
+    get_skill,
+    list_skills,
+    skill_id_by_display_name,
+)
 from ..strategies import (
     add_exclusions,
     apply_library_strategy,
@@ -52,6 +57,44 @@ def _choose(label: str, available: list[str]) -> str:
     if chosen not in available:
         raise typer.BadParameter(f"{label}不存在：{chosen}")
     return chosen
+
+
+def _resolve_config_ref(ref: str) -> str:
+    """端点引用（ID 或唯一显示名，或交互给出的「名字 (id)」形态）→ 配置 ID。"""
+    if "(" in ref and ref.endswith(")"):
+        candidate = ref.rsplit(" (", 1)[0].rstrip(")")
+        if has_config(candidate):
+            return candidate
+    if has_config(ref):
+        return ref
+    resolved = config_id_by_display_name(ref)
+    if resolved is None:
+        raise typer.BadParameter(f"端点配置不存在或显示名重名：{ref}")
+    return resolved
+
+
+def _resolve_prompt_ref(ref: str) -> str:
+    """提示词引用（ID 或唯一显示名）→ 提示词 ID。"""
+    try:
+        return read_prompt(ref).id
+    except PromptError:
+        pass
+    resolved = prompt_id_by_display_name(ref)
+    if resolved is None:
+        raise typer.BadParameter(f"提示词不存在或显示名重名：{ref}")
+    return resolved
+
+
+def _resolve_skill_ref(ref: str) -> str:
+    """skill 引用（ID 或唯一显示名）→ skill ID。"""
+    try:
+        return get_skill(ref).id
+    except SkillNotFoundError:
+        pass
+    resolved = skill_id_by_display_name(ref)
+    if resolved is None:
+        raise typer.BadParameter(f"skill 不存在或显示名重名：{ref}")
+    return resolved
 
 
 @app.command("add")
@@ -90,27 +133,28 @@ def add(
                 )
             batch_name = batch_name or typer.prompt("批次名称", err=True)
             batch_endpoint = batch_endpoint or _choose(
-                "端点", [entry.name for entry in list_configs()]
+                "端点", [f"{entry.name} ({entry.id})" for entry in list_configs()]
             )
             batch_prompt = batch_prompt or _choose(
-                "提示词", [entry.name for entry in list_prompts()]
+                "提示词", [f"{entry.name} ({entry.id})" for entry in list_prompts()]
             )
             if skills is None:
                 skills = [
-                    entry.name
+                    entry.id
                     for entry in list_skills()
                     if entry.enabled
                     and typer.confirm(f"启用 Skill {entry.name}？", err=True)
                 ]
         if not batch_name.strip():
             raise typer.BadParameter("批次名称不能为空。")
+        # 交互给出的「名字 (id)」形态或直接给的引用 → 统一解析成 ID。
         result = create_batch(
             root,
             name=batch_name,
             description=description,
-            endpoint=batch_endpoint,
-            prompt=batch_prompt,
-            skills=skills or [],
+            endpoint_id=_resolve_config_ref(batch_endpoint),
+            prompt_id=_resolve_prompt_ref(batch_prompt),
+            skill_ids=[_resolve_skill_ref(item) for item in (skills or [])],
         )
     print_result(asdict(result))
 

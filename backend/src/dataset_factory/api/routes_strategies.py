@@ -82,8 +82,8 @@ batches_router = APIRouter(
 
 
 def _skill_chars_map() -> dict[str, int]:
-    """启用 Skill 的「名称 → 注入全文字符数」对照表（字数展示共用一份现查结果）。"""
-    return {skill.name: skill.body_chars for skill in list_skills() if skill.enabled}
+    """启用 Skill 的「ID → 注入全文字符数」对照表（字数展示共用一份现查结果）。"""
+    return {skill.id: skill.body_chars for skill in list_skills() if skill.enabled}
 
 
 def _strategy_body_chars(
@@ -96,9 +96,9 @@ def _strategy_body_chars(
     """
     chars = 0
     with suppress(PromptError):
-        chars += len(read_prompt(entry.prompt).body)
+        chars += len(read_prompt(entry.prompt_id).body)
     skills = skill_chars if skill_chars is not None else _skill_chars_map()
-    chars += sum(skills.get(name, 0) for name in entry.skills)
+    chars += sum(skills.get(sid, 0) for sid in entry.skill_ids)
     return chars
 
 
@@ -173,9 +173,9 @@ def create_library_entry(body: StrategySaveRequest) -> StrategyView:
     entry = create_strategy(
         name=body.name,
         description=body.description,
-        endpoint=body.endpoint,
-        prompt=body.prompt,
-        skills=body.skills,
+        endpoint_id=body.endpoint_id,
+        prompt_id=body.prompt_id,
+        skill_ids=body.skill_ids,
     )
     return _to_strategy_view(entry)
 
@@ -229,9 +229,9 @@ def update_library_entry(strategy_id: str, body: StrategySaveRequest) -> Strateg
         strategy_id,
         name=body.name,
         description=body.description,
-        endpoint=body.endpoint,
-        prompt=body.prompt,
-        skills=body.skills,
+        endpoint_id=body.endpoint_id,
+        prompt_id=body.prompt_id,
+        skill_ids=body.skill_ids,
     )
     return _to_strategy_view(entry)
 
@@ -294,9 +294,9 @@ def rebind_library_entry(strategy_id: str, body: StrategyRebindRequest) -> Strat
     """重新指定缺失引用（只更新提供的引用位，其余保持不变）。"""
     entry = rebind_strategy(
         strategy_id,
-        endpoint=body.endpoint,
-        prompt=body.prompt,
-        skills=body.skills,
+        endpoint_id=body.endpoint_id,
+        prompt_id=body.prompt_id,
+        skill_ids=body.skill_ids,
     )
     return _to_strategy_view(entry)
 
@@ -341,14 +341,14 @@ def create_workdir_batch(wid: str, body: BatchCreateRequest) -> Response:
             description=body.description,
         )
     else:
-        # name / endpoint / prompt 非空同样由模型校验器保证。
+        # name / endpoint_id / prompt_id 非空同样由模型校验器保证。
         entry = create_batch(
             workdir,
             name=cast("str", body.name),
             description=body.description or "",
-            endpoint=cast("str", body.endpoint),
-            prompt=cast("str", body.prompt),
-            skills=body.skills or [],
+            endpoint_id=cast("str", body.endpoint_id),
+            prompt_id=cast("str", body.prompt_id),
+            skill_ids=body.skill_ids or [],
         )
     view = _to_batch_view(wid, entry)
     return Response(

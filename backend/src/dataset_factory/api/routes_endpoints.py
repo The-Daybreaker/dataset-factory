@@ -1,9 +1,10 @@
-"""端点多配置端点：GET/POST /api/endpoints、PUT/DELETE /api/endpoints/{name}、POST .../{name}/activate、POST /api/endpoints/test。
+"""端点多配置端点：GET/POST /api/endpoints、PUT/DELETE /api/endpoints/{id}、POST .../{id}/activate、POST /api/endpoints/test。
 
-设置页「列表 + 详情」与工作台切换器的数据面。密钥只进不出：请求体可带密钥落盘，
-任何响应只报有无（has_api_key）、绝不回内容。错误状态码由 app 的全局异常映射表按
-异常类型给出（404 不存在 / 409 重名与删除当前使用 / 400 其余配置错），本文件不做
-try/except 翻译——test 例外：连通性探测的成败是业务结果而非服务器错误，HTTP 恒 200。
+设置页「列表 + 详情」与工作台切换器的数据面。**寻址一律用配置 ID**（内部稳定身份，
+显示名可改可重名、不参与寻址）。密钥只进不出：请求体可带密钥落盘，任何响应只报有无
+（has_api_key）、绝不回内容。错误状态码由 app 的全局异常映射表按异常类型给出（404
+不存在 / 409 删除当前使用 / 400 其余配置错），本文件不做 try/except 翻译——test 例外：
+连通性探测的成败是业务结果而非服务器错误，HTTP 恒 200。
 """
 
 from __future__ import annotations
@@ -54,15 +55,14 @@ def list_all() -> list[EndpointConfigSummary]:
     responses={
         400: {
             "model": ErrorDetail,
-            "description": "名称不合法 / 字段为空 / API 格式暂未支持",
+            "description": "显示名不合法 / 字段为空 / API 格式暂未支持",
         },
-        409: {"model": ErrorDetail, "description": "已存在同名（不区分大小写）配置"},
     },
 )
 def create(request: EndpointCreateRequest) -> EndpointConfigSummary:
     """新增一套端点配置；当前没有生效配置时自动设为当前使用。"""
     api_key = _parse_key(request.api_key)
-    name = create_config(
+    cid = create_config(
         name=request.name,
         base_url=request.base_url,
         model=request.model,
@@ -70,33 +70,29 @@ def create(request: EndpointCreateRequest) -> EndpointConfigSummary:
         api_format=request.api_format,
         request_params=_params_payload(request.request_params),
     )
-    return _summary_of(name)
+    return _summary_of(cid)
 
 
 @router.put(
-    "/{name}",
+    "/{cid}",
     response_model=EndpointConfigSummary,
     responses={
         400: {
             "model": ErrorDetail,
-            "description": "字段为空 / API 格式暂未支持 / 新名称不合法",
+            "description": "字段为空 / API 格式暂未支持 / 显示名不合法",
         },
         404: {"model": ErrorDetail, "description": "配置不存在"},
-        409: {
-            "model": ErrorDetail,
-            "description": "新名称与既有配置重名（不区分大小写）",
-        },
     },
 )
-def update(name: str, request: EndpointUpdateRequest) -> EndpointConfigSummary:
+def update(cid: str, request: EndpointUpdateRequest) -> EndpointConfigSummary:
     """更新一套配置的端点字段；api_key 缺省沿用已存密钥、参数块缺省沿用已有参数。
 
-    带 ``new_name`` 时改名字段更新成功之后执行——参数校验失败时名字不动，报错不会
-    引用一个不存在的新名字。
+    带 ``new_name`` 时改显示名（只写 config.json 的 name 字段；显示名允许重名，
+    无冲突语义——身份是 ID）。
     """
     api_key = _parse_key(request.api_key)
     clean = update_config(
-        name=name,
+        cid=cid,
         base_url=request.base_url,
         model=request.model,
         api_key=api_key,
@@ -109,7 +105,7 @@ def update(name: str, request: EndpointUpdateRequest) -> EndpointConfigSummary:
 
 
 @router.delete(
-    "/{name}",
+    "/{cid}",
     status_code=status.HTTP_204_NO_CONTENT,
     responses={
         404: {"model": ErrorDetail, "description": "配置不存在"},
@@ -119,20 +115,20 @@ def update(name: str, request: EndpointUpdateRequest) -> EndpointConfigSummary:
         },
     },
 )
-def remove(name: str) -> Response:
+def remove(cid: str) -> Response:
     """删除一套端点配置（连同其密钥文件）。"""
-    delete_config(name)
+    delete_config(cid)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(
-    "/{name}/activate",
+    "/{cid}/activate",
     status_code=status.HTTP_204_NO_CONTENT,
     responses={404: {"model": ErrorDetail, "description": "配置不存在"}},
 )
-def activate(name: str) -> Response:
+def activate(cid: str) -> Response:
     """把一套配置设为当前使用；对新请求立即生效。"""
-    set_active_config(name)
+    set_active_config(cid)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -157,7 +153,7 @@ def test_connection(request: EndpointTestRequest) -> EndpointTestResult:
     key = first_api_key(
         _parse_key(request.api_key),
         env_api_key(),
-        read_stored_api_key(request.name) if request.name is not None else None,
+        read_stored_api_key(request.id) if request.id is not None else None,
     )
     if key is None:
         return EndpointTestResult(

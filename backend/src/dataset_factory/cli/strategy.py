@@ -1,10 +1,17 @@
-"""跨目录复用策略库的管理命令。"""
+"""跨目录复用策略库的管理命令。
+
+引用参数（--endpoint / --prompt / --skill）接受各资产的**稳定 ID 或唯一显示名**
+（2026-09-23 ID 化：显示名可改，ID 才是身份；解析收敛在 _endpoint_ref 等三个助手）。
+"""
 
 from dataclasses import asdict
 from typing import Annotated
 
 import typer
 
+from ..llm import config_id_by_display_name, has_config
+from ..prompts import PromptNotFoundError, prompt_id_by_display_name, read_prompt
+from ..skills import SkillNotFoundError, get_skill, skill_id_by_display_name
 from ..strategies import (
     LibraryStrategy,
     copy_strategy,
@@ -29,6 +36,47 @@ def _view(entry: LibraryStrategy) -> dict[str, object]:
     return result
 
 
+def _endpoint_ref(ref: str) -> str:
+    """端点引用 → 配置 ID（ID 优先，唯一显示名次之）。"""
+    if has_config(ref):
+        return ref
+    resolved = config_id_by_display_name(ref)
+    if resolved is None:
+        raise typer.BadParameter(
+            f"端点配置 {ref!r} 不存在（或显示名重名不唯一）；"
+            "用 dsf config list 查看各配置的 ID。"
+        )
+    return resolved
+
+
+def _prompt_ref(ref: str) -> str:
+    """提示词引用 → 提示词 ID（ID 优先，唯一显示名次之）。"""
+    try:
+        return read_prompt(ref).id
+    except PromptNotFoundError:
+        pass
+    resolved = prompt_id_by_display_name(ref)
+    if resolved is None:
+        raise typer.BadParameter(
+            f"提示词 {ref!r} 不存在（或显示名重名不唯一）；用 dsf prompt list 查看各条目的 ID。"
+        )
+    return resolved
+
+
+def _skill_ref(ref: str) -> str:
+    """skill 引用 → skill ID（ID 优先，唯一显示名次之）。"""
+    try:
+        return get_skill(ref).id
+    except SkillNotFoundError:
+        pass
+    resolved = skill_id_by_display_name(ref)
+    if resolved is None:
+        raise typer.BadParameter(
+            f"skill {ref!r} 不存在（或显示名重名不唯一）；用 dsf skill list 查看。"
+        )
+    return resolved
+
+
 def _skills_argument(skills: list[str] | None, clear: bool) -> list[str] | None:
     if skills is not None and clear:
         raise typer.BadParameter("--skill 与 --clear-skills 不能同时使用。")
@@ -44,14 +92,14 @@ def add(
     skills: Annotated[list[str] | None, typer.Option("--skill")] = None,
     description: Annotated[str, typer.Option("--desc")] = "",
 ) -> None:
-    """保存一份组合清单，引用的端点、提示词和 Skill 须已存在。"""
+    """保存一份组合清单，引用的端点、提示词和 Skill 须已存在（参数 = ID 或唯一显示名）。"""
     print_result(
         _view(
             create_strategy(
                 name=name,
-                endpoint=endpoint,
-                prompt=prompt,
-                skills=skills or [],
+                endpoint_id=_endpoint_ref(endpoint),
+                prompt_id=_prompt_ref(prompt),
+                skill_ids=[_skill_ref(skill) for skill in (skills or [])],
                 description=description,
             )
         )
@@ -96,9 +144,15 @@ def edit(
             update_strategy(
                 strategy_id,
                 name=current.name if name is None else name,
-                endpoint=current.endpoint if endpoint is None else endpoint,
-                prompt=current.prompt if prompt is None else prompt,
-                skills=current.skills if selected_skills is None else selected_skills,
+                endpoint_id=(
+                    current.endpoint_id if endpoint is None else _endpoint_ref(endpoint)
+                ),
+                prompt_id=current.prompt_id if prompt is None else _prompt_ref(prompt),
+                skill_ids=(
+                    current.skill_ids
+                    if selected_skills is None
+                    else [_skill_ref(skill) for skill in selected_skills]
+                ),
                 description=current.description if description is None else description,
             )
         )
@@ -141,7 +195,14 @@ def rebind(
     print_result(
         _view(
             rebind_strategy(
-                strategy_id, endpoint=endpoint, prompt=prompt, skills=selected_skills
+                strategy_id,
+                endpoint_id=None if endpoint is None else _endpoint_ref(endpoint),
+                prompt_id=None if prompt is None else _prompt_ref(prompt),
+                skill_ids=(
+                    None
+                    if selected_skills is None
+                    else [_skill_ref(skill) for skill in selected_skills]
+                ),
             )
         )
     )

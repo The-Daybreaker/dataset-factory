@@ -4,12 +4,13 @@
 不存引用——库里的提示词 / Skill 之后被编辑或删除，本批照样按快照重跑。
 行业口径同此（可复现性要求 the full config, not a summary）。
 
-结构（design 定案）：端点（配置名 / base_url / 模型名 / 生成参数）+ 基础提示词
+结构（design 定案）：端点（ID / 显示名 / base_url / 模型名 / 生成参数）+ 基础提示词
 全文 + 启用 Skill 全文 + 各自内容哈希 + 快照时间 + 工具版本号；库应用来源
 （库 ID + 应用时刻组合哈希）由批次侧附加，供将来的「从库更新」比对。
 
-哈希对象 = 原始文本 / 规范 JSON 的 UTF-8 字节（SHA-256）；快照被手改可被
-运行流水里的策略哈希发现（T36 起生效）。
+身份口径（2026-09-23 ID 化）：端点 / 提示词 / Skill 块各冻结一个 `id`（运行期凭据
+密钥解析按它定位，**改名不影响任何已建批次**）；`name` 是显示名的展示性存档。
+旧版快照（无 id、只有旧配置名）由运行侧按名兜底解析。
 """
 
 from __future__ import annotations
@@ -22,11 +23,12 @@ from typing import Any, cast
 from .._fs import canonical_sha256
 from ..llm.endpoints import (
     SUPPORTED_API_FORMAT,
+    config_info,
     read_config_data,
     validated_request_params,
 )
 from ..prompts.store import read_prompt
-from ..skills.store import read_skill
+from ..skills.store import get_skill, read_skill
 
 __all__ = ["StrategySnapshot", "build_snapshot", "tool_version"]
 
@@ -52,9 +54,10 @@ class StrategySnapshot:
     """一套策略的应用时刻全文快照。
 
     Attributes:
-        endpoint: 端点块（name / base_url / model / api_format / request_params / sha256）。
-        prompt: 基础提示词块（name / body / sha256）。
-        skills: 启用 Skill 块清单（name / body / sha256，序 = 注入序）。
+        endpoint: 端点块（id / name / base_url / model / api_format / request_params /
+            sha256）。id 是密钥解析的稳定键；name 是显示名的展示性存档。
+        prompt: 基础提示词块（id / name / body / sha256）。
+        skills: 启用 Skill 块清单（id / name / body / sha256，序 = 注入序）。
         built_at: 快照装配时刻（UTC ISO 8601）。
         tool_version: 装配时的工具版本号。
         source: 库应用来源（strategy_id + strategy_sha256）；从零配置的批次为 None。
@@ -95,9 +98,9 @@ class StrategySnapshot:
 
 
 def build_snapshot(
-    endpoint_name: str,
-    prompt_name: str,
-    skill_names: list[str],
+    endpoint_id: str,
+    prompt_id: str,
+    skill_ids: list[str],
     *,
     built_at: str,
     source: dict[str, Any] | None = None,
@@ -105,9 +108,9 @@ def build_snapshot(
     """把组合清单装配成快照：现读端点配置 / 提示词正文 / Skill 全文并记哈希。
 
     Args:
-        endpoint_name: 端点配置名（endpoints/<name>/）。
-        prompt_name: 基础提示词名。
-        skill_names: 启用 Skill 名清单（有序）。
+        endpoint_id: 端点配置 ID（endpoints/<id>/）。
+        prompt_id: 基础提示词 ID。
+        skill_ids: 启用 Skill ID 清单（有序）。
         built_at: 快照时刻（UTC ISO，由调用方传入以对齐同批其他时间戳）。
         source: 库应用来源；从零配置为 None。
 
@@ -116,13 +119,17 @@ def build_snapshot(
         PromptNotFoundError: 提示词不存在。
         SkillNotFoundError: Skill 不存在。
     """
-    config = read_config_data(endpoint_name)
+    config = read_config_data(endpoint_id)
+    endpoint_info = config_info(endpoint_id)
+    endpoint_id = endpoint_info.id  # 入参可能是唯一显示名：落快照前规范化为稳定 ID。
+    endpoint_display = endpoint_info.name
     endpoint_block: dict[str, Any] = {
-        "name": endpoint_name,
+        "id": endpoint_id,
+        "name": endpoint_display,
         "base_url": config["base_url"],
         "model": config["model"],
         "api_format": str(config.get("api_format") or SUPPORTED_API_FORMAT),
-        "request_params": validated_request_params(config, endpoint_name),
+        "request_params": validated_request_params(config, endpoint_display),
     }
     endpoint_block["sha256"] = canonical_sha256(
         {
@@ -130,17 +137,25 @@ def build_snapshot(
             for key in ("base_url", "model", "api_format", "request_params")
         }
     )
-    prompt = read_prompt(prompt_name)
+    prompt = read_prompt(prompt_id)
+    prompt_id = prompt.id
     prompt_block: dict[str, Any] = {
+        "id": prompt_id,
         "name": prompt.name,
         "body": prompt.body,
         "sha256": _sha256_text(prompt.body),
     }
     skill_blocks: list[dict[str, Any]] = []
-    for name in skill_names:
-        body = read_skill(name)
+    for sid in skill_ids:
+        meta = get_skill(sid)
+        body = read_skill(sid)
         skill_blocks.append(
-            {"name": name, "body": body, "sha256": _sha256_text(body)},
+            {
+                "id": sid,
+                "name": meta.name,
+                "body": body,
+                "sha256": _sha256_text(body),
+            },
         )
     return StrategySnapshot(
         endpoint=endpoint_block,

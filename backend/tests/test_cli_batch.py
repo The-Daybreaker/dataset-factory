@@ -161,9 +161,9 @@ def test_library_creation_edit_and_visibility(prepared: Path) -> None:
     """库策略可按名称应用，批次改名和隐藏显示不修改快照。"""
     library = create_strategy(
         name="Library",
-        endpoint="main",
-        prompt="caption",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="caption",
+        skill_ids=[],
         description="Reusable",
     )
 
@@ -284,7 +284,16 @@ def test_strategy_crud_and_missing_reference_rebind(
     prepared: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """库策略失效可查看并重新绑定，复制与删除不影响已有批次。"""
-    tokens = iter(["-first12345x", "-copy123456x"])
+    # ID 化后提示词保存也分配 ID：给足余量的确定性 token（超出部分不被断言依赖）。
+    tokens = iter(
+        [
+            "-first12345x",
+            "-second2345x",
+            "-copy123456x",
+            "-extra345678x",
+            "-extra456789x",
+        ]
+    )
 
     def random_token(size: int) -> str:
         return next(tokens)
@@ -342,7 +351,11 @@ def test_legacy_strategy_id_accepts_cli_option_terminator(
 
     monkeypatch.setattr("dataset_factory.strategies.store._generate_id", legacy_id)
     entry = create_strategy(
-        name="Legacy", endpoint="main", prompt="caption", skills=[], description=""
+        name="Legacy",
+        endpoint_id="main",
+        prompt_id="caption",
+        skill_ids=[],
+        description="",
     )
 
     shown = runner.invoke(app, ["strategy", "show", "--", entry.id])

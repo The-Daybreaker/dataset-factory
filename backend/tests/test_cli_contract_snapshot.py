@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import importlib
 import os
 import re
 from collections.abc import Iterator
@@ -84,7 +85,7 @@ def _normalize(text: str, data_root: Path) -> str:
 
     做四件事：剥掉颜色转义（Windows/Linux 终端差异）、面板边框字形归一（圆角/直角同为终端能力
     差异）、把临时数据根换成占位符（每台机器路径不同）、统一行尾与行尾空白（快照比对是逐字节
-    的）。
+    的）。资产 ID 的随机性由用例内钉住 ID 生成来解决（见只读快照用例），不在这里归一。
 
     Args:
         text: 原始输出。
@@ -183,9 +184,20 @@ def test_no_truncated_golden() -> None:
 
 
 def test_readonly_commands_output_snapshot(
-    cli: TyperGroup, temp_data_root: Path
+    cli: TyperGroup, temp_data_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """空数据根下各只读命令的输出与退出码快照（外部 agent 解析的就是这一段）。"""
+    # ID 化后列表会带资产 ID（随机）：钉住各库的 ID 生成，快照才逐字节可比。
+    for module, prefix in (
+        ("dataset_factory.llm.endpoints", "e"),
+        ("dataset_factory.prompts.store", "p"),
+        ("dataset_factory.skills.store", "k"),
+        ("dataset_factory.strategies.store", "s"),
+    ):
+        imported = importlib.import_module(module)
+        monkeypatch.setattr(
+            imported, "_generate_id", lambda prefix=prefix: prefix + "FIXEDID123"
+        )  # type: ignore[attr-defined]
     cases = (
         ["workdir", "list"],
         ["prompt", "list"],

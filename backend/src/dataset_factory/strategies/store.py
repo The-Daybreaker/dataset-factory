@@ -4,6 +4,11 @@
 （引用而非内联——资产各有编辑页，改一处影响所有引用它的策略）。库里不编号，
 身份 = 内部稳定 ID（随机短 ID，文件名即 ID）；显示名可改、允许重名。
 
+**引用存各资产的稳定 ID**（2026-09-23 ID 化，2026-09-22「端点改名炸引用」事故的根治）：
+端点 / 提示词 / Skill 的显示名都可改，名字不再参与引用寻址。存量 JSON 里的旧版
+名字引用在读时惰性迁移（按名唯一匹配解析成 ID；解析不到的保留原值 = 继续显示
+引用缺失，走「重新指定」恢复）。
+
 引用健康度在读取时**现查**：任一引用（端点配置 / 提示词 / Skill）已不存在 →
 ``available=False`` + 缺失清单，由界面置灰、禁止应用；处置 = 重新指定
 （rebind）/ 删除 / 先放着。创建与更新时则要求引用现存在（fail fast）——
@@ -18,15 +23,22 @@ from __future__ import annotations
 import json
 import re
 import secrets
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import cast
 
 from .._clock import now_iso
 from .._fs import atomic_write_text, canonical_sha256, data_root
+from ..llm.endpoints import config_id_by_display_name as _endpoint_id_by_name
+from ..llm.endpoints import config_info as _endpoint_info
 from ..llm.endpoints import has_config as _endpoint_exists
 from ..prompts.store import list_prompts
+from ..prompts.store import prompt_id_by_display_name as _prompt_id_by_name
+from ..prompts.store import read_prompt as _read_prompt
+from ..skills.store import get_skill as _get_skill
 from ..skills.store import list_skills
+from ..skills.store import skill_id_by_display_name as _skill_id_by_name
 from .errors import (
     StrategyError,
     StrategyNameError,
@@ -66,18 +78,18 @@ class LibraryStrategy:
         id: 内部稳定 ID（文件名，不随改名变化）。
         name: 显示名（可改、允许重名）。
         description: 说明文字（可空）。
-        endpoint: 端点配置名引用（endpoints/<name>/ 的目录名）。
-        prompt: 基础提示词名引用。
-        skills: 启用 Skill 名引用清单（有序，注入顺序即此序）。
+        endpoint_id: 端点配置 ID 引用（显示名的当前值在端点库里现查）。
+        prompt_id: 基础提示词 ID 引用。
+        skill_ids: 启用 Skill ID 引用清单（有序，注入顺序即此序）。
         created_at / updated_at: UTC ISO 8601 时刻。
     """
 
     id: str
     name: str
     description: str
-    endpoint: str
-    prompt: str
-    skills: list[str] = field(default_factory=lambda: list[str]())
+    endpoint_id: str
+    prompt_id: str
+    skill_ids: list[str] = field(default_factory=lambda: list[str]())
     created_at: str = ""
     updated_at: str = ""
 
@@ -127,16 +139,57 @@ def _read_entry(path: Path) -> LibraryStrategy:
             f"库策略文件形状不对（{path.name}）——请删除该文件后重建策略。",
         )
     record = cast("dict[str, object]", data)
+    if "skill_ids" in record:
+        skill_ids = [
+            _resolve_ref(item, item, _skill_id_by_name, "skills")
+            for item in _read_list_field(record, "skill_ids")
+        ]
+    else:
+        skill_ids = [
+            _resolve_ref(None, item, _skill_id_by_name, "skills")
+            for item in _read_list_field(record, "skills")
+        ]
     return LibraryStrategy(
         id=_read_str_field(record, "id"),
         name=_read_str_field(record, "name"),
         description=_read_str_field(record, "description"),
-        endpoint=_read_str_field(record, "endpoint"),
-        prompt=_read_str_field(record, "prompt"),
-        skills=[str(item) for item in _read_list_field(record, "skills")],
+        endpoint_id=_resolve_ref(
+            record.get("endpoint_id"),
+            record.get("endpoint"),
+            _endpoint_id_by_name,
+            "endpoint",
+        ),
+        prompt_id=_resolve_ref(
+            record.get("prompt_id"), record.get("prompt"), _prompt_id_by_name, "prompt"
+        ),
+        skill_ids=skill_ids,
         created_at=_read_str_field(record, "created_at"),
         updated_at=_read_str_field(record, "updated_at"),
     )
+
+
+def _resolve_ref(
+    new_value: object,
+    legacy_value: object,
+    by_display_name: Callable[[str], str | None],
+    field_label: str,
+) -> str:
+    """取一个引用字段：优先新键（ID）；缺失 = 旧版条目，按显示名解析成 ID。
+
+    旧版名字解析不到（资产已被改名或删除）时**保留旧值原样**——该引用随后在健康度
+    现查里显示缺失、走「重新指定」恢复；迁移绝不静默丢弃用户的组合清单。
+
+    Raises:
+        StrategyError: 新旧键都没有可用值（文件缺字段，按损坏处理）。
+    """
+    if isinstance(new_value, str) and new_value:
+        return new_value
+    if not isinstance(legacy_value, str) or not legacy_value:
+        raise StrategyError(
+            f"库策略文件缺少引用字段 {field_label}——请删除该文件后重建策略。",
+        )
+    resolved = by_display_name(legacy_value)
+    return resolved if resolved is not None else legacy_value
 
 
 def _read_str_field(data: dict[str, object], key: str) -> str:
@@ -199,21 +252,57 @@ def missing_refs(entry: LibraryStrategy) -> list[str]:
     改写策略库文件（单一事实源是各资产库本身，健康度是派生视图）。
     """
     problems: list[str] = []
-    if not _endpoint_exists(entry.endpoint):
-        problems.append(f"端点配置「{entry.endpoint}」不存在")
-    if all(prompt.name != entry.prompt for prompt in list_prompts()):
-        problems.append(f"基础提示词「{entry.prompt}」不存在")
-    skill_names = {skill.name for skill in list_skills()}
-    for name in entry.skills:
-        if name not in skill_names:
-            problems.append(f"Skill「{name}」不存在")
+    if not _ref_exists(entry.endpoint_id, _endpoint_exists, _endpoint_id_by_name):
+        problems.append(f"端点配置「{entry.endpoint_id}」不存在")
+    if not _ref_exists(
+        entry.prompt_id,
+        lambda ref: any(prompt.id == ref for prompt in list_prompts()),
+        _prompt_id_by_name,
+    ):
+        problems.append(f"基础提示词「{entry.prompt_id}」不存在")
+    for sid in entry.skill_ids:
+        if not _ref_exists(
+            sid, lambda ref: any(s.id == ref for s in list_skills()), _skill_id_by_name
+        ):
+            problems.append(f"Skill「{sid}」不存在")
     return problems
 
 
-def require_refs_exist(endpoint: str, prompt: str, skills: list[str]) -> None:
+def _ref_exists(
+    ref: str,
+    by_id: Callable[[str], bool],
+    by_display_name: Callable[[str], str | None],
+) -> bool:
+    """引用健康度的宽容判定：ID 直接命中，或显示名唯一命中（都算存在）。"""
+    if by_id(ref):
+        return True
+    return by_display_name(ref) is not None
+
+
+def _canonical_endpoint(ref: str) -> str:
+    """端点引用（ID 或唯一显示名）→ 规范 ID（落盘引用一律存稳定 ID）。"""
+    return _endpoint_info(ref).id
+
+
+def _canonical_prompt(ref: str) -> str:
+    """提示词引用（ID 或唯一显示名）→ 规范 ID。"""
+    return _read_prompt(ref).id
+
+
+def _canonical_skill(ref: str) -> str:
+    """skill 引用（ID 或唯一显示名）→ 规范 ID。"""
+    return _get_skill(ref).id
+
+
+def require_refs_exist(endpoint_id: str, prompt_id: str, skill_ids: list[str]) -> None:
     """创建 / 更新 / 应用前的引用存在性校验（fail fast，缺失即 400）。"""
     entry = LibraryStrategy(
-        id="", name="", description="", endpoint=endpoint, prompt=prompt, skills=skills
+        id="",
+        name="",
+        description="",
+        endpoint_id=endpoint_id,
+        prompt_id=prompt_id,
+        skill_ids=skill_ids,
     )
     problems = missing_refs(entry)
     if problems:
@@ -237,9 +326,9 @@ def _dedupe_keep_order(names: list[str]) -> list[str]:
 
 def create_strategy(
     name: str,
-    endpoint: str,
-    prompt: str,
-    skills: list[str],
+    endpoint_id: str,
+    prompt_id: str,
+    skill_ids: list[str],
     description: str = "",
 ) -> LibraryStrategy:
     """新建一条库策略（ID 随机分配；引用必须现存在）。
@@ -249,15 +338,15 @@ def create_strategy(
         StrategyRefsError: 任一引用不存在。
     """
     cleaned = _validate_name(name)
-    skill_refs = _dedupe_keep_order(list(skills))
-    require_refs_exist(endpoint, prompt, skill_refs)
+    skill_refs = _dedupe_keep_order(list(skill_ids))
+    require_refs_exist(endpoint_id, prompt_id, skill_refs)
     entry = LibraryStrategy(
         id=_generate_id(),
         name=cleaned,
         description=description,
-        endpoint=endpoint,
-        prompt=prompt,
-        skills=skill_refs,
+        endpoint_id=_canonical_endpoint(endpoint_id),
+        prompt_id=_canonical_prompt(prompt_id),
+        skill_ids=[_canonical_skill(sid) for sid in skill_refs],
         created_at=now_iso(),
         updated_at=now_iso(),
     )
@@ -270,21 +359,21 @@ def create_strategy(
 def update_strategy(
     strategy_id: str,
     name: str,
-    endpoint: str,
-    prompt: str,
-    skills: list[str],
+    endpoint_id: str,
+    prompt_id: str,
+    skill_ids: list[str],
     description: str = "",
 ) -> LibraryStrategy:
     """整条更新库策略（策略页「保存」的落点；引用必须现存在）。"""
     _validate_name(name)
     existing = get_strategy(strategy_id)
-    skill_refs = _dedupe_keep_order(list(skills))
-    require_refs_exist(endpoint, prompt, skill_refs)
+    skill_refs = _dedupe_keep_order(list(skill_ids))
+    require_refs_exist(endpoint_id, prompt_id, skill_refs)
     existing.name = _validate_name(name)
     existing.description = description
-    existing.endpoint = endpoint
-    existing.prompt = prompt
-    existing.skills = skill_refs
+    existing.endpoint_id = _canonical_endpoint(endpoint_id)
+    existing.prompt_id = _canonical_prompt(prompt_id)
+    existing.skill_ids = [_canonical_skill(sid) for sid in skill_refs]
     existing.updated_at = now_iso()
     _write_entry(existing)
     return existing
@@ -292,9 +381,9 @@ def update_strategy(
 
 def rebind_strategy(
     strategy_id: str,
-    endpoint: str | None = None,
-    prompt: str | None = None,
-    skills: list[str] | None = None,
+    endpoint_id: str | None = None,
+    prompt_id: str | None = None,
+    skill_ids: list[str] | None = None,
 ) -> LibraryStrategy:
     """重新指定缺失引用（失效处置的「重新指定」动作；只更新提供的引用位）。
 
@@ -302,15 +391,17 @@ def rebind_strategy(
     保持不变——对置灰策略来说，健康的引用没有理由被 UI 一起重交一遍。
     """
     existing = get_strategy(strategy_id)
-    new_endpoint = endpoint if endpoint is not None else existing.endpoint
-    new_prompt = prompt if prompt is not None else existing.prompt
+    new_endpoint = endpoint_id if endpoint_id is not None else existing.endpoint_id
+    new_prompt = prompt_id if prompt_id is not None else existing.prompt_id
     new_skills = (
-        _dedupe_keep_order(list(skills)) if skills is not None else existing.skills
+        _dedupe_keep_order(list(skill_ids))
+        if skill_ids is not None
+        else existing.skill_ids
     )
     require_refs_exist(new_endpoint, new_prompt, new_skills)
-    existing.endpoint = new_endpoint
-    existing.prompt = new_prompt
-    existing.skills = new_skills
+    existing.endpoint_id = _canonical_endpoint(new_endpoint)
+    existing.prompt_id = _canonical_prompt(new_prompt)
+    existing.skill_ids = [_canonical_skill(sid) for sid in new_skills]
     existing.updated_at = now_iso()
     _write_entry(existing)
     return existing
@@ -323,9 +414,9 @@ def copy_strategy(strategy_id: str) -> LibraryStrategy:
         id=_generate_id(),
         name=source.name,
         description=source.description,
-        endpoint=source.endpoint,
-        prompt=source.prompt,
-        skills=list(source.skills),
+        endpoint_id=source.endpoint_id,
+        prompt_id=source.prompt_id,
+        skill_ids=list(source.skill_ids),
         created_at=now_iso(),
         updated_at=now_iso(),
     )
@@ -355,8 +446,8 @@ def strategy_content_hash(entry: LibraryStrategy) -> str:
     内容变了，组合才是可复现的实质）。
     """
     payload = {
-        "endpoint": entry.endpoint,
-        "prompt": entry.prompt,
-        "skills": entry.skills,
+        "endpoint_id": entry.endpoint_id,
+        "prompt_id": entry.prompt_id,
+        "skill_ids": entry.skill_ids,
     }
     return canonical_sha256(payload)

@@ -1,16 +1,21 @@
 """提示词库的 CRUD 与滚动备份（数据域）——读写只收敛在本模块。
 
-条目 = 平铺 `prompts/<名称>.md`（文件名即名称）；保存时若已存在，先把旧版**复制**进
-`_history/`（不是移动——保证当前条目任何时刻都在、崩溃安全），按时间戳命名、并把该条目的
-历史裁到最近 N 版，再原子写新版；单条序列化后卡 32 KiB 字节护栏。错误口径：单条读写
-（保存 / 读取 / 改名 / 删除）fail loud，给可操作错误；**列表（list_prompts）对单个损坏条目
-宽容降级**（2026-09-14 用户定夺）——坏文件以「文件损坏：…」条目照常进列表，其余不受影响。
+条目 = 平铺 `prompts/<ID>.md`（**文件名即内部稳定 ID**，创建时分配、不随改名变化）；
+frontmatter 的 name = 显示名（可改、允许重名）——「改名 = 改 frontmatter 一个字段」，
+文件名永不动，引用（策略 / 会话设置 / 快照）一律存 ID（2026-09-23 ID 化，与策略库同构）。
+保存时若已存在，先把旧版**复制**进 `_history/<ID>.<时间戳>.md`（不是移动——保证当前
+条目任何时刻都在、崩溃安全），按时间戳命名、并把该条目的历史裁到最近 N 版，再原子写
+新版；单条序列化后卡 32 KiB 字节护栏。错误口径：单条读写（保存 / 读取 / 改名 / 删除）
+fail loud，给可操作错误；**列表（list_prompts）对单个损坏条目宽容降级**（2026-09-14
+用户定夺）——坏文件以「文件损坏：…」条目照常进列表，其余不受影响。
+**存量迁移**：读侧发现旧版条目（文件名不合 ID 形状）即惰性升级——补 frontmatter name
+字段（旧文件名即显示名）、原子回写、文件改名换 ID、历史前缀跟移；逐条幂等。
 原子写与数据根复用共享的 `_fs`；本模块禁 import 入口层与 llm（分层契约守）。
 """
 
 from __future__ import annotations
 
-import re
+import secrets
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -22,13 +27,12 @@ from .._locks import shared_file_lock
 from .builtin import BUILTIN_PRESET_VERSION, BUILTIN_PROMPTS
 from .errors import (
     PromptError,
-    PromptExistsError,
     PromptNameError,
     PromptNotFoundError,
     PromptParseError,
     PromptTooLargeError,
 )
-from .model import Prompt, dump_prompt, parse_prompt
+from .model import PROMPT_ID_RE, Prompt, dump_prompt, parse_prompt
 
 _PROMPTS_DIRNAME = "prompts"
 _HISTORY_DIRNAME = "_history"
@@ -44,163 +48,232 @@ _STAMP_FORMAT = (
     "%Y%m%d-%H%M%S-%f"  # 定宽、字典序即时间序；微秒精度让同秒多次保存不撞名。
 )
 
-# 名称含路径分隔符、控制字符或 Windows 不允许的字符即非法：名称只能是跨平台安全的单段文件名。
-_FORBIDDEN_NAME_CHARS = re.compile(r'[/\\<>:"|?*\x00-\x1f\x7f]')
-
 
 def _prompts_dir() -> Path:
     """提示词库根目录 = 数据根下的 prompts/。"""
     return data_root() / _PROMPTS_DIRNAME
 
 
-def _entry_path(name: str) -> Path:
-    """某名称对应的条目文件路径 prompts/<name>.md。"""
-    return _prompts_dir() / f"{name}{_SUFFIX}"
+def _entry_path(pid: str) -> Path:
+    """某 ID 对应的条目文件路径 prompts/<id>.md。"""
+    return _prompts_dir() / f"{pid}{_SUFFIX}"
 
 
-def _validate_name(name: str) -> None:
-    """校验提示词名称；不合法即 PromptNameError。
+def _generate_id() -> str:
+    """生成字母开头的随机短 ID（文件名即 ID；字母开头避免被 CLI 解析为选项）。"""
+    return "p" + secrets.token_urlsafe(8)[:10]
 
-    挡住路径穿越（路径分隔符）、跨平台非法字符（Windows 的 < > : " | ? *、控制字符）、
-    点号（留给扩展名与历史版本时间戳分隔，禁掉即消除历史文件名匹配的歧义）与保留名 _history。
 
-    Args:
-        name: 待校验的名称（将作为文件名 <name>.md）。
+def _validate_display_name(name: str) -> str:
+    """校验显示名：去首尾空白后非空、不超长；返回规整后的名字。
 
-    Raises:
-        PromptNameError: 名称为空 / 首尾含空白 / 含非法字符 / 含点号 / 是保留名 _history。
+    显示名不再是文件名（文件名是 ID），文件名保留字符约束不再适用——只挡空与离谱长度，
+    与策略库同口径。
     """
-    if not name or not name.strip():
+    cleaned = name.strip()
+    if not cleaned:
         raise PromptNameError("提示词名称不能为空。")
-    if name != name.strip():
-        raise PromptNameError(f"提示词名称 {name!r} 首尾含空白；请去掉后再试。")
-    if _FORBIDDEN_NAME_CHARS.search(name):
+    if len(cleaned) > 100:
         raise PromptNameError(
-            f"提示词名称 {name!r} 含非法字符（路径分隔符、控制字符或 Windows 不允许的 "
-            '< > : " | ? *）；名称只能是跨平台安全的单段文件名。'
+            f"提示词名称过长（{len(cleaned)} 字符，上限 100）；请缩短。"
         )
-    if "." in name:
-        raise PromptNameError(
-            f"提示词名称 {name!r} 不能含点号（.）；点号留给扩展名与历史版本时间戳分隔。"
+    return cleaned
+
+
+def _iter_entry_files() -> list[Path]:
+    """列出现有条目文件（跳过点前缀的锁与临时文件；库目录不存在 = 空库）。"""
+    directory = _prompts_dir()
+    if not directory.is_dir():
+        return []
+    return [
+        path
+        for path in directory.glob(f"*{_SUFFIX}")
+        if path.is_file() and not path.name.startswith(".")
+    ]
+
+
+def _load_entries() -> dict[str, Path]:
+    """扫描并返回全部条目 {id: 文件路径}；顺手完成旧版条目的惰性迁移。
+
+    迁移判据：文件名（去 .md）不合 ID 形状 = 旧版条目（文件名即旧显示名）→ 解析出
+    内容后补 frontmatter name 字段（原子回写）、文件改名换 ID、历史前缀跟移。已迁移
+    条目与损坏文件（解析不了，留给列表降级呈现）零写操作。
+    """
+    entries: dict[str, Path] = {}
+    for path in _iter_entry_files():
+        stem = path.name[: -len(_SUFFIX)]
+        if PROMPT_ID_RE.fullmatch(stem):
+            entries[stem] = path
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            entries[stem] = path  # 损坏文件：不迁移，列表侧降级呈现（id=旧文件名）。
+            continue
+        try:
+            legacy = parse_prompt(stem, text, fallback_name=stem)
+        except PromptParseError:
+            entries[stem] = path  # 损坏文件：不迁移，列表侧降级呈现（id=旧文件名）。
+            continue
+        new_id = _generate_id()
+        while (_prompts_dir() / f"{new_id}{_SUFFIX}").exists():
+            new_id = _generate_id()
+        # 顺序保证幂等：先就地补 frontmatter（崩溃后重扫仍是旧名、重做迁移），再改名换 ID。
+        atomic_write_text(
+            path,
+            dump_prompt(
+                Prompt(
+                    id=new_id,
+                    name=legacy.name,
+                    description=legacy.description,
+                    body=legacy.body,
+                )
+            ),
         )
-    if name == _HISTORY_DIRNAME:
-        raise PromptNameError(
-            f"提示词名称 {name!r} 是保留名（_history 用于滚动备份）；请换一个。"
-        )
+        target = _prompts_dir() / f"{new_id}{_SUFFIX}"
+        try:
+            path.rename(target)
+        except OSError as exc:
+            raise PromptError(
+                f"无法把提示词条目 {path.name} 迁移为 ID「{new_id}」：{exc.strerror or exc}"
+            ) from exc
+        _move_history_prefix(_prompts_dir() / _HISTORY_DIRNAME, stem, new_id)
+        entries[new_id] = target
+    return entries
 
 
 def _read_entry(path: Path) -> Prompt:
     """读取并解析单个条目文件；不可读 / 损坏 fail loud。
 
     Args:
-        path: 条目文件路径（<name>.md）。
+        path: 条目文件路径（<id>.md）。
 
     Returns:
-        解析出的 Prompt（name 取自文件名）。
+        解析出的 Prompt（id 取自文件名，name 取自 frontmatter、缺失回落 ID）。
 
     Raises:
         PromptError: 文件不可读（底层 OSError）。
         PromptParseError: 文件不是合法 UTF-8，或 frontmatter 损坏 / 非法。
     """
-    name = path.name[: -len(_SUFFIX)]
+    pid = path.name[: -len(_SUFFIX)]
     try:
         text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
         raise PromptParseError(
-            f"提示词 {name!r} 不是合法 UTF-8 文本；文件可能已损坏。"
+            f"提示词 {pid!r} 不是合法 UTF-8 文本；文件可能已损坏。"
         ) from exc
     except OSError as exc:
         raise PromptError(f"无法读取提示词 {path}：{exc.strerror or exc}") from exc
-    return parse_prompt(name, text)
+    return parse_prompt(pid, text)
 
 
 def list_prompts() -> list[Prompt]:
-    """列出全部提示词条目（按名称排序）；单个损坏条目**降级呈现**、不拦整库。
+    """列出全部提示词条目（按显示名排序、不区分大小写）；单个损坏条目**降级呈现**、不拦整库。
 
     只认 prompts/ 下的普通 `*.md` 文件：跳过 _history/ 子目录、原子写留下的 `.` 前缀临时
     文件与任何非普通文件。库目录不存在时返回空列表（还没有任何条目，不算错）。
 
     损坏条目的降级口径（2026-09-14 用户定夺，Web 与 CLI 同此）：解析失败的文件仍以
-    文件名进列表，description = 可读的损坏原因（哪里坏、怎么修），body = 文件原始全文
-    （可在编辑列直接修复后保存，保存即自愈）；其余条目不受影响。单条读取（read_prompt）
-    仍 fail loud 给详细错误——打标装配侧拿到损坏条目会被明确拒绝，不会带病使用。
+    文件名（ID）进列表，description = 可读的损坏原因（哪里坏、怎么修），body = 文件原始
+    全文（可在编辑列直接修复后保存，保存即自愈）；其余条目不受影响。单条读取
+    （read_prompt）仍 fail loud 给详细错误——打标装配侧拿到损坏条目会被明确拒绝，
+    不会带病使用。
 
     Returns:
-        提示词列表（含降级的损坏条目），按名称字典序。
+        提示词列表（含降级的损坏条目），按显示名排序。
     """
-    directory = _prompts_dir()
-    if not directory.is_dir():
-        return []
     prompts: list[Prompt] = []
-    for path in sorted(directory.glob(f"*{_SUFFIX}")):
-        if not path.is_file() or path.name.startswith("."):
-            continue
+    for pid, path in _load_entries().items():
         try:
             prompts.append(_read_entry(path))
         except (PromptError, PromptParseError) as exc:
-            name = path.name[: -len(_SUFFIX)]
             try:
                 raw = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 raw = ""
-            prompts.append(Prompt(name=name, description=f"文件损坏：{exc}", body=raw))
-    return prompts
+            prompts.append(
+                Prompt(id=pid, name=pid, description=f"文件损坏：{exc}", body=raw)
+            )
+    return sorted(prompts, key=lambda prompt: prompt.name.casefold())
 
 
-def read_prompt(name: str) -> Prompt:
-    """按名称读取一条提示词。
+def _resolve_read_ref(ref: str) -> str | None:
+    """读取入口的宽容解析：ID 优先；唯一显示名次之；解析不到返回 None。"""
+    prompts = list_prompts()
+    if any(prompt.id == ref for prompt in prompts):
+        return ref
+    by_name = [prompt for prompt in prompts if prompt.name == ref]
+    return by_name[0].id if len(by_name) == 1 else None
+
+
+def read_prompt(pid: str) -> Prompt:
+    """读一条提示词：接受 ID 或唯一显示名（显示名重名不唯一时报错）。
 
     Args:
-        name: 条目名称（= 文件名去掉 .md）。
+        pid: 条目 ID（= 文件名去掉 .md）或唯一显示名。
 
     Returns:
         对应的 Prompt。
 
     Raises:
-        PromptNameError: 名称非法。
-        PromptNotFoundError: 没有这个名字的条目。
+        PromptNotFoundError: 没有这个 ID / 显示名的条目。
         PromptError: 文件不可读。
         PromptParseError: 文件损坏。
     """
-    _validate_name(name)
-    path = _entry_path(name)
-    if not path.is_file():
+    resolved = _resolve_read_ref(pid)
+    path = _load_entries().get(resolved or "")
+    if path is None:
         raise PromptNotFoundError(
-            f"未找到提示词 {name!r}；用 list_prompts 查看现有条目。"
+            f"未找到提示词 {pid!r}；用 list_prompts 查看现有条目。"
         )
     return _read_entry(path)
 
 
-def save_prompt(prompt: Prompt) -> None:
+def save_prompt(prompt: Prompt) -> str:
     """保存（新建或覆盖）一条提示词；覆盖前把旧版复制进 _history/ 滚动备份。
 
-    先校验名称、卡 32 KiB 字节上限（超限即拒，不落盘、不建目录）；库目录不存在则创建；若
-    目标已存在，先把它复制进 `_history/<name>.<时间戳>.md` 并把该条目历史裁到最近 N 版，再
-    原子写新版——原子写保证条目要么是旧版要么是新版，绝不会是写了一半的损坏文件。
+    id 缺省（空串）或不是 ID 形状（损坏条目经编辑器自愈的路径）时分配新 ID；显示名
+    非空即可（允许重名）。卡 32 KiB 字节上限（超限即拒，不落盘、不建目录）；库目录
+    不存在则创建；若目标已存在，先把它复制进 `_history/<ID>.<时间戳>.md` 并把该条目
+    历史裁到最近 N 版，再原子写新版——原子写保证条目要么是旧版要么是新版，绝不会是
+    写了一半的损坏文件。
 
     Args:
-        prompt: 要保存的提示词（name / description / body）。
+        prompt: 要保存的提示词（id / name / description / body）。
+
+    Returns:
+        落盘条目的 ID（新建 / 自愈路径会分配新 ID，覆盖路径 = 原样返回）。
 
     Raises:
-        PromptNameError: 名称非法。
+        PromptNameError: 显示名非法。
         PromptTooLargeError: 序列化后超过 32 KiB。
         PromptError: 目录 / 备份 / 写入等底层失败，或内容含 UTF-8 无法编码的字符。
     """
-    _validate_name(prompt.name)
-    text = dump_prompt(prompt)
+    display = _validate_display_name(prompt.name)
+    if PROMPT_ID_RE.fullmatch(prompt.id):
+        pid = prompt.id
+    elif prompt.id and (_prompts_dir() / f"{prompt.id}{_SUFFIX}").is_file():
+        # 损坏旧条目的自愈路径：列表给它的 id 是旧文件名——就地覆盖修复，
+        # 迁移在下次读取时把它换上正式 ID。
+        pid = prompt.id
+    else:
+        pid = _generate_id()
+    text = dump_prompt(
+        Prompt(id=pid, name=display, description=prompt.description, body=prompt.body)
+    )
     try:
         size = len(text.encode("utf-8"))
     except UnicodeEncodeError as exc:
         raise PromptError(
-            f"提示词 {prompt.name!r} 含 UTF-8 无法编码的字符（{exc.reason}）；请检查内容。"
+            f"提示词 {display!r} 含 UTF-8 无法编码的字符（{exc.reason}）；请检查内容。"
         ) from exc
     if size > _MAX_ENTRY_BYTES:
         raise PromptTooLargeError(
-            f"提示词 {prompt.name!r} 序列化后有 {size} 字节，超过上限 "
+            f"提示词 {display!r} 序列化后有 {size} 字节，超过上限 "
             f"{_MAX_ENTRY_BYTES} 字节（32 KiB）；请精简正文。"
         )
     directory = _prompts_dir()
-    path = directory / f"{prompt.name}{_SUFFIX}"
+    path = directory / f"{pid}{_SUFFIX}"
     try:
         directory.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -210,60 +283,90 @@ def save_prompt(prompt: Prompt) -> None:
     # 备份 + 换版是一个整体：不加锁时两个写者会互相吞掉历史（各自的 copyfile 与
     # 原子写交错，裁历史还会删掉对方刚写进去的那一份）。锁名沿用 skills 的约定。
     try:
-        with shared_file_lock(_edit_lock_path(directory, prompt.name)).acquire(
+        with shared_file_lock(_edit_lock_path(directory, pid)).acquire(
             timeout=_EDIT_LOCK_TIMEOUT_SECONDS
         ):
             if path.is_file():
-                _backup_to_history(directory, prompt.name, path)
+                _backup_to_history(directory, pid, path)
             atomic_write_text(path, text)
     except Timeout as exc:
         raise PromptError(
-            f"提示词 {prompt.name!r} 正在被另一个进程修改；请稍后重试。"
+            f"提示词 {display!r} 正在被另一个进程修改；请稍后重试。"
         ) from exc
     except OSError as exc:
         raise PromptError(f"无法写入提示词 {path}：{exc.strerror or exc}") from exc
+    return pid
 
 
-def delete_prompt(name: str) -> None:
-    """删除一条提示词及其全部历史备份。
+def prompt_id_by_display_name(name: str) -> str | None:
+    """按显示名查唯一提示词 ID；不存在或重名（不唯一）返回 None。
 
-    Args:
-        name: 条目名称。
+    供存量迁移（策略 JSON / 会话设置里的旧版名字引用 → ID）与 CLI 的名称便利解析。
+    """
+    matches = [prompt.id for prompt in list_prompts() if prompt.name == name]
+    return matches[0] if len(matches) == 1 else None
+
+
+def delete_prompt(ref: str) -> None:
+    """删除一条提示词及其全部历史备份（接受 ID 或唯一显示名）。
 
     Raises:
-        PromptNameError: 名称非法。
-        PromptNotFoundError: 没有这个名字的条目。
+        PromptNotFoundError: 没有这个 ID / 显示名的条目。
         PromptError: 删除失败。
     """
-    _validate_name(name)
+    resolved = _resolve_read_ref(ref)
+    pid = resolved or ""
+    path = _load_entries().get(pid)
+    if path is None:
+        raise PromptNotFoundError(f"未找到提示词 {pid!r}；无需删除。")
     directory = _prompts_dir()
-    path = directory / f"{name}{_SUFFIX}"
-    if not path.is_file():
-        raise PromptNotFoundError(f"未找到提示词 {name!r}；无需删除。")
     try:
-        with shared_file_lock(_edit_lock_path(directory, name)).acquire(
+        with shared_file_lock(_edit_lock_path(directory, pid)).acquire(
             timeout=_EDIT_LOCK_TIMEOUT_SECONDS
         ):
             path.unlink()
     except Timeout as exc:
-        raise PromptError(
-            f"提示词 {name!r} 正在被另一个进程修改；请稍后重试。"
-        ) from exc
+        raise PromptError(f"提示词 {pid!r} 正在被另一个进程修改；请稍后重试。") from exc
     except OSError as exc:
         raise PromptError(f"无法删除提示词 {path}：{exc.strerror or exc}") from exc
     history_dir = directory / _HISTORY_DIRNAME
     if history_dir.is_dir():
-        for old in _history_versions(history_dir, name):
+        for old in _history_versions(history_dir, pid):
             old.unlink(missing_ok=True)
 
 
-def _edit_lock_path(directory: Path, name: str) -> Path:
+def rename_prompt(ref: str, new_name: str) -> Prompt:
+    """改一条提示词的显示名：只写 frontmatter 的 name 字段（文件名是 ID，永不动）。
+
+    Args:
+        ref: 条目 ID 或唯一显示名。
+        new_name: 新显示名。
+
+    Returns:
+        改名后的条目。
+
+    Raises:
+        PromptNameError: 显示名非法。
+        PromptNotFoundError: 条目不存在。
+        PromptError: 写入失败。
+    """
+    display = _validate_display_name(new_name)
+    current = read_prompt(ref)
+    pid = current.id
+    updated = Prompt(
+        id=current.id, name=display, description=current.description, body=current.body
+    )
+    atomic_write_text(_entry_path(pid), dump_prompt(updated))
+    return updated
+
+
+def _edit_lock_path(directory: Path, pid: str) -> Path:
     """条目级写锁的文件路径（点前缀：列目录时天然被跳过，与原子写的临时文件同类）。"""
-    return directory / f".{name}.edit.lock"
+    return directory / f".{pid}.edit.lock"
 
 
-def _backup_to_history(directory: Path, name: str, current: Path) -> None:
-    """把当前版本复制进 _history/<name>.<时间戳>.md，再把该条目历史裁到最近 N 版。
+def _backup_to_history(directory: Path, pid: str, current: Path) -> None:
+    """把当前版本复制进 _history/<ID>.<时间戳>.md，再把该条目历史裁到最近 N 版。
 
     用复制而非移动：当前条目在原子写新版之前始终存在，任何一步崩溃都不会让条目消失。
     """
@@ -271,24 +374,24 @@ def _backup_to_history(directory: Path, name: str, current: Path) -> None:
     stamp = datetime.now().strftime(_STAMP_FORMAT)
     try:
         history_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(current, _history_target(history_dir, name, stamp))
+        shutil.copyfile(current, _history_target(history_dir, pid, stamp))
     except OSError as exc:
         raise PromptError(
             f"无法把旧版 {current} 备份进 {history_dir}：{exc.strerror or exc}"
         ) from exc
-    _evict_old_history(history_dir, name)
+    _evict_old_history(history_dir, pid)
 
 
-def _history_target(history_dir: Path, name: str, stamp: str) -> Path:
-    """给历史备份取一个不撞名的路径：<name>.<时间戳>.md，撞了就加 -<序号>。
+def _history_target(history_dir: Path, pid: str, stamp: str) -> Path:
+    """给历史备份取一个不撞名的路径：<ID>.<时间戳>.md，撞了就加 -<序号>。
 
     Windows 系统时钟粒度较粗（约 15ms），同一秒内多次保存可能得到相同时间戳；加序号
     保证不覆盖已有备份（宁可多留一版，也不丢一版）。
     """
-    candidate = history_dir / f"{name}.{stamp}{_SUFFIX}"
+    candidate = history_dir / f"{pid}.{stamp}{_SUFFIX}"
     seq = 1
     while candidate.exists():
-        candidate = history_dir / f"{name}.{stamp}-{seq}{_SUFFIX}"
+        candidate = history_dir / f"{pid}.{stamp}-{seq}{_SUFFIX}"
         seq += 1
     return candidate
 
@@ -297,14 +400,14 @@ def _history_target(history_dir: Path, name: str, stamp: str) -> Path:
 _STAMP_WIDTH = len(datetime(2026, 12, 31, 23, 59, 59, 999999).strftime(_STAMP_FORMAT))
 
 
-def _history_versions(history_dir: Path, name: str) -> list[Path]:
+def _history_versions(history_dir: Path, pid: str) -> list[Path]:
     """某条目在 _history/ 里的全部版本，按产生顺序（时间戳 + 同戳序号）从旧到新排序。
 
-    历史文件名形如 `<name>.<时间戳>.md`（名称已禁点号，`<name>.` 前缀能精确锁定该条目）；
-    同戳撞名加 `-<序号>`，序号即产生顺序。排序不能用字典序——`-` 排在 `.` 之前，会把同戳
-    的 `-1` 版排到基础版前面、颠倒新旧；按「定宽时间戳 + 序号」解析出真实顺序。
+    历史文件名形如 `<ID>.<时间戳>.md`（ID 不含点号，`<ID>.` 前缀能精确锁定该条目）；
+    同戳撞名加 `-<序号>`，序号即产生顺序。排序不能用字典序——`-` 排在 `.` 之前，会把
+    同戳的 `-1` 版排到基础版前面、颠倒新旧；按「定宽时间戳 + 序号」解析出真实顺序。
     """
-    prefix = f"{name}."
+    prefix = f"{pid}."
     versions = [
         path
         for path in history_dir.iterdir()
@@ -328,67 +431,25 @@ def _history_versions(history_dir: Path, name: str) -> list[Path]:
     return versions
 
 
-def _evict_old_history(history_dir: Path, name: str) -> None:
+def _evict_old_history(history_dir: Path, pid: str) -> None:
     """把某条目的历史裁到最近 N 版：删掉最旧的、超出保留数的版本。"""
-    versions = _history_versions(history_dir, name)
+    versions = _history_versions(history_dir, pid)
     overflow = len(versions) - _HISTORY_KEEP
     for stale in versions[: max(0, overflow)]:
         stale.unlink(missing_ok=True)
 
 
-def rename_prompt(old_name: str, new_name: str) -> None:
-    """重命名提示词条目（= 改文件名），历史备份随改名迁移。
-
-    改名是「同目录 rename」：NTFS 与 POSIX 下同目录改名都是原子操作，外界要么看到旧名、
-    要么看到新名。历史备份（`_history/<旧名>.<时间戳>.md`）随后改前缀跟到新名下——备份是
-    附属数据，个别文件改不动时跳过（不 rollback 已完成的主改名，避免「改名成功却报失败」
-    让用户重试时撞「旧名已不存在」）。
-
-    Args:
-        old_name: 现有条目名称。
-        new_name: 目标名称（校验规则与新建相同）。
-
-    Raises:
-        PromptNameError: 任一名称非法。
-        PromptNotFoundError: 旧名称条目不存在。
-        PromptExistsError: 新名称已被占用。
-        PromptError: 文件系统改名失败。
-    """
-    _validate_name(old_name)
-    _validate_name(new_name)
-    if old_name == new_name:
-        return
-    directory = _prompts_dir()
-    source = directory / f"{old_name}{_SUFFIX}"
-    target = directory / f"{new_name}{_SUFFIX}"
-    if not source.is_file():
-        raise PromptNotFoundError(f"未找到提示词 {old_name!r}；无法改名。")
-    if target.exists():
-        raise PromptExistsError(
-            f"名称 {new_name!r} 的提示词已存在；请换一个名称，或先删除目标条目。"
-        )
-    try:
-        directory.mkdir(parents=True, exist_ok=True)
-        source.rename(target)
-    except OSError as exc:
-        raise PromptError(
-            f"无法把提示词 {source} 改名为 {target}：{exc.strerror or exc}"
-        ) from exc
-    _rename_history(directory, old_name, new_name)
-
-
-def _rename_history(directory: Path, old_name: str, new_name: str) -> None:
-    """把旧名的全部历史版本改前缀到新名下；撞名加序号、个别改不动跳过（备份不阻塞主操作）。"""
-    history_dir = directory / _HISTORY_DIRNAME
+def _move_history_prefix(history_dir: Path, old_prefix: str, new_id: str) -> None:
+    """迁移时把旧显示名的历史版本改前缀到新 ID 下；个别改不动跳过（备份不阻塞主操作）。"""
     if not history_dir.is_dir():
         return
-    for old in _history_versions(history_dir, old_name):
-        tail = old.name[len(old_name) :]  # 形如 .<时间戳>[-序号].md
-        candidate = history_dir / f"{new_name}{tail}"
+    for old in _history_versions(history_dir, old_prefix):
+        tail = old.name[len(old_prefix) :]  # 形如 .<时间戳>[-序号].md
+        candidate = history_dir / f"{new_id}{tail}"
         seq = 1
         while candidate.exists():
             stem = tail[: -len(_SUFFIX)]
-            candidate = history_dir / f"{new_name}{stem}-{seq}{_SUFFIX}"
+            candidate = history_dir / f"{new_id}{stem}-{seq}{_SUFFIX}"
             seq += 1
         try:
             old.rename(candidate)
@@ -403,8 +464,8 @@ def seed_builtin_presets() -> None:
     """一次性播种产品内置预置提示词：首次使用时把内置条目写进提示词库。
 
     标记文件 `prompts/.builtin-presets-seeded`（内容 = 内置集合版本号）记录「播种过」；
-    标记在即直接返回（常态零开销）。播种只写「同名不存在」的条目（不覆盖用户自建的同名
-    条目），写完落标记——此后用户可自由修改 / 删除内置条目，不会被覆盖或复活。
+    标记在即直接返回（常态零开销）。播种只写「显示名不存在」的条目（不覆盖用户自建的
+    同名条目），写完落标记——此后用户可自由修改 / 删除内置条目，不会被覆盖或复活。
 
     Raises:
         PromptError: 目录创建 / 条目写入 / 标记写入失败。
@@ -419,15 +480,26 @@ def seed_builtin_presets() -> None:
         raise PromptError(
             f"无法在 {directory} 准备写入：{exc.strerror or exc}"
         ) from exc
+    existing_names = {prompt.name for prompt in list_prompts()}
     for preset in BUILTIN_PROMPTS:
-        path = directory / f"{preset.name}{_SUFFIX}"
-        if path.exists():
+        if preset.name in existing_names:
             continue
+        new_id = _generate_id()
         try:
-            atomic_write_text(path, dump_prompt(preset))
+            atomic_write_text(
+                _entry_path(new_id),
+                dump_prompt(
+                    Prompt(
+                        id=new_id,
+                        name=preset.name,
+                        description=preset.description,
+                        body=preset.body,
+                    )
+                ),
+            )
         except OSError as exc:
             raise PromptError(
-                f"无法写入内置提示词 {path}：{exc.strerror or exc}"
+                f"无法写入内置提示词 {preset.name!r}：{exc.strerror or exc}"
             ) from exc
     try:
         atomic_write_text(marker, BUILTIN_PRESET_VERSION)

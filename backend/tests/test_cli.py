@@ -34,12 +34,20 @@ from dataset_factory.llm import (
     StreamDelta,
     TextPart,
     VideoPart,
+    list_configs,
 )
 from dataset_factory.prompts import Prompt, save_prompt
 from dataset_factory.sessions import list_sessions
 from dataset_factory.skills import import_skill
 
 from .conftest import FakeCompleter
+
+
+def _config_dir(root: Path, name: str) -> Path:
+    """按显示名找配置的数据目录（ID 化后目录名 = 稳定 ID）。"""
+    cid = next(info.id for info in list_configs() if info.name == name)
+    return root / "endpoints" / cid
+
 
 _SKILL_PACK = Path(__file__).parent / "fixtures" / "skill-pack"
 runner = CliRunner()
@@ -445,21 +453,26 @@ def test_config_add_list_use_show_roundtrip(temp_data_root: Path) -> None:
     assert "beta" in show.output
 
 
-def test_config_add_duplicate_fails(temp_data_root: Path) -> None:
-    """重名（不区分大小写）：退出码 1，stderr 给可操作消息。"""
-    runner.invoke(
+def test_config_add_duplicate_display_name_allowed(temp_data_root: Path) -> None:
+    """同显示名（不区分大小写）可并存：各自独立 ID（身份是 ID）。"""
+    first = runner.invoke(
         app,
         ["config", "add", "alpha", "--base-url", "https://a/v1", "--model", "m"],
         input="\n",
     )
-    result = runner.invoke(
+    second = runner.invoke(
         app,
         ["config", "add", "ALPHA", "--base-url", "https://b/v1", "--model", "m"],
         input="\n",
     )
 
-    assert result.exit_code == 1
-    assert "不区分大小写" in result.stderr
+    assert first.exit_code == 0
+    assert second.exit_code == 0
+    from dataset_factory.llm import list_configs as _lc
+
+    infos = [info for info in _lc() if info.name.casefold() == "alpha"]
+    assert len(infos) == 2
+    assert infos[0].id != infos[1].id
 
 
 def test_config_use_missing_fails(temp_data_root: Path) -> None:
@@ -756,14 +769,14 @@ def test_config_params_set_and_show_roundtrip(temp_data_root: Path) -> None:
     assert '"max_tokens": 512' in result.output
     # 参数块在 config.json 里平铺在顶层（存储层口径），读取侧按 validated_request_params 收取。
     data = json.loads(
-        (temp_data_root / "endpoints" / "alpha" / "config.json").read_text(
+        (_config_dir(temp_data_root, "alpha") / "config.json").read_text(
             encoding="utf-8"
         )
     )
     assert data["temperature"] == 0.7
     assert data["max_tokens"] == 512
     # params 只动参数块：密钥文件原样在（沿用语义的落盘证据）。
-    assert (temp_data_root / "endpoints" / "alpha" / "credentials").read_text(
+    assert (_config_dir(temp_data_root, "alpha") / "credentials").read_text(
         encoding="utf-8"
     ) == "test-key-123"
 
@@ -790,7 +803,7 @@ def test_config_params_set_replaces_whole_block(temp_data_root: Path) -> None:
 
     assert result.exit_code == 0
     data = json.loads(
-        (temp_data_root / "endpoints" / "alpha" / "config.json").read_text(
+        (_config_dir(temp_data_root, "alpha") / "config.json").read_text(
             encoding="utf-8"
         )
     )
@@ -836,7 +849,7 @@ def test_config_params_set_unknown_keys_dropped(temp_data_root: Path) -> None:
 
     assert result.exit_code == 0
     data = json.loads(
-        (temp_data_root / "endpoints" / "alpha" / "config.json").read_text(
+        (_config_dir(temp_data_root, "alpha") / "config.json").read_text(
             encoding="utf-8"
         )
     )
@@ -934,12 +947,12 @@ def test_config_params_targets_named_config_not_active(temp_data_root: Path) -> 
 
     assert result.exit_code == 0
     beta = json.loads(
-        (temp_data_root / "endpoints" / "beta" / "config.json").read_text(
+        (_config_dir(temp_data_root, "beta") / "config.json").read_text(
             encoding="utf-8"
         )
     )
     alpha = json.loads(
-        (temp_data_root / "endpoints" / "alpha" / "config.json").read_text(
+        (_config_dir(temp_data_root, "alpha") / "config.json").read_text(
             encoding="utf-8"
         )
     )
@@ -981,7 +994,7 @@ def test_label_unknown_skill_exits_user_error(
     result = runner.invoke(app, ["label", "-p", "h3", "-s", "不存在", "-m", "描述"])
 
     assert result.exit_code == 1
-    assert "不在 skill 库" in result.stderr
+    assert "不存在" in result.stderr
 
 
 def test_chat_turn_failure_keeps_session_alive(

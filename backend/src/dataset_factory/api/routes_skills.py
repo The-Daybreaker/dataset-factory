@@ -1,9 +1,11 @@
 """Skill 库端点：GET /api/skills、POST /api/skills/import、POST /api/skills/import-upload、enable/disable/rename、DELETE。
 
-skill 是本地目录包（agentskills.io 标准）。导入有三条路线：CLI / 脚本与 Web「路径导入」走本地
-路径（/api/skills/import，目录整包或单个 SKILL.md 文件），浏览器走「文件夹选择器」上传文件集
-（/api/skills/import-upload）——浏览器安全模型拿不到所选文件夹的本地路径，传的是文件内容；
-上传路线的相对路径在此清洗（拒绝穿越与空段）。
+skill 是本地目录包（agentskills.io 标准）。**寻址一律用 skill 的稳定 ID**（目录名即 ID；
+显示名取自 frontmatter 的 name，可改、允许重名、不参与寻址——2026-09-23 ID 化）。导入有
+三条路线：CLI / 脚本与 Web「路径导入」走本地路径（/api/skills/import，目录整包或单个
+SKILL.md 文件），浏览器走「文件夹选择器」上传文件集（/api/skills/import-upload）——浏览器
+安全模型拿不到所选文件夹的本地路径，传的是文件内容；上传路线的相对路径在此清洗
+（拒绝穿越与空段）。
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Response, UploadFile, status
 
 from ..skills import (
     delete_skill,
+    get_skill,
     import_skill,
     import_skill_files,
     list_skill_files,
@@ -70,6 +73,7 @@ def list_all() -> list[SkillInfo]:
     """列出全部 skill（含启用状态）。"""
     return [
         SkillInfo(
+            id=item.id,
             name=item.name,
             description=item.description,
             enabled=item.enabled,
@@ -84,7 +88,6 @@ def list_all() -> list[SkillInfo]:
     response_model=SkillImportResponse,
     responses={
         400: {"model": ErrorDetail, "description": "路径不存在 / 格式不合法"},
-        409: {"model": ErrorDetail, "description": "同名 skill 已存在（重名不合并）"},
     },
 )
 def import_one(request: SkillImportRequest) -> SkillImportResponse:
@@ -92,6 +95,7 @@ def import_one(request: SkillImportRequest) -> SkillImportResponse:
 
     目录源走 agentskills.io 标准整包复制；指向一个 ``.md`` 文件时视为「无文件夹结构的
     单文件 skill」——文件整体按 SKILL.md 交付，名称 / 描述取自它的 frontmatter。
+    同显示名的包可并存（身份是 ID，导入不再拒绝重名）。
     """
     source = Path(request.path)
     if not source.exists():
@@ -111,6 +115,7 @@ def import_one(request: SkillImportRequest) -> SkillImportResponse:
     else:
         result = import_skill(source)
     return SkillImportResponse(
+        id=result.skill.id,
         name=result.skill.name,
         description=result.skill.description,
         enabled=result.skill.enabled,
@@ -126,7 +131,6 @@ def import_one(request: SkillImportRequest) -> SkillImportResponse:
             "model": ErrorDetail,
             "description": "上传内容不合法（缺 SKILL.md / 文件名穿越 / 格式非法）",
         },
-        409: {"model": ErrorDetail, "description": "同名 skill 已存在（重名不合并）"},
     },
 )
 async def import_upload(files: list[UploadFile]) -> SkillImportResponse:
@@ -149,6 +153,7 @@ async def import_upload(files: list[UploadFile]) -> SkillImportResponse:
         payload[rel] = await upload.read()
     result = import_skill_files(_strip_picker_root(payload))
     return SkillImportResponse(
+        id=result.skill.id,
         name=result.skill.name,
         description=result.skill.description,
         enabled=result.skill.enabled,
@@ -157,25 +162,27 @@ async def import_upload(files: list[UploadFile]) -> SkillImportResponse:
 
 
 @router.get(
-    "/{name}/files",
+    "/{sid}/files",
     response_model=SkillFilesResponse,
     responses={404: {"model": ErrorDetail, "description": "skill 不存在"}},
 )
-def list_package_files(name: str) -> SkillFilesResponse:
+def list_package_files(sid: str) -> SkillFilesResponse:
     """列出技能包内文件（角色标注：SKILL.md 与 references/ 可预览，assets / scripts 灰显占位）。"""
+    skill = get_skill(sid)  # ID 或唯一显示名
     return SkillFilesResponse(
-        name=name,
+        id=skill.id,
+        name=skill.name,
         files=[
             SkillFileInfo(
                 path=entry.path, role=entry.role, previewable=entry.previewable
             )
-            for entry in list_skill_files(name)
+            for entry in list_skill_files(skill.id)
         ],
     )
 
 
 @router.get(
-    "/{name}/files/{path:path}",
+    "/{sid}/files/{path:path}",
     response_model=SkillFileContent,
     responses={
         400: {
@@ -185,13 +192,13 @@ def list_package_files(name: str) -> SkillFilesResponse:
         404: {"model": ErrorDetail, "description": "skill 或包内文件不存在"},
     },
 )
-def read_package_file(name: str, path: str) -> SkillFileContent:
+def read_package_file(sid: str, path: str) -> SkillFileContent:
     """读技能包内一个可预览文件的文本内容（UTF-8；仅 SKILL.md 与 references/ 开放）。"""
-    return SkillFileContent(path=path, content=read_skill_file(name, path))
+    return SkillFileContent(path=path, content=read_skill_file(sid, path))
 
 
 @router.put(
-    "/{name}/files/{path:path}",
+    "/{sid}/files/{path:path}",
     response_model=SkillFileContent,
     responses={
         400: {"model": ErrorDetail, "description": "文件或内容不合法"},
@@ -200,13 +207,13 @@ def read_package_file(name: str, path: str) -> SkillFileContent:
     },
 )
 def save_package_file(
-    name: str, path: str, request: SkillFileSaveRequest
+    sid: str, path: str, request: SkillFileSaveRequest
 ) -> SkillFileContent:
     """写回现有技能文本文件，SKILL.md 同时校验其 frontmatter。"""
     return SkillFileContent(
         path=path,
         content=save_skill_file(
-            name,
+            sid,
             path,
             request.content,
             original_content=request.original_content,
@@ -216,47 +223,46 @@ def save_package_file(
 
 
 @router.post(
-    "/{name}/enable",
+    "/{sid}/enable",
     status_code=status.HTTP_204_NO_CONTENT,
     responses={404: {"model": ErrorDetail, "description": "skill 不存在"}},
 )
-def enable(name: str) -> Response:
+def enable(sid: str) -> Response:
     """启用 skill。"""
-    set_enabled(name, True)
+    set_enabled(sid, True)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(
-    "/{name}/disable",
+    "/{sid}/disable",
     status_code=status.HTTP_204_NO_CONTENT,
     responses={404: {"model": ErrorDetail, "description": "skill 不存在"}},
 )
-def disable(name: str) -> Response:
+def disable(sid: str) -> Response:
     """停用 skill（保留在库中，打标不注入）。"""
-    set_enabled(name, False)
+    set_enabled(sid, False)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(
-    "/{name}/rename",
+    "/{sid}/rename",
     status_code=status.HTTP_204_NO_CONTENT,
     responses={
         404: {"model": ErrorDetail, "description": "skill 不存在"},
-        409: {"model": ErrorDetail, "description": "新名称已被占用"},
     },
 )
-def rename(name: str, request: SkillRenameRequest) -> Response:
-    """重命名 skill：目录改名，SKILL.md frontmatter 的 name 同步改写。"""
-    rename_skill(name, request.new_name)
+def rename(sid: str, request: SkillRenameRequest) -> Response:
+    """改显示名（只写 SKILL.md frontmatter 的 name 字段；引用存 ID、不受影响）。"""
+    rename_skill(sid, request.new_name)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete(
-    "/{name}",
+    "/{sid}",
     status_code=status.HTTP_204_NO_CONTENT,
     responses={404: {"model": ErrorDetail, "description": "skill 不存在"}},
 )
-def remove(name: str) -> Response:
+def remove(sid: str) -> Response:
     """删除 skill（整目录移除）。"""
-    delete_skill(name)
+    delete_skill(sid)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

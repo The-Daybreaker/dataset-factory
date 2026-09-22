@@ -26,7 +26,9 @@ from .model import (
     parse_skill_frontmatter,
 )
 from .store import (
+    SKILL_ID_RE,
     delete_skill,
+    get_skill,
     import_skill,
     import_skill_files,
     list_skill_files,
@@ -35,9 +37,11 @@ from .store import (
     read_skill_file,
     rename_skill,
     set_enabled,
+    skill_id_by_display_name,
 )
 
 __all__ = [
+    "SKILL_ID_RE",
     "Skill",
     "SkillError",
     "SkillExistsError",
@@ -51,6 +55,7 @@ __all__ = [
     "SkillNotFoundError",
     "SkillSourceError",
     "delete_skill",
+    "get_skill",
     "import_skill",
     "import_skill_files",
     "list_skill_files",
@@ -60,4 +65,5 @@ __all__ = [
     "read_skill_file",
     "rename_skill",
     "set_enabled",
+    "skill_id_by_display_name",
 ]

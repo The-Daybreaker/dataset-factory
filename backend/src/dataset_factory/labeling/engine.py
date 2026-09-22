@@ -41,7 +41,7 @@ from ..llm import (
     TextPart,
     VideoPart,
 )
-from ..prompts import Prompt, read_prompt
+from ..prompts import PROMPT_ID_RE, Prompt, prompt_id_by_display_name, read_prompt
 from ..sessions import (
     JsonValue,
     MessageEvent,
@@ -57,7 +57,13 @@ from ..sessions import (
     save_attachment,
     save_attachment_bytes,
 )
-from ..skills import SkillNotFoundError, list_skills, read_skill
+from ..skills import (
+    SKILL_ID_RE,
+    get_skill,
+    list_skills,
+    read_skill,
+    skill_id_by_display_name,
+)
 from .errors import (
     AttachmentReadError,
     EmptyTurnError,
@@ -93,12 +99,12 @@ class SessionSettings:
     """一个会话的当前设置（从最后一条 settings 事件折叠而来）。
 
     Attributes:
-        prompt_name: 当前基础提示词名称；会话从未设置过时为 None（首轮打标必须指定）。
-        skill_names: 当前勾选启用的 skill 名称序列（保持勾选顺序注入）。
+        prompt_id: 当前基础提示词 ID；会话从未设置过时为 None（首轮打标必须指定）。
+        skill_ids: 当前勾选启用的 skill ID 序列（保持勾选顺序注入）。
     """
 
-    prompt_name: str | None
-    skill_names: tuple[str, ...]
+    prompt_id: str | None
+    skill_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -191,8 +197,8 @@ class LabelingEngine:
         self,
         session_id: str | None = None,
         *,
-        prompt_name: str | None = None,
-        skill_names: Sequence[str] | None = None,
+        prompt_id: str | None = None,
+        skill_ids: Sequence[str] | None = None,
         instruction: str = "",
         image: Path | None = None,
         image_bytes: bytes | None = None,
@@ -207,8 +213,8 @@ class LabelingEngine:
         """跑一轮打标：组装请求 → 先落信封 → 调模型 → 落回复，返回 caption 与会话 id。
 
         session_id 为 None 时新建会话（新 id 随结果返回，外部调用方保存后即可续接）。
-        迭代改写 = 带同一 session_id 再调：历史自动回放携带。设置沿用与切换：prompt_name /
-        skill_names 不传（None）沿用会话当前设置，传入新值（含空清单）即切换——设置真正
+        迭代改写 = 带同一 session_id 再调：历史自动回放携带。设置沿用与切换：prompt_id /
+        skill_ids 不传（None）沿用会话当前设置，传入新值（含空清单）即切换——设置真正
         变化时才追加 settings 事件。库级停用的 skill 注入时跳过（T4 语义：停用 = 不供打标
         注入），会话设置里保留原勾选记录。
 
@@ -218,8 +224,8 @@ class LabelingEngine:
 
         Args:
             session_id: 续接的会话 id；None 新建会话。
-            prompt_name: 本轮使用的基础提示词名称；None 沿用当前设置。
-            skill_names: 本轮启用的 skill 名称序列；None 沿用当前设置，空序列表示清空。
+            prompt_id: 本轮使用的基础提示词 ID；None 沿用当前设置。
+            skill_ids: 本轮启用的 skill ID 序列；None 沿用当前设置，空序列表示清空。
             instruction: 用户本轮的打标指令（可为空——纯图打标时任务说明在基础提示词里）。
             image: 本轮图片文件路径；None 表示不以此方式附图。
             image_bytes: 本轮图片字节；None 表示不以此方式附图。
@@ -252,8 +258,8 @@ class LabelingEngine:
             attachment,
         ) = _begin_turn(
             session_id=session_id,
-            prompt_name=prompt_name,
-            skill_names=skill_names,
+            prompt_id=prompt_id,
+            skill_ids=skill_ids,
             instruction=instruction,
             image=image,
             image_bytes=image_bytes,
@@ -341,8 +347,8 @@ class LabelingEngine:
         self,
         session_id: str | None = None,
         *,
-        prompt_name: str | None = None,
-        skill_names: Sequence[str] | None = None,
+        prompt_id: str | None = None,
+        skill_ids: Sequence[str] | None = None,
         instruction: str = "",
         image: Path | None = None,
         image_bytes: bytes | None = None,
@@ -378,8 +384,8 @@ class LabelingEngine:
             attachment,
         ) = _begin_turn(
             session_id=session_id,
-            prompt_name=prompt_name,
-            skill_names=skill_names,
+            prompt_id=prompt_id,
+            skill_ids=skill_ids,
             instruction=instruction,
             image=image,
             image_bytes=image_bytes,
@@ -695,8 +701,8 @@ class StreamFinished:
 def _begin_turn(
     *,
     session_id: str | None,
-    prompt_name: str | None,
-    skill_names: Sequence[str] | None,
+    prompt_id: str | None,
+    skill_ids: Sequence[str] | None,
     instruction: str,
     image: Path | None,
     image_bytes: bytes | None,
@@ -740,21 +746,26 @@ def _begin_turn(
     settings = _fold_settings(events)
     history = _replay_history(events)
 
-    wanted_prompt = prompt_name if prompt_name is not None else settings.prompt_name
-    wanted_skills = (
-        tuple(skill_names) if skill_names is not None else settings.skill_names
+    # 传入引用（ID 或唯一显示名）先规范化为稳定 ID：与折叠出的会话设置同一形状，
+    # 比较去重才不会因「同物异形」误判变化而重复追加设置事件。
+    wanted_prompt = _to_prompt_id(
+        prompt_id if prompt_id is not None else settings.prompt_id
+    )
+    wanted_skills = tuple(
+        _to_skill_id(item)
+        for item in (tuple(skill_ids) if skill_ids is not None else settings.skill_ids)
     )
     if wanted_prompt is None:
         raise PromptNotSelectedError(
-            "尚未选定基础提示词（一轮打标必须有一个作 system 底座）；请传入 prompt_name。"
+            "尚未选定基础提示词（一轮打标必须有一个作 system 底座）；请先选择提示词。"
         )
     prompt = read_prompt(wanted_prompt)
     skill_texts = _load_enabled_skill_texts(wanted_skills)
     if session_id is None:
         session_id = create_session(strategy_id=strategy_id)
     if (wanted_prompt, wanted_skills) != (
-        settings.prompt_name,
-        settings.skill_names,
+        settings.prompt_id,
+        settings.skill_ids,
     ):
         append_settings(
             session_id,
@@ -914,13 +925,18 @@ def _read_material(material: Path) -> bytes:
 
 
 def _fold_settings(events: Sequence[SessionEvent]) -> SessionSettings:
-    """从事件流折叠出当前设置：取最后一条 settings 事件的值（无则全空）。"""
-    prompt_name: str | None = None
-    skill_names: tuple[str, ...] = ()
+    """从事件流折叠出当前设置：取最后一条 settings 事件的值（无则全空）。
+
+    旧版会话事件的设置存的是资产显示名（2026-09-23 前的口径）：折叠时按名解析成
+    ID；解析不到（资产已被改名或删除）保留原值，后续读取按「引用不存在」fail loud，
+    由用户重新勾选覆盖。
+    """
+    prompt_id: str | None = None
+    skill_ids: tuple[str, ...] = ()
     for event in events:
         if isinstance(event, SettingsEvent):
-            prompt_name, skill_names = _parse_settings_value(event.settings)
-    return SessionSettings(prompt_name=prompt_name, skill_names=skill_names)
+            prompt_id, skill_ids = _parse_settings_value(event.settings)
+    return SessionSettings(prompt_id=prompt_id, skill_ids=skill_ids)
 
 
 def _parse_settings_value(
@@ -943,7 +959,26 @@ def _parse_settings_value(
         raise SettingsFormatError(
             f"会话设置的 {_KEY_SKILLS!r} 字段应是字符串数组；请检查会话文件是否被改动。"
         )
-    return raw_prompt, tuple(cast(list[str], raw_skills))
+    prompt = _to_prompt_id(raw_prompt)
+    skills = tuple(_to_skill_id(item) for item in cast(list[str], raw_skills))
+    return prompt, skills
+
+
+def _to_prompt_id(value: str | None) -> str | None:
+    """设置事件里的提示词引用 → ID：已是 ID 形状原样返回；旧版显示名按名解析。
+
+    解析不到保留原值——后续读取按「引用不存在」明确报错，绝不静默换成别的资产。
+    """
+    if value is None or PROMPT_ID_RE.fullmatch(value):
+        return value
+    return prompt_id_by_display_name(value) or value
+
+
+def _to_skill_id(value: str) -> str:
+    """设置事件里的 skill 引用 → ID：口径同 _to_prompt_id。"""
+    if SKILL_ID_RE.fullmatch(value):
+        return value
+    return skill_id_by_display_name(value) or value
 
 
 def _replay_history(events: Sequence[SessionEvent]) -> tuple[Message, ...]:
@@ -980,23 +1015,20 @@ def _attachment_label(attachment: str) -> str:
     return f"{kind}: {attachment}"
 
 
-def _load_enabled_skill_texts(names: Sequence[str]) -> list[str]:
+def _load_enabled_skill_texts(refs: Sequence[str]) -> list[str]:
     """读出应注入的 skill 全文：会话勾选 ∩ 库级启用（停用的跳过），保持勾选顺序。
 
-    库里不存在的名字（拼错，或会话设置里残留的已删除 skill）直接报错而不是静默跳过——
-    静默跳过会让用户以为 skill 生效了、输出却莫名变差，排查成本高；fail loud 才能当场纠正。
+    引用接受 skill ID 或唯一显示名（与读取层宽容口径一致），注入前先规范化为 ID。
+    库里解析不到的引用（拼错，或会话设置里残留的已删除 skill）直接报错而不是静默
+    跳过——静默跳过会让用户以为 skill 生效了、输出却莫名变差，排查成本高；fail loud
+    才能当场纠正。
     """
-    if not names:
+    if not refs:
         return []
+    canonical = [get_skill(ref).id for ref in refs]
     skills = list_skills()
-    unknown = [name for name in names if name not in {s.name for s in skills}]
-    if unknown:
-        raise SkillNotFoundError(
-            f"skill {unknown[0]!r} 不在 skill 库中；请检查名称拼写（dsf skill list 查看"
-            "可用清单）。若它来自会话设置里已删除的 skill，重新勾选 / 传新的 skill 清单即可覆盖。"
-        )
-    enabled = {skill.name for skill in skills if skill.enabled}
-    return [read_skill(name) for name in names if name in enabled]
+    enabled = {skill.id for skill in skills if skill.enabled}
+    return [read_skill(sid) for sid in canonical if sid in enabled]
 
 
 def _assemble(

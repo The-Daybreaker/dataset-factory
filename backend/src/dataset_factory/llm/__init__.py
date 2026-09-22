@@ -4,7 +4,7 @@
 - 配置与密钥：EndpointConfig / SecretValue / ConfigError / data_root / read_config /
   describe_config；多配置存储（endpoints/ 目录）——EndpointConfigInfo / list_configs /
   config_info / create_config / update_config / rename_config / delete_config /
-  set_active_config / active_config_name / read_config_data / read_stored_api_key /
+  set_active_config / active_config_id / config_id_by_display_name / read_config_data / read_stored_api_key /
   has_config / has_stored_key / validated_request_params / DEFAULT_CONFIG_NAME /
   SUPPORTED_API_FORMAT
 - 补全接口与客户端：Completer / OpenAIChatClient / build_completer
@@ -40,7 +40,8 @@ from .endpoints import (
     ConfigNotFoundError,
     EndpointConfigInfo,
     SecretValue,
-    active_config_name,
+    active_config_id,
+    config_id_by_display_name,
     config_info,
     create_config,
     delete_config,
@@ -121,8 +122,9 @@ __all__ = [
     "TextPart",
     "UnsupportedImageError",
     "VideoPart",
-    "active_config_name",
+    "active_config_id",
     "build_completer",
+    "config_id_by_display_name",
     "config_info",
     "create_config",
     "data_root",

@@ -1,13 +1,13 @@
 退出码：0
 ---- 输出 ----
 
- Usage: root skill rename [OPTIONS] {old_name} {new_name}
+ Usage: root skill rename [OPTIONS] {ref} {new_name}
 
- 重命名 skill：改目录名，SKILL.md frontmatter 的 name 同步改写。
+ 改显示名（只写 SKILL.md frontmatter 的 name 字段；目录名是 ID、永不动）。
 
 ┌─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ *    old_name      <str>  现有 skill 名称 [required]                                                                 │
-│ *    new_name      <str>  目标名称（目录名即名称） [required]                                                        │
+│ *    ref           <str>  skill ID 或唯一显示名 [required]                                                           │
+│ *    new_name      <str>  新显示名（可改、允许重名） [required]                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ --help          Show this message and exit.                                                                          │

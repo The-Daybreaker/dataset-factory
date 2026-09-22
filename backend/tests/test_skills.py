@@ -67,17 +67,19 @@ def test_concurrent_disables_preserve_both_changes(
     temp_data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """两个技能同时停用时，第二个写者在锁内读取第一份更新而不丢失状态。"""
+    ids: dict[str, str] = {}
     for name in ("first", "second"):
-        import_skill(
+        imported = import_skill(
             _make_source(tmp_path, f"---\nname: {name}\ndescription: test\n---\n", name)
         )
+        ids[name] = imported.skill.id
     first_writing = threading.Event()
     second_waiting = threading.Event()
     write_disabled = skill_store._write_disabled  # pyright: ignore[reportPrivateUsage]
     mutation_lock = skill_store._mutation_lock  # pyright: ignore[reportPrivateUsage]
 
     def write(disabled: set[str]) -> None:
-        if disabled == {"first"}:
+        if disabled == {ids["first"]}:
             first_writing.set()
             assert second_waiting.wait(timeout=5)
         write_disabled(disabled)
@@ -93,29 +95,28 @@ def test_concurrent_disables_preserve_both_changes(
     monkeypatch.setattr(skill_store, "_mutation_lock", lock)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        first = executor.submit(set_enabled, "first", False)
+        first = executor.submit(set_enabled, ids["first"], False)
         assert first_writing.wait(timeout=5)
-        second = executor.submit(set_enabled, "second", False)
+        second = executor.submit(set_enabled, ids["second"], False)
         first.result(timeout=5)
         second.result(timeout=5)
 
-    assert {skill.name for skill in list_skills() if not skill.enabled} == {
-        "first",
-        "second",
-    }
+    assert {skill.id for skill in list_skills() if not skill.enabled} == set(
+        ids.values()
+    )
 
 
 def test_delete_holds_file_edit_and_state_locks(
     temp_data_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """删除包及状态记录时，两把锁均被持有，其他保存或启用操作无法交错。"""
-    import_skill(_FIXTURE_PACK)
-    set_enabled(_FIXTURE_NAME, False)
+    fid = import_skill(_FIXTURE_PACK).skill.id
+    set_enabled(fid, False)
     remove = skill_store.shutil.rmtree
     checked: list[Path] = []
 
     def remove_locked(target: Path) -> None:
-        for name in (f".{_FIXTURE_NAME}.edit.lock", ".state.lock"):
+        for name in (f".{fid}.edit.lock", ".state.lock"):
             with pytest.raises(Timeout), FileLock(str(target.parent / name), timeout=0):
                 pytest.fail("删除期间写锁没有被持有")
         checked.append(target)
@@ -123,9 +124,9 @@ def test_delete_holds_file_edit_and_state_locks(
 
     monkeypatch.setattr(skill_store.shutil, "rmtree", remove_locked)
 
-    delete_skill(_FIXTURE_NAME)
+    delete_skill(fid)
 
-    assert checked == [temp_data_root / "skills" / _FIXTURE_NAME]
+    assert checked == [temp_data_root / "skills" / fid]
     state = (temp_data_root / "skills" / "_state.json").read_text(encoding="utf-8")
     assert json.loads(state)["disabled"] == []
 
@@ -133,17 +134,17 @@ def test_delete_holds_file_edit_and_state_locks(
 @pytest.mark.parametrize("path", ["SKILL.md", "references/detail.md"])
 def test_save_skill_file_roundtrip(temp_data_root: Path, path: str) -> None:
     """保存主文件和参考文件后，磁盘与注入内容同步更新。"""
-    import_skill(_FIXTURE_PACK)
-    original = read_skill_file(_FIXTURE_NAME, path)
+    fid = import_skill(_FIXTURE_PACK).skill.id
+    original = read_skill_file(fid, path)
     updated = original + "\n新增写作要求\n"
 
-    result = save_skill_file(_FIXTURE_NAME, path, updated, original_content=original)
+    result = save_skill_file(fid, path, updated, original_content=original)
 
     assert result == updated
-    assert (_skills_dir(temp_data_root) / _FIXTURE_NAME / path).read_text(
+    assert (_skills_dir(temp_data_root) / fid / path).read_text(
         encoding="utf-8"
     ) == updated
-    assert "新增写作要求" in read_skill(_FIXTURE_NAME)
+    assert "新增写作要求" in read_skill(fid)
 
 
 def test_save_skill_file_rejects_stale_draft(temp_data_root: Path) -> None:
@@ -188,14 +189,14 @@ def test_save_skill_file_waits_for_concurrent_writer(
     temp_data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """另一写者持锁改写后，保存等待锁释放并按最新内容拒绝旧草稿。"""
-    import_skill(_make_full_source(tmp_path))
-    original = read_skill_file("full-pack", "SKILL.md")
+    fid = import_skill(_make_full_source(tmp_path)).skill.id
+    original = read_skill_file(fid, "SKILL.md")
     writer_ready = threading.Event()
     saver_entered = threading.Event()
-    target = temp_data_root / "skills" / "full-pack" / "SKILL.md"
+    target = temp_data_root / "skills" / fid / "SKILL.md"
 
     def hold_lock() -> None:
-        with FileLock(str(temp_data_root / "skills" / ".full-pack.edit.lock")):
+        with FileLock(str(temp_data_root / "skills" / f".{fid}.edit.lock")):
             writer_ready.set()
             assert saver_entered.wait(timeout=5)
             target.write_text(original + "\n另一写者\n", encoding="utf-8")
@@ -217,7 +218,7 @@ def test_save_skill_file_waits_for_concurrent_writer(
             monkeypatch.setattr(skill_store, "shared_file_lock", saving_lock)
             with pytest.raises(SkillExistsError, match="其他写者"):
                 save_skill_file(
-                    "full-pack",
+                    fid,
                     "SKILL.md",
                     original + "\n旧草稿\n",
                     original_content=original,
@@ -250,11 +251,21 @@ def test_save_skill_description_preserves_other_metadata(
     assert "license: MIT\nmetadata: {owner: team}\n---\n\n正文\n" in result
 
 
-@pytest.mark.parametrize("updated", ["正文", "---\nname: other\ndescription: d\n---\n"])
+@pytest.mark.parametrize(
+    "updated",
+    [
+        "没有 frontmatter 的正文",
+        "---\ndescription: 缺 name\n---\n正文",
+        "---\nname: s\ndescription: 123\n---\n正文",
+    ],
+)
 def test_save_skill_file_rejects_invalid_metadata(
     temp_data_root: Path, updated: str
 ) -> None:
-    """无效元数据与包名变更不能损坏原文件。"""
+    """无效元数据（缺 frontmatter / 缺 name / description 类型错）不能损坏原文件。
+
+    frontmatter 的 name 改成别的显示名是合法操作（name = 显示名，ID 在目录名上）。
+    """
     import_skill(_FIXTURE_PACK)
     original = read_skill_file(_FIXTURE_NAME, "SKILL.md")
 
@@ -325,7 +336,8 @@ def test_import_copies_whole_pack_self_contained(temp_data_root: Path) -> None:
     """导入 = 整目录复制进库（含 references/ 子目录）自包含；返回默认启用的 skill + 体积。"""
     result = import_skill(_FIXTURE_PACK)
 
-    dest = _skills_dir(temp_data_root) / _FIXTURE_NAME
+    fid = result.skill.id
+    dest = _skills_dir(temp_data_root) / fid
     assert (dest / "SKILL.md").is_file()
     assert (dest / "references" / "detail.md").is_file()
     assert result.skill.name == _FIXTURE_NAME
@@ -335,30 +347,31 @@ def test_import_copies_whole_pack_self_contained(temp_data_root: Path) -> None:
 
 
 def test_import_leaves_no_temp_dir(temp_data_root: Path) -> None:
-    """原子导入收尾干净：库里只有 skill 目录，没有 . 前缀的临时目录残留。"""
-    import_skill(_FIXTURE_PACK)
+    """原子导入收尾干净：库里只有 ID 目录（ID 形状），没有 . 前缀临时目录残留。"""
+    fid = import_skill(_FIXTURE_PACK).skill.id
 
     names = [p.name for p in _skills_dir(temp_data_root).iterdir() if p.is_dir()]
 
-    assert names == [_FIXTURE_NAME]
+    assert names == [fid]
+    assert fid.startswith("k")
 
 
 @pytest.mark.parametrize("uploaded", [False, True])
 def test_import_publication_holds_edit_and_state_locks(
     temp_data_root: Path, monkeypatch: pytest.MonkeyPatch, uploaded: bool
 ) -> None:
-    """两种导入入口发布新包时持有同一组锁，清理旧停用记录后默认启用。"""
+    """两种导入入口发布新包时持有同一组锁；发布目标 = ID 形状的库内新目录。"""
     root = _skills_dir(temp_data_root)
     root.mkdir()
     (root / "_state.json").write_text(
-        json.dumps({"disabled": [_FIXTURE_NAME]}), encoding="utf-8"
+        json.dumps({"disabled": ["kLegacY00001"]}), encoding="utf-8"
     )
     replace = skill_store.os.replace
     checked: list[Path] = []
 
     def replace_locked(source: Path, destination: Path) -> None:
-        if destination == root / _FIXTURE_NAME:
-            for name in (f".{_FIXTURE_NAME}.edit.lock", ".state.lock"):
+        if destination.parent == root:
+            for name in (f".{destination.name}.edit.lock", ".state.lock"):
                 with pytest.raises(Timeout), FileLock(str(root / name), timeout=0):
                     pytest.fail("发布期间写锁没有被持有")
             checked.append(destination)
@@ -371,19 +384,25 @@ def test_import_publication_holds_edit_and_state_locks(
     else:
         import_skill(_FIXTURE_PACK)
 
-    assert checked == [root / _FIXTURE_NAME]
+    assert len(checked) == 1
+    assert checked[0].parent == root
+    # 发布目标 = 新分配的 ID 目录（ID 形状），不是 frontmatter 的显示名。
+    assert skill_store.SKILL_ID_RE.fullmatch(checked[0].name)
     assert list_skills()[0].enabled
 
 
-def test_import_duplicate_name_raises_and_keeps_original(temp_data_root: Path) -> None:
-    """重名不合并：再导入同名 → SkillExistsError，原包原样不动、不被覆盖。"""
-    import_skill(_FIXTURE_PACK)
-    before = read_skill(_FIXTURE_NAME)
+def test_import_duplicate_display_name_creates_independent_copy(
+    temp_data_root: Path,
+) -> None:
+    """同显示名可并存（身份是 ID）：再导入同名包 = 新 ID 独立副本，原包不动。"""
+    first_id = import_skill(_FIXTURE_PACK).skill.id
+    before = read_skill(first_id)
 
-    with pytest.raises(SkillExistsError, match="重名不合并"):
-        import_skill(_FIXTURE_PACK)
+    second_id = import_skill(_FIXTURE_PACK).skill.id
 
-    assert read_skill(_FIXTURE_NAME) == before
+    assert second_id != first_id
+    assert read_skill(first_id) == before
+    assert len(list_skills()) == 2
 
 
 def test_import_source_not_dir_raises(tmp_path: Path, temp_data_root: Path) -> None:
@@ -404,16 +423,17 @@ def test_import_missing_skill_md_raises(tmp_path: Path, temp_data_root: Path) ->
         import_skill(source)
 
 
-def test_import_invalid_name_raises_and_copies_nothing(
+def test_import_slash_display_name_is_display_only(
     tmp_path: Path, temp_data_root: Path
 ) -> None:
-    """frontmatter 的 name 含路径分隔符 → SkillNameError，且不建库目录、不复制。"""
+    """显示名不再是目录名（身份是 ID）：含斜杠的显示名合法，只作展示字符串。"""
     source = _make_source(tmp_path, "---\nname: bad/name\ndescription: d\n---\n正文\n")
 
-    with pytest.raises(SkillNameError, match="非法字符"):
-        import_skill(source)
+    result = import_skill(source)
 
-    assert not _skills_dir(temp_data_root).exists()
+    assert result.skill.name == "bad/name"
+    assert list_skills()[0].id == result.skill.id
+    assert not (_skills_dir(temp_data_root) / "bad").exists()
 
 
 def test_list_empty_when_no_dir(temp_data_root: Path) -> None:
@@ -586,17 +606,18 @@ def test_read_missing_raises(temp_data_root: Path) -> None:
 
 def test_disable_keeps_dir_pristine_and_persists(temp_data_root: Path) -> None:
     """停用：list 显示 enabled=False，但 skill 目录原样（状态记在库级 _state.json，不往包里塞文件）。"""
-    import_skill(_FIXTURE_PACK)
+    fid = import_skill(_FIXTURE_PACK).skill.id
 
-    set_enabled(_FIXTURE_NAME, False)
+    set_enabled(fid, False)
 
     skill = list_skills()[0]
-    dest_contents = {
-        p.name for p in (_skills_dir(temp_data_root) / _FIXTURE_NAME).iterdir()
-    }
+    dest_contents = {p.name for p in (_skills_dir(temp_data_root) / fid).iterdir()}
     assert skill.enabled is False
     assert dest_contents == {"SKILL.md", "references"}
     assert (_skills_dir(temp_data_root) / "_state.json").is_file()
+    assert json.loads(
+        (_skills_dir(temp_data_root) / "_state.json").read_text(encoding="utf-8")
+    )["disabled"] == [fid]
 
 
 def test_reenable_flips_back(temp_data_root: Path) -> None:
@@ -632,45 +653,48 @@ def test_delete_missing_raises(temp_data_root: Path) -> None:
         delete_skill("nope")
 
 
-def test_rename_moves_dir_and_rewrites_frontmatter(temp_data_root: Path) -> None:
-    """改名：目录换名 + SKILL.md frontmatter 的 name 同步改写，描述与正文原样保留。"""
-    import_skill(_FIXTURE_PACK)
+def test_rename_writes_display_name_only(temp_data_root: Path) -> None:
+    """改名：只写 frontmatter 的 name 字段——目录（ID）、描述与正文原样保留。"""
+    fid = import_skill(_FIXTURE_PACK).skill.id
 
-    rename_skill(_FIXTURE_NAME, "renamed-skill")
+    rename_skill(fid, "renamed-skill")
 
-    assert not (_skills_dir(temp_data_root) / _FIXTURE_NAME).exists()
-    text = (_skills_dir(temp_data_root) / "renamed-skill" / "SKILL.md").read_text(
-        encoding="utf-8"
-    )
+    text = (_skills_dir(temp_data_root) / fid / "SKILL.md").read_text(encoding="utf-8")
     name, description = parse_skill_frontmatter(text)
     assert name == "renamed-skill"
     assert description.startswith("示例 skill")
     assert "# Example Caption Skill" in text
     listing = list_skills()
+    assert [skill.id for skill in listing] == [fid]
     assert [skill.name for skill in listing] == ["renamed-skill"]
     assert listing[0].body_chars > 0
 
 
 def test_rename_carries_disabled_state(temp_data_root: Path) -> None:
-    """停用中的 skill 改名后仍是停用（启用状态清单同步换名）。"""
-    import_skill(_FIXTURE_PACK)
-    set_enabled(_FIXTURE_NAME, False)
+    """停用中的 skill 改名后仍是停用（状态清单存 ID，不受显示名影响）。"""
+    fid = import_skill(_FIXTURE_PACK).skill.id
+    set_enabled(fid, False)
 
-    rename_skill(_FIXTURE_NAME, "renamed-skill")
+    rename_skill(fid, "renamed-skill")
 
     listing = list_skills()
     assert [skill.name for skill in listing] == ["renamed-skill"]
     assert listing[0].enabled is False
 
 
-def test_rename_conflict_raises(temp_data_root: Path) -> None:
-    """目标名称已被占用 → SkillExistsError（重名不覆盖）。"""
+def test_rename_duplicate_display_name_allowed(temp_data_root: Path) -> None:
+    """改成另一个 skill 的显示名：允许重名（身份是 ID），两包并存。"""
     import_skill(_FIXTURE_PACK)
-    other_md = "---\nname: other\ndescription: x\n---\nbody"
-    import_skill_files({"SKILL.md": other_md.encode()})
+    other_id = import_skill_files(
+        {"SKILL.md": b"---\nname: other\ndescription: x\n---\nbody"}
+    ).skill.id
 
-    with pytest.raises(SkillExistsError, match="已存在"):
-        rename_skill(_FIXTURE_NAME, "other")
+    rename_skill(_FIXTURE_NAME, "other")
+
+    names = sorted(skill.name for skill in list_skills())
+    assert names == ["other", "other"]
+    assert len({skill.id for skill in list_skills()}) == 2
+    assert other_id in {skill.id for skill in list_skills()}
 
 
 def test_rename_missing_raises(temp_data_root: Path) -> None:
@@ -680,11 +704,11 @@ def test_rename_missing_raises(temp_data_root: Path) -> None:
 
 
 def test_rename_invalid_name_raises(temp_data_root: Path) -> None:
-    """目标名称含路径分隔符 → SkillNameError（穿越防御）。"""
+    """空显示名 → SkillNameError（显示名只挡空与离谱长度，不再挡文件名字符）。"""
     import_skill(_FIXTURE_PACK)
 
-    with pytest.raises(SkillNameError, match="非法字符"):
-        rename_skill(_FIXTURE_NAME, "../escape")
+    with pytest.raises(SkillNameError, match="不能为空"):
+        rename_skill(_FIXTURE_NAME, "   ")
 
 
 def test_read_skill_non_utf8_raises(temp_data_root: Path) -> None:

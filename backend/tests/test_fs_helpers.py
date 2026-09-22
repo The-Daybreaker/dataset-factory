@@ -83,20 +83,24 @@ def test_canonical_hash_is_independent_of_key_order() -> None:
 
 def test_canonical_hash_is_computed_independently_in_test() -> None:
     """测试侧独立算一遍作对照（防产码与测试共用同一处实现而一起写错）。"""
-    data = {"skills": ["b", "a"], "prompt": "详细描述"}
+    data = {"skill_ids": ["b", "a"], "prompt_id": "详细描述"}
     expected = hashlib.sha256(
         json.dumps(data, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
 
     assert canonical_sha256(data) == expected
     # 规范口径只排键、不排数组：清单顺序是内容的一部分（保序是设计约定）。
-    assert canonical_sha256({**data, "skills": ["a", "b"]}) != expected
+    assert canonical_sha256({**data, "skill_ids": ["a", "b"]}) != expected
 
 
 def test_canonical_hash_detects_content_change() -> None:
     """内容差一位就该差一个摘要——快照与「从库更新」比对靠的就是这个敏感性。"""
-    base = canonical_sha256({"endpoint": "main", "prompt": "详细描述", "skills": []})
-    changed = canonical_sha256({"endpoint": "main", "prompt": "简短描述", "skills": []})
+    base = canonical_sha256(
+        {"endpoint_id": "main", "prompt_id": "详细描述", "skill_ids": []}
+    )
+    changed = canonical_sha256(
+        {"endpoint_id": "main", "prompt_id": "简短描述", "skill_ids": []}
+    )
 
     assert base != changed
 

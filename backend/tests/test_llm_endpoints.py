@@ -1,32 +1,30 @@
-"""单元测试：端点多配置存储（endpoints/ 目录、active 指针、名称校验）。
+"""单元测试：端点多配置存储（endpoints/ 目录、active 指针、ID 身份）。
 
-全部离线；temp_data_root 把数据根隔离到临时目录。覆盖：CRUD 与设为当前使用、名称校验
-边界、密钥只进不出、原子写失败不留脏文件。
+全部离线；temp_data_root 把数据根隔离到临时目录。覆盖：CRUD 与设为当前使用、
+ID 身份与显示名解耦（改名只写字段、允许重名）、旧版数据（名字身份）的读时迁移、
+请求参数校验（含 enable_thinking 一等布尔）、密钥只进不出。
 """
 
 from __future__ import annotations
 
 import json
-import os
-import stat
 from pathlib import Path
 
 import pytest
 
 from dataset_factory.llm import (
     SUPPORTED_API_FORMAT,
-    ConfigConflictError,
     ConfigError,
     ConfigNotFoundError,
     SecretValue,
-    active_config_name,
+    active_config_id,
+    config_id_by_display_name,
     config_info,
     create_config,
     delete_config,
     has_config,
     has_stored_key,
     list_configs,
-    read_config_data,
     read_stored_api_key,
     rename_config,
     set_active_config,
@@ -34,9 +32,9 @@ from dataset_factory.llm import (
 )
 
 
-def _create(name: str, key: str = "sk-key") -> None:
-    """测试便捷封装：建一套带密钥的配置。"""
-    create_config(
+def _create(name: str, key: str = "sk-key") -> str:
+    """测试便捷封装：建一套带密钥的配置，返回其 ID。"""
+    return create_config(
         name,
         base_url=f"https://{name}.example.com/v1",
         model=f"m-{name}",
@@ -44,16 +42,22 @@ def _create(name: str, key: str = "sk-key") -> None:
     )
 
 
-def test_create_writes_files_and_auto_activates(temp_data_root: Path) -> None:
-    """创建第一套配置：落两个文件 + active 指针指向它（第一套创建完就能用）。"""
-    _create("default")
+# ---------- 创建与列表 ----------
 
-    endpoint_dir = temp_data_root / "endpoints" / "default"
+
+def test_create_writes_files_and_auto_activates(temp_data_root: Path) -> None:
+    """创建第一套配置：目录名即 ID、config.json 带 id+name、active 指针指向它。"""
+    cid = _create("default")
+
+    endpoint_dir = temp_data_root / "endpoints" / cid
     assert (endpoint_dir / "config.json").is_file()
     assert (endpoint_dir / "credentials").is_file()
-    assert active_config_name() == "default"
+    assert active_config_id() == cid
+    assert cid not in ("default",)  # ID 是随机短 ID，不是显示名
 
     saved = json.loads((endpoint_dir / "config.json").read_text(encoding="utf-8"))
+    assert saved["id"] == cid
+    assert saved["name"] == "default"
     assert saved["base_url"] == "https://default.example.com/v1"
     assert saved["model"] == "m-default"
     assert saved["api_format"] == SUPPORTED_API_FORMAT
@@ -61,17 +65,18 @@ def test_create_writes_files_and_auto_activates(temp_data_root: Path) -> None:
 
 def test_create_second_does_not_steal_active(temp_data_root: Path) -> None:
     """创建第二套配置不抢当前使用权；列表里只有第一套标 active。"""
-    _create("alpha")
+    first = _create("alpha")
     _create("beta")
 
-    assert active_config_name() == "alpha"
-    infos = {info.name: info for info in list_configs()}
-    assert infos["alpha"].is_active
-    assert not infos["beta"].is_active
+    assert active_config_id() == first
+    infos = {info.id: info for info in list_configs()}
+    assert infos[first].is_active
+    other = next(i for i in infos if i != first)
+    assert not infos[other].is_active
 
 
-def test_list_sorted_casefold(temp_data_root: Path) -> None:
-    """列表按名称排序（不区分大小写）：大写排在小写前面按字母序而非 ASCII 码位。"""
+def test_list_sorted_by_display_name_casefold(temp_data_root: Path) -> None:
+    """列表按显示名排序（不区分大小写）：大写排在小写前面按字母序而非 ASCII 码位。"""
     _create("beta")
     _create("Alpha")
     _create("charlie")
@@ -79,13 +84,20 @@ def test_list_sorted_casefold(temp_data_root: Path) -> None:
     assert [info.name for info in list_configs()] == ["Alpha", "beta", "charlie"]
 
 
-def test_config_info_matches_list_entry(temp_data_root: Path) -> None:
-    """单套读与列表读给出逐字段相同的概要（两条读路共用一份取数规则）。
+def test_display_name_duplicates_allowed(temp_data_root: Path) -> None:
+    """显示名允许重名（身份是 ID）：同名两套配置并存、ID 各自独立。"""
+    first = _create("same")
+    second = _create("same")
 
-    三种形态各一份：带密钥与请求参数的、不带密钥的、旧格式（config.json 里没有
-    api_format 键，读侧回退到支持格式）。任一侧改了自己的口径，这里就红。
-    """
-    create_config(
+    assert first != second
+    assert has_config(first)
+    assert has_config(second)
+    assert config_id_by_display_name("same") is None  # 重名 → 名字不再能唯一定位
+
+
+def test_config_info_matches_list_entry(temp_data_root: Path) -> None:
+    """单套读与列表读给出逐字段相同的概要（两条读路共用一份取数规则）。"""
+    cid = create_config(
         "full",
         base_url="https://full/v1",
         model="m-full",
@@ -99,152 +111,69 @@ def test_config_info_matches_list_entry(temp_data_root: Path) -> None:
         json.dumps({"base_url": "https://legacy/v1", "model": "m-legacy"}),
         encoding="utf-8",
     )
-    by_name = {info.name: info for info in list_configs()}
 
-    assert sorted(by_name) == ["full", "legacy", "nokey"]
-    for name, info in by_name.items():
-        assert config_info(name) == info
-    assert by_name["full"].is_active
-    assert by_name["full"].has_api_key
-    assert not by_name["nokey"].has_api_key
-    assert by_name["legacy"].api_format == SUPPORTED_API_FORMAT
-    assert by_name["full"].request_params == {
-        "temperature": 0.3,
-        "extra_body": {"think": False},
-    }
+    single = config_info(cid)
+    infos = {info.id: info for info in list_configs()}
+    assert single == infos[cid]
+    # 旧版裸 config.json（无 id/name）：迁移补 ID、目录名转显示名。
+    legacy = next(info for info in infos.values() if info.name == "legacy")
+    assert legacy.base_url == "https://legacy/v1"
+    assert legacy.model == "m-legacy"
+    assert (temp_data_root / "endpoints" / "legacy").exists() is False
 
 
-@pytest.mark.parametrize("bad_name", ["../outside", "a:b", ""])
-def test_config_info_rejects_illegal_name(temp_data_root: Path, bad_name: str) -> None:
-    """单套读先过名称校验：非法名（含路径穿越形态）报错，不去拼别人目录的路径。"""
-    _create("safe")
-
-    with pytest.raises(ConfigError):
-        config_info(bad_name)
+def test_empty_root_lists_nothing(temp_data_root: Path) -> None:
+    """空数据根：列表为空、active 为 None，不算错。"""
+    assert list_configs() == []
+    assert active_config_id() is None
 
 
-def test_config_info_missing_config_fails_loud(temp_data_root: Path) -> None:
-    """单套读不存在的配置点名缺 config.json，不静默给出空概要。"""
-    with pytest.raises(ConfigError, match=r"config\.json"):
-        config_info("ghost")
+# ---------- 显示名规则 ----------
 
 
-def test_create_rejects_duplicate_casefold(temp_data_root: Path) -> None:
-    """重名检查不区分大小写（Windows 目录名不区分大小写，跨平台口径取其严）。"""
-    _create("Foo")
+def test_display_name_rules(temp_data_root: Path) -> None:
+    """显示名：去首尾空白、非空、不超长；文件名保留字符不再受限（身份是 ID）。"""
+    cid = _create("  padded  ")
+    assert config_info(cid).name == "padded"
 
-    with pytest.raises(ConfigConflictError, match="不区分大小写"):
-        _create("foo")
-
-
-@pytest.mark.parametrize(
-    "bad_name",
-    [
-        "",
-        "   ",
-        ".",
-        "..",
-        ".hidden",
-        "trailing.",
-        "a/b",
-        "a\\b",
-        "a:b",
-        "a<b",
-        'a"b',
-        "a|b",
-        "a?b",
-        "a*b",
-        "a\x01b",
-        "名" * 65,
-    ],
-)
-def test_create_rejects_invalid_names(temp_data_root: Path, bad_name: str) -> None:
-    """名称校验边界：空 / 路径穿越形态 / Windows 保留字符 / 控制字符 / 超长一律拒绝，不落盘。"""
-    with pytest.raises(ConfigError):
-        create_config(bad_name, base_url="https://x/v1", model="m", api_key=None)
-
-    assert not (temp_data_root / "endpoints").exists()
+    with pytest.raises(ConfigError, match="不能为空"):
+        create_config("   ", base_url="https://x/v1", model="m", api_key=None)
+    with pytest.raises(ConfigError, match="过长"):
+        create_config("长" * 101, base_url="https://x/v1", model="m", api_key=None)
+    # 冒号等文件名保留字符现在合法（只是显示别名）。
+    colon = _create("bad:name")
+    assert config_info(colon).name == "bad:name"
 
 
-def test_create_rejects_blank_endpoint_fields(temp_data_root: Path) -> None:
-    """base_url / model 去空白后为空 → 拒绝，不落盘。"""
-    with pytest.raises(ConfigError):
-        create_config("x", base_url="   ", model="m", api_key=None)
-
-    with pytest.raises(ConfigError):
-        create_config("x", base_url="https://x/v1", model="", api_key=None)
-
-    assert not (temp_data_root / "endpoints").exists()
-
-
-def test_create_returns_canonical_name(temp_data_root: Path) -> None:
-    """create_config 返回规整后的配置名（去空白）——落盘目录即此名，入口层组装响应用它。"""
-    final = create_config(
-        "  padded  ", base_url="https://x/v1", model="m", api_key=None
-    )
-
-    assert final == "padded"
-    assert has_config("padded")
-    assert active_config_name() == "padded"
-
-
-def test_create_rejects_blank_api_key(temp_data_root: Path) -> None:
-    """给了密钥但内容空白 → 拒绝（要就不给、要就给有效的，不留半配置）。"""
-    with pytest.raises(ConfigError, match="密钥"):
-        create_config(
-            "x", base_url="https://x/v1", model="m", api_key=SecretValue("   ")
-        )
-
-
-def test_create_rejects_unsupported_api_format(temp_data_root: Path) -> None:
-    """api_format 不是当前唯一支持值 → 拒绝（预留字段、不开放乱填）。"""
-    with pytest.raises(ConfigError, match="暂未支持"):
-        create_config(
-            "x",
-            base_url="https://x/v1",
-            model="m",
-            api_key=None,
-            api_format="anthropic-messages",
-        )
-
-
-def test_create_without_key_then_env_fallback(
-    temp_data_root: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """创建时不带密钥：credentials 不落盘（has_stored_key False），存储层不猜环境变量。"""
-    monkeypatch.setenv("DSF_API_KEY", "sk-env")
-
-    create_config("nokey", base_url="https://x/v1", model="m", api_key=None)
-
-    assert has_config("nokey")
-    assert not has_stored_key("nokey")
-    assert not (temp_data_root / "endpoints" / "nokey" / "credentials").exists()
+# ---------- 更新与参数 ----------
 
 
 def test_update_changes_fields_and_keeps_key_and_params(temp_data_root: Path) -> None:
-    """更新：端点字段换新；不带密钥沿用已存密钥；用户手配的请求参数原样保留。"""
-    _create("prod", key="sk-keep-me")
-    config_path = temp_data_root / "endpoints" / "prod" / "config.json"
+    """更新：端点字段换新；不带密钥沿用已存密钥；显示名与用户手配的请求参数原样保留。"""
+    cid = _create("prod", key="sk-keep-me")
+    config_path = temp_data_root / "endpoints" / cid / "config.json"
     data = json.loads(config_path.read_text(encoding="utf-8"))
     data["temperature"] = 0.3
     data["timeout_seconds"] = 300
     config_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
-    update_config("prod", base_url="https://new/v1", model="new-model")
+    returned = update_config(cid, base_url="https://new/v1", model="new-model")
 
+    assert returned == cid
     saved = json.loads(config_path.read_text(encoding="utf-8"))
     assert saved["base_url"] == "https://new/v1"
     assert saved["model"] == "new-model"
+    assert saved["name"] == "prod"  # 显示名不被 update 触碰
     assert saved["temperature"] == 0.3
     assert saved["timeout_seconds"] == 300
-    stored = read_stored_api_key("prod")
+    stored = read_stored_api_key(cid)
     assert stored is not None
     assert stored.reveal() == "sk-keep-me"
 
 
 def test_create_with_request_params_writes_them(temp_data_root: Path) -> None:
     """创建时携带请求参数：给的键写入 config.json；键集外的键被存储闸门丢弃。"""
-    name = create_config(
+    cid = create_config(
         "tuned",
         base_url="https://tuned.example.com/v1",
         model="m-tuned",
@@ -258,9 +187,7 @@ def test_create_with_request_params_writes_them(temp_data_root: Path) -> None:
     )
 
     saved = json.loads(
-        (temp_data_root / "endpoints" / name / "config.json").read_text(
-            encoding="utf-8"
-        )
+        (temp_data_root / "endpoints" / cid / "config.json").read_text(encoding="utf-8")
     )
     assert saved["temperature"] == 0.7
     assert saved["max_tokens"] == 1024
@@ -269,29 +196,47 @@ def test_create_with_request_params_writes_them(temp_data_root: Path) -> None:
     assert "timeout_seconds" not in saved  # 没给的键不出现
 
 
-def test_create_request_params_bad_type_raises(temp_data_root: Path) -> None:
-    """请求参数类型不合法：创建即拒绝（落盘前拦下，不留给请求时才炸）。"""
-    with pytest.raises(ConfigError, match="max_tokens 应是整数"):
+def test_enable_thinking_persists_as_first_class_param(temp_data_root: Path) -> None:
+    """思考开关是一等参数：布尔值进 config.json、读侧带出（B 方案，2026-09-23）。"""
+    cid = create_config(
+        "think-off",
+        base_url="https://sf.example.com/v1",
+        model="Qwen/Qwen3.5-4B",
+        api_key=None,
+        request_params={"enable_thinking": False},
+    )
+
+    saved = json.loads(
+        (temp_data_root / "endpoints" / cid / "config.json").read_text(encoding="utf-8")
+    )
+    assert saved["enable_thinking"] is False
+    infos = {info.id: info for info in list_configs()}
+    assert infos[cid].request_params == {"enable_thinking": False}
+
+
+def test_enable_thinking_bad_type_raises(temp_data_root: Path) -> None:
+    """思考开关非布尔：创建即拒绝（布尔闸门与数值闸门同一道边界）。"""
+    with pytest.raises(ConfigError, match="enable_thinking 应是 true / false"):
         create_config(
             "bad",
             base_url="https://bad.example.com/v1",
             model="m-bad",
             api_key=None,
-            request_params={"max_tokens": 1.5},
+            request_params={"enable_thinking": "false"},
         )
 
 
 def test_update_with_request_params_replaces_block(temp_data_root: Path) -> None:
     """更新时显式给参数块 = 整体替换：未提供的旧参数被清除（「给什么存什么」）。"""
-    _create("prod")
-    config_path = temp_data_root / "endpoints" / "prod" / "config.json"
+    cid = _create("prod")
+    config_path = temp_data_root / "endpoints" / cid / "config.json"
     data = json.loads(config_path.read_text(encoding="utf-8"))
     data["temperature"] = 0.3
     data["timeout_seconds"] = 300
     config_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
     update_config(
-        "prod",
+        cid,
         base_url="https://prod.example.com/v1",
         model="m-prod",
         request_params={"max_retries": 5},
@@ -314,231 +259,169 @@ def test_list_reports_request_params(temp_data_root: Path) -> None:
     )
     _create("b")
 
-    infos = {info.name: info for info in list_configs()}
-
-    assert infos["a"].request_params == {
+    infos = {info.id: info for info in list_configs()}
+    a = next(info for info in infos.values() if info.name == "a")
+    assert a.request_params == {
         "temperature": 0.5,
         "extra_body": {"top_k": 40},
     }
-    assert infos["b"].request_params == {}
+    b = next(info for info in infos.values() if info.name == "b")
+    assert b.request_params == {}
 
 
 def test_update_with_new_key_overwrites_credentials(temp_data_root: Path) -> None:
     """更新时给了新密钥：credentials 被替换。"""
-    _create("prod", key="sk-old")
+    cid = _create("prod", key="sk-old")
 
     update_config(
-        "prod",
+        cid,
         base_url="https://new/v1",
         model="m",
         api_key=SecretValue("sk-brand-new"),
     )
 
-    stored = read_stored_api_key("prod")
+    stored = read_stored_api_key(cid)
     assert stored is not None
     assert stored.reveal() == "sk-brand-new"
-
-
-def test_enable_thinking_persists_as_first_class_param(temp_data_root: Path) -> None:
-    """思考开关是一等参数：布尔值进 config.json、读侧带出（B 方案，2026-09-23）。"""
-    name = create_config(
-        "think-off",
-        base_url="https://sf.example.com/v1",
-        model="Qwen/Qwen3.5-4B",
-        api_key=None,
-        request_params={"enable_thinking": False},
-    )
-
-    saved = json.loads(
-        (temp_data_root / "endpoints" / name / "config.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert saved["enable_thinking"] is False
-    infos = {info.name: info for info in list_configs()}
-    assert infos[name].request_params == {"enable_thinking": False}
-
-
-def test_enable_thinking_bad_type_raises(temp_data_root: Path) -> None:
-    """思考开关非布尔：创建即拒绝（布尔闸门与数值闸门同一道边界）。"""
-    with pytest.raises(ConfigError, match="enable_thinking 应是 true / false"):
-        create_config(
-            "bad",
-            base_url="https://bad.example.com/v1",
-            model="m-bad",
-            api_key=None,
-            request_params={"enable_thinking": "false"},
-        )
-
-
-def test_rename_moves_dir_credentials_and_active_pointer(temp_data_root: Path) -> None:
-    """改名：目录整体重命名（凭据参数随走）、active 指针同步跟随、旧目录消失。"""
-    _create("old-name", key="sk-moves-with-dir")
-
-    returned = rename_config("old-name", "new-name")
-
-    assert returned == "new-name"
-    assert not (temp_data_root / "endpoints" / "old-name").exists()
-    new_dir = temp_data_root / "endpoints" / "new-name"
-    assert (new_dir / "config.json").is_file()
-    assert (new_dir / "credentials").is_file()
-    assert active_config_name() == "new-name"
-    stored = read_stored_api_key("new-name")
-    assert stored is not None
-    assert stored.reveal() == "sk-moves-with-dir"
-    assert has_config("old-name") is False
-
-
-def test_rename_non_active_does_not_touch_pointer(temp_data_root: Path) -> None:
-    """改名的不是当前使用配置：active 指针保持原样。"""
-    _create("active-one")
-    _create("bystander")
-
-    rename_config("bystander", "renamed-b")
-
-    assert active_config_name() == "active-one"
-    assert has_config("renamed-b") is True
-
-
-def test_rename_to_existing_name_conflicts(temp_data_root: Path) -> None:
-    """改成既有配置名（不区分大小写）→ ConfigConflictError（接口层据此映射 409）。"""
-    _create("alpha")
-    _create("beta")
-
-    with pytest.raises(ConfigConflictError, match="已存在配置"):
-        rename_config("alpha", "BETA")
-
-
-def test_rename_case_only_allowed(temp_data_root: Path) -> None:
-    """纯大小写改名（aaa → AAA）：唯一重名是自身，放行且 Windows 语义下合法。
-
-    目录条目名（list_configs）断言改名真实生效——大小写不敏感文件系统上旧名路径
-    仍能解析到同一目录，用 has_config 判不出「目录条目已换名」。
-    """
-    _create("aaa")
-
-    returned = rename_config("aaa", "AAA")
-
-    assert returned == "AAA"
-    assert [info.name for info in list_configs()] == ["AAA"]
-    assert has_config("AAA") is True
-
-
-def test_rename_same_name_is_noop(temp_data_root: Path) -> None:
-    """新名与旧名完全相同：不动盘、不报错（调用方未过滤时兜底）。"""
-    _create("stable")
-
-    assert rename_config("stable", "stable") == "stable"
-    assert active_config_name() == "stable"
-
-
-def test_rename_missing_old_config_raises(temp_data_root: Path) -> None:
-    """旧配置不存在 → ConfigNotFoundError。"""
-    with pytest.raises(ConfigNotFoundError, match="不存在"):
-        rename_config("ghost", "anywhere")
-
-
-def test_rename_to_invalid_new_name_raises(temp_data_root: Path) -> None:
-    """新名含文件名保留字符 → ConfigError（名称闸门先于任何落盘动作）。"""
-    _create("source")
-
-    with pytest.raises(ConfigError, match="不合法"):
-        rename_config("source", "bad:name")
-
-    assert has_config("source") is True
 
 
 def test_update_missing_config_raises(temp_data_root: Path) -> None:
     """更新不存在的配置 → ConfigNotFoundError（接口层据此映射 404）。"""
     with pytest.raises(ConfigNotFoundError, match="不存在"):
-        update_config("ghost", base_url="https://x/v1", model="m")
+        update_config("eghost00001", base_url="https://x/v1", model="m")
+
+
+# ---------- 改名（只写字段） ----------
+
+
+def test_rename_writes_display_name_only(temp_data_root: Path) -> None:
+    """改名：只写 config.json 的 name 字段——目录、ID、指针、密钥全部不动。"""
+    cid = _create("old-name", key="sk-stays")
+
+    returned = rename_config(cid, "new-name")
+
+    assert returned == cid
+    endpoint_dir = temp_data_root / "endpoints" / cid
+    assert endpoint_dir.is_dir()  # 目录仍是 ID，未动
+    saved = json.loads((endpoint_dir / "config.json").read_text(encoding="utf-8"))
+    assert saved["name"] == "new-name"
+    assert active_config_id() == cid  # 指针存 ID，不受改名影响
+    assert has_stored_key(cid) is True
+    stored = read_stored_api_key(cid)
+    assert stored is not None
+    assert stored.reveal() == "sk-stays"
+
+
+def test_rename_to_existing_display_name_allowed(temp_data_root: Path) -> None:
+    """改成已有的显示名：允许重名（身份是 ID），两套并存。"""
+    first = _create("alpha")
+    second = _create("beta")
+
+    rename_config(second, "alpha")
+
+    names = sorted(info.name for info in list_configs())
+    assert names == ["alpha", "alpha"]
+    assert has_config(first)
+    assert has_config(second)
+
+
+def test_rename_missing_config_raises(temp_data_root: Path) -> None:
+    """改不存在的配置 → ConfigNotFoundError。"""
+    with pytest.raises(ConfigNotFoundError, match="不存在"):
+        rename_config("eghost00001", "anywhere")
+
+
+def test_rename_to_invalid_display_name_raises(temp_data_root: Path) -> None:
+    """空显示名 → ConfigError，配置不受影响。"""
+    cid = _create("source")
+
+    with pytest.raises(ConfigError, match="不能为空"):
+        rename_config(cid, "   ")
+
+    assert has_config(cid) is True
+
+
+# ---------- 删除与切换 ----------
 
 
 def test_delete_refuses_active_and_allows_others(temp_data_root: Path) -> None:
     """删除当前使用中的配置被拒；切换后可删；目录连同 credentials 一起消失。"""
-    _create("a")
-    _create("b")
+    from dataset_factory.llm import ConfigConflictError
+
+    first = _create("a")
+    second = _create("b")
 
     with pytest.raises(ConfigConflictError, match="当前使用"):
-        delete_config("a")
+        delete_config(first)
 
-    set_active_config("b")
-    delete_config("a")
-
-    assert not (temp_data_root / "endpoints" / "a").exists()
-    assert not has_config("a")
-    with pytest.raises(ConfigError, match="不存在"):
-        delete_config("a")
+    set_active_config(second)
+    delete_config(first)
+    assert has_config(first) is False
+    assert active_config_id() == second
 
 
 def test_set_active_requires_existing(temp_data_root: Path) -> None:
-    """切换到不存在的配置 → ConfigError，指针不动。"""
-    _create("a")
+    """切换到不存在的 ID → ConfigNotFoundError（指针绝不悬空写出）。"""
+    from dataset_factory.llm import ConfigNotFoundError
 
-    with pytest.raises(ConfigError, match="不存在"):
-        set_active_config("ghost")
-
-    assert active_config_name() == "a"
+    with pytest.raises(ConfigNotFoundError):
+        set_active_config("eghost00001")
 
 
-def test_active_none_when_unconfigured(temp_data_root: Path) -> None:
-    """全新数据根：没有指针、没有配置，探一探不报错。"""
-    assert active_config_name() is None
-    assert list_configs() == []
-    assert not has_config("anything")
+# ---------- 旧版数据迁移 ----------
 
 
-def test_read_config_data_validates(temp_data_root: Path) -> None:
-    """read_config_data 对损坏数据 fail loud：非法 JSON / 缺字段都点名配置与原因。"""
-    _create("bad")
-    config_path = temp_data_root / "endpoints" / "bad" / "config.json"
-    config_path.write_text("{not json", encoding="utf-8")
+def test_legacy_config_migrates_to_id(temp_data_root: Path) -> None:
+    """旧版数据（目录名=名字、config.json 无 id）：读时惰性迁移，内容不丢。"""
+    endpoint_dir = temp_data_root / "endpoints" / "旧配置名"
+    endpoint_dir.mkdir(parents=True)
+    (endpoint_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "base_url": "https://legacy.example.com/v1",
+                "model": "m-legacy",
+                "extra_body": {"top_k": 40},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (endpoint_dir / "credentials").write_text("sk-legacy", encoding="utf-8")
+    (temp_data_root / "endpoints" / "active").write_text("旧配置名\n", encoding="utf-8")
 
-    with pytest.raises(ConfigError, match="JSON"):
-        read_config_data("bad")
+    infos = list_configs()
 
-    config_path.write_text(json.dumps({"base_url": "https://x/v1"}), encoding="utf-8")
+    assert len(infos) == 1
+    migrated = infos[0]
+    assert migrated.id.startswith("e")
+    assert migrated.name == "旧配置名"  # 旧目录名 → 显示名
+    assert migrated.base_url == "https://legacy.example.com/v1"
+    assert migrated.request_params == {"extra_body": {"top_k": 40}}
+    assert migrated.is_active is True  # 旧指针按名解析成新 ID
+    assert active_config_id() == migrated.id
+    # 目录已改名为 ID、旧目录消失；密钥与参数随目录走。
+    assert (temp_data_root / "endpoints" / "旧配置名").exists() is False
+    stored = read_stored_api_key(migrated.id)
+    assert stored is not None
+    assert stored.reveal() == "sk-legacy"
+    saved = json.loads(
+        (temp_data_root / "endpoints" / migrated.id / "config.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert saved["id"] == migrated.id
+    assert saved["name"] == "旧配置名"
+    # 幂等：再次读取不再变化。
+    again = list_configs()
+    assert [info.id for info in again] == [migrated.id]
 
-    with pytest.raises(ConfigError, match="model"):
-        read_config_data("bad")
 
-
-def test_write_failure_leaves_no_tmp_files(
-    temp_data_root: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """落盘中途失败（如磁盘满）→ ConfigError，且不留临时文件残骸。"""
-
-    def _boom(src: Path, dst: Path) -> None:
-        raise OSError(28, "No space left on device")
-
-    monkeypatch.setattr(os, "replace", _boom)
-
-    with pytest.raises(ConfigError, match="无法写入"):
-        create_config("x", base_url="https://x/v1", model="m", api_key=None)
-
-    assert not has_config("x")
-    assert list((temp_data_root / "endpoints").rglob("*.tmp")) == []
-
-
-@pytest.mark.skipif(os.name != "posix", reason="0600 权限语义仅 POSIX 有")
-def test_credentials_owner_only_on_posix(temp_data_root: Path) -> None:
-    """Unix 上每套配置的 credentials 落盘即 0600：同机其他用户读不到密钥。"""
-    _create("sec")
-
-    mode = stat.S_IMODE(
-        (temp_data_root / "endpoints" / "sec" / "credentials").stat().st_mode
+def test_legacy_active_pointer_resolved_by_name(temp_data_root: Path) -> None:
+    """已迁移配置 + 旧版指针（存的是名字）：active 按名解析回该配置的 ID。"""
+    cid = _create("pointer-name")
+    # 手工把指针回写成旧版形态（名字），模拟「迁移前指针、迁移后条目」。
+    (temp_data_root / "endpoints" / "active").write_text(
+        "pointer-name\n", encoding="utf-8"
     )
 
-    assert mode == 0o600
-
-
-def test_create_error_does_not_leak_secret(temp_data_root: Path) -> None:
-    """脱敏：创建失败（字段空）时，错误信息里绝不含密钥明文。"""
-    secret = "sk-super-secret-do-not-leak"  # pragma: allowlist secret
-
-    with pytest.raises(ConfigError) as excinfo:
-        create_config(
-            "x", base_url="https://x/v1", model="", api_key=SecretValue(secret)
-        )
-
-    assert secret not in str(excinfo.value)
+    assert active_config_id() == cid

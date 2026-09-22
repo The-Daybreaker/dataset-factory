@@ -10,16 +10,16 @@ Try 'root --help' for help.
 $ dsf prompt show
 退出码：2
 ---- 输出 ----
-Usage: root prompt show [OPTIONS] {name}
+Usage: root prompt show [OPTIONS] {ref}
 Try 'root prompt show --help' for help.
 ┌─ Error ──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ Missing argument 'name'.                                                                                             │
+│ Missing argument 'ref'.                                                                                              │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 
 $ dsf prompt show 不存在的提示词
 退出码：1
 ---- 输出 ----
-错误：未找到提示词 '不存在的提示词'；用 list_prompts 查看现有条目。
+错误：提示词 '不存在的提示词' 不存在（或显示名重名不唯一）；用 dsf prompt list 查看各条目的 ID。
 
 $ dsf workdir show missing-id
 退出码：1
@@ -38,13 +38,13 @@ Try 'root batch status --help' for help.
 $ dsf config remove
 退出码：2
 ---- 输出 ----
-Usage: root config remove [OPTIONS] {name}
+Usage: root config remove [OPTIONS] {ref}
 Try 'root config remove --help' for help.
 ┌─ Error ──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ Missing argument 'name'.                                                                                             │
+│ Missing argument 'ref'.                                                                                              │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 
 $ dsf prompt rm 不存在的提示词
-退出码：2
+退出码：1
 ---- 输出 ----
-错误：非交互环境执行此操作必须提供 --yes。
+错误：提示词 '不存在的提示词' 不存在（或显示名重名不唯一）；用 dsf prompt list 查看各条目的 ID。

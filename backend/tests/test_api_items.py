@@ -57,9 +57,9 @@ def env(tmp_path: Path, temp_data_root: Path) -> Env:
         workdir,
         name="一号批",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
     entry = WorkdirRegistry.register(workdir, title="")
     return Env(
@@ -90,9 +90,9 @@ def _add_second_batch(env: Env) -> None:
         env.workdir,
         name="二号批",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
 
 

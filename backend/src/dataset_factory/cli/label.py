@@ -21,12 +21,53 @@ from ..llm import (
     build_completer,
     read_config,
 )
+from ..prompts import PromptNotFoundError, prompt_id_by_display_name, read_prompt
 from ..sessions import SessionError, latest_session_id
+from ..skills import SkillNotFoundError, get_skill, skill_id_by_display_name
 from .errors import DOMAIN_ERRORS, handle_domain_errors
 
 # chat 输入行里附件的轻量语法：`@文件路径 指令`（@ 开头第一个词是附件路径，其余是指令；
 # 图片 / 视频按扩展名区分，视频扩展名集合以 llm 层的 VIDEO_EXTENSIONS 为准）。
 _AT_SYNTAX = re.compile(r"^@(\S+)\s*(.*)$")
+
+
+def _prompt_ref(ref: str) -> str:
+    """--prompt 的引用（ID 或唯一显示名）→ 提示词 ID。
+
+    解析不到走用户错误通道（退出码 1 + stderr 可操作提示），与 CLI 其余错误口径一致。
+    """
+    try:
+        return read_prompt(ref).id
+    except PromptNotFoundError:
+        pass
+    resolved = prompt_id_by_display_name(ref)
+    if resolved is None:
+        typer.secho(
+            f"错误：提示词 {ref!r} 不存在（或显示名重名不唯一）；"
+            "用 dsf prompt list 查看 ID 与现有提示词。",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+    return resolved
+
+
+def _skill_ref(ref: str) -> str:
+    """--skill 的引用（ID 或唯一显示名）→ skill ID（解析不到退出码 1）。"""
+    try:
+        return get_skill(ref).id
+    except SkillNotFoundError:
+        pass
+    resolved = skill_id_by_display_name(ref)
+    if resolved is None:
+        typer.secho(
+            f"错误：skill {ref!r} 不存在（或显示名重名不唯一）；"
+            "用 dsf skill list 查看 ID 与已导入清单。",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+    return resolved
 
 
 def build_engine() -> LabelingEngine:
@@ -47,15 +88,21 @@ def label(
             "--message", "-m", help="打标指令（纯图轮可省，任务说明在基础提示词里）"
         ),
     ] = "",
-    prompt_name: Annotated[
+    prompt_ref: Annotated[
         str | None,
         typer.Option(
-            "--prompt", "-p", help="基础提示词名称；续接已有会话时可省（沿用会话设置）"
+            "--prompt",
+            "-p",
+            help="基础提示词（ID 或唯一显示名）；续接已有会话时可省（沿用会话设置）",
         ),
     ] = None,
-    skill_names: Annotated[
+    skill_refs: Annotated[
         list[str] | None,
-        typer.Option("--skill", "-s", help="启用的 skill（可多次）；缺省沿用会话设置"),
+        typer.Option(
+            "--skill",
+            "-s",
+            help="启用的 skill（ID 或唯一显示名，可多次）；缺省沿用会话设置",
+        ),
     ] = None,
     image: Annotated[
         Path | None, typer.Option("--image", "-i", help="图片文件路径")
@@ -99,8 +146,10 @@ def label(
     )
     result = engine.label(
         session_id=session_id,
-        prompt_name=prompt_name,
-        skill_names=skill_names,
+        prompt_id=_prompt_ref(prompt_ref) if prompt_ref else None,
+        skill_ids=[_skill_ref(item) for item in (skill_refs or [])]
+        if skill_refs
+        else None,
         instruction=message,
         image=image,
         video_bytes=video_bytes,
@@ -127,16 +176,18 @@ def label(
 
 @handle_domain_errors
 def chat(
-    prompt_name: Annotated[
+    prompt_ref: Annotated[
         str | None,
-        typer.Option("--prompt", "-p", help="基础提示词名称；新会话必选，续接可省"),
+        typer.Option(
+            "--prompt", "-p", help="基础提示词（ID 或唯一显示名）；新会话必选，续接可省"
+        ),
     ] = None,
-    skill_names: Annotated[
+    skill_refs: Annotated[
         list[str] | None,
         typer.Option(
             "--skill",
             "-s",
-            help="启用的 skill（可多次）；首轮生效并随会话延续，续接可省",
+            help="启用的 skill（ID 或唯一显示名，可多次）；首轮生效并随会话延续，续接可省",
         ),
     ] = None,
     video_fps: Annotated[
@@ -170,7 +221,7 @@ def chat(
         for item in snapshot.messages[-6:]:
             _print_history_line(item.role, item.text, item.attachment)
         typer.secho(
-            f"当前基础提示词: {snapshot.settings.prompt_name or '（未设置，首轮需 -p 指定）'}",
+            f"当前基础提示词 ID: {snapshot.settings.prompt_id or '（未设置，首轮需 -p 指定）'}",
             fg=typer.colors.YELLOW,
         )
     typer.echo("输入指令开始（附图 / 附视频：@文件路径 指令；退出：Ctrl+D / Ctrl+C）")
@@ -187,8 +238,10 @@ def chat(
             if attachment is not None and attachment.suffix.lower() in VIDEO_EXTENSIONS:
                 result = engine.label(
                     session_id=session_id,
-                    prompt_name=prompt_name,
-                    skill_names=skill_names,
+                    prompt_id=_prompt_ref(prompt_ref) if prompt_ref else None,
+                    skill_ids=[_skill_ref(item) for item in (skill_refs or [])]
+                    if skill_refs
+                    else None,
                     instruction=instruction,
                     video_bytes=_read_chat_video(attachment),
                     video_name=attachment.name,
@@ -201,8 +254,10 @@ def chat(
             else:
                 result = engine.label(
                     session_id=session_id,
-                    prompt_name=prompt_name,
-                    skill_names=skill_names,
+                    prompt_id=_prompt_ref(prompt_ref) if prompt_ref else None,
+                    skill_ids=[_skill_ref(item) for item in (skill_refs or [])]
+                    if skill_refs
+                    else None,
                     instruction=instruction,
                     image=attachment,
                 )
@@ -210,8 +265,8 @@ def chat(
             _report_turn_failure(exc)
             continue
         session_id = result.session_id
-        prompt_name = None  # 首轮落定后由会话设置携带，不再重复传
-        skill_names = None
+        prompt_ref = None  # 首轮落定后由会话设置携带，不再重复传
+        skill_refs = None
         typer.echo(result.caption)
 
 

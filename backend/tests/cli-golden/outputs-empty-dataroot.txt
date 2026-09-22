@@ -6,7 +6,7 @@ $ dsf workdir list
 $ dsf prompt list
 退出码：0
 ---- 输出 ----
-详细描述	通用主力——三到五句自然语言详细描述，覆盖主体到光影风格。
+pFIXEDID123	详细描述	通用主力——三到五句自然语言详细描述，覆盖主体到光影风格。
 
 $ dsf skill list
 退出码：0
@@ -26,6 +26,7 @@ $ dsf strategy list
 $ dsf config show
 退出码：0
 ---- 输出 ----
+配置 ID:  （未配置）
 配置名:   （未配置）
 base_url: （未配置——dsf config add 添加或在 Web 设置页添加）
 model:    （未配置——dsf config add 添加或在 Web 设置页添加）

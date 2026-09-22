@@ -13,7 +13,7 @@ from ..llm import (
     DEFAULT_CONFIG_NAME,
     ConfigError,
     SecretValue,
-    active_config_name,
+    active_config_id,
     create_config,
     describe_config,
     has_config,
@@ -31,6 +31,7 @@ def get_config() -> ConfigResponse:
     """查看当前使用的配置（密钥只报来源与是否已配置，绝不回内容）。"""
     desc = describe_config()
     return ConfigResponse(
+        id=desc.id,
         name=desc.name,
         base_url=desc.base_url,
         model=desc.model,
@@ -50,7 +51,7 @@ def update_config(request: ConfigUpdateRequest) -> None:
     api_key 缺省沿用该配置已存的密钥（Web 表单改 base_url 不必重输密钥）。
     """
     provided = request.api_key.strip() if request.api_key else ""
-    active = active_config_name()
+    active = active_config_id()
     try:
         if active is not None and has_config(active):
             if provided:
@@ -72,13 +73,13 @@ def update_config(request: ConfigUpdateRequest) -> None:
                 status_code=400,
                 detail="未提供 api_key，且当前没有已配置的密钥；请填写 api_key。",
             )
-        create_config(
+        created = create_config(
             DEFAULT_CONFIG_NAME,
             base_url=request.base_url,
             model=request.model,
             api_key=SecretValue(provided),
         )
         # create_config 只在指针缺失时自动激活；指针悬空时这里显式补一次。
-        set_active_config(DEFAULT_CONFIG_NAME)
+        set_active_config(created)
     except ConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -15,10 +15,11 @@ from .errors import (
     PromptParseError,
     PromptTooLargeError,
 )
-from .model import Prompt, dump_prompt, parse_prompt
+from .model import PROMPT_ID_RE, Prompt, dump_prompt, parse_prompt
 from .store import (
     delete_prompt,
     list_prompts,
+    prompt_id_by_display_name,
     read_prompt,
     rename_prompt,
     save_prompt,
@@ -26,6 +27,7 @@ from .store import (
 )
 
 __all__ = [
+    "PROMPT_ID_RE",
     "Prompt",
     "PromptError",
     "PromptExistsError",
@@ -37,6 +39,7 @@ __all__ = [
     "dump_prompt",
     "list_prompts",
     "parse_prompt",
+    "prompt_id_by_display_name",
     "read_prompt",
     "rename_prompt",
     "save_prompt",

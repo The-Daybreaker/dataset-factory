@@ -85,9 +85,9 @@ def batch(temp_data_root: Path, workdir: Path) -> Path:
         workdir,
         name="一号批",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
     return workdir
 
@@ -261,9 +261,9 @@ def test_other_batch_records_do_not_leak(batch: Path) -> None:
         batch,
         name="二号批",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
     _write_run(batch, _RUN_OLD, 2, [_failed("cat_001", "network")])
 
@@ -279,9 +279,9 @@ def test_second_batch_view_is_independent(batch: Path) -> None:
         batch,
         name="二号批",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
     (batch / product_filename(1, "cat_001")).write_text(
         "一号批的描述", encoding="utf-8"
@@ -334,9 +334,9 @@ def test_missing_asset_applies_to_every_batch(batch: Path) -> None:
         batch,
         name="二号批",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
     (batch / "clip_001.mp4").unlink()
 
@@ -372,9 +372,9 @@ def test_other_batch_retry_entries_are_ignored(batch: Path) -> None:
         batch,
         name="二号批",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
     _put_retry_list(
         batch,

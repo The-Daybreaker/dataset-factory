@@ -32,7 +32,7 @@
             "description": "说明文字；library 缺省沿用库策略",
             "title": "Description"
           },
-          "endpoint": {
+          "endpoint_id": {
             "anyOf": [
               {
                 "type": "string"
@@ -41,8 +41,8 @@
                 "type": "null"
               }
             ],
-            "description": "端点配置名（scratch 必填）",
-            "title": "Endpoint"
+            "description": "端点配置 ID（scratch 必填）",
+            "title": "Endpoint Id"
           },
           "id": {
             "anyOf": [
@@ -68,7 +68,7 @@
             "description": "显示名；library 缺省沿用库策略名，scratch 必填",
             "title": "Name"
           },
-          "prompt": {
+          "prompt_id": {
             "anyOf": [
               {
                 "type": "string"
@@ -77,10 +77,10 @@
                 "type": "null"
               }
             ],
-            "description": "基础提示词名（scratch 必填）",
-            "title": "Prompt"
+            "description": "基础提示词 ID（scratch 必填）",
+            "title": "Prompt Id"
           },
-          "skills": {
+          "skill_ids": {
             "anyOf": [
               {
                 "items": {
@@ -92,8 +92,8 @@
                 "type": "null"
               }
             ],
-            "description": "启用 Skill 名清单（scratch 可缺省 = 空）",
-            "title": "Skills"
+            "description": "启用 Skill ID 清单（scratch 可缺省 = 空）",
+            "title": "Skill Ids"
           },
           "type": {
             "description": "新建方式：library（应用库策略）或 scratch（从零配置）",
@@ -407,6 +407,18 @@
             ],
             "title": "Base Url"
           },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "当前使用的配置 ID；未配置为 null",
+            "title": "Id"
+          },
           "key_source": {
             "anyOf": [
               {
@@ -438,6 +450,7 @@
                 "type": "null"
               }
             ],
+            "description": "当前使用的配置显示名；未配置为 null",
             "title": "Name"
           }
         },
@@ -688,6 +701,11 @@
             "title": "Has Api Key",
             "type": "boolean"
           },
+          "id": {
+            "description": "配置 ID（内部稳定身份，目录名即 ID，不随改名变化）",
+            "title": "Id",
+            "type": "string"
+          },
           "is_active": {
             "description": "是否为当前使用的配置",
             "title": "Is Active",
@@ -699,7 +717,7 @@
             "type": "string"
           },
           "name": {
-            "description": "配置名（endpoints/ 下的目录名）",
+            "description": "显示名（可改、允许重名）",
             "title": "Name",
             "type": "string"
           },
@@ -709,6 +727,7 @@
           }
         },
         "required": [
+          "id",
           "name",
           "base_url",
           "model",
@@ -895,12 +914,7 @@
             "title": "Base Url",
             "type": "string"
           },
-          "model": {
-            "description": "模型名",
-            "title": "Model",
-            "type": "string"
-          },
-          "name": {
+          "id": {
             "anyOf": [
               {
                 "type": "string"
@@ -909,8 +923,13 @@
                 "type": "null"
               }
             ],
-            "description": "配置名（回落已存密钥时用它定位）",
-            "title": "Name"
+            "description": "配置 ID（回落该配置已存密钥时用它定位；缺省 = 表单密钥与环境变量通道）",
+            "title": "Id"
+          },
+          "model": {
+            "description": "模型名",
+            "title": "Model",
+            "type": "string"
           },
           "request_params": {
             "anyOf": [
@@ -1742,7 +1761,7 @@
             "title": "Instruction",
             "type": "string"
           },
-          "prompt_name": {
+          "prompt_id": {
             "anyOf": [
               {
                 "type": "string"
@@ -1751,8 +1770,8 @@
                 "type": "null"
               }
             ],
-            "description": "基础提示词名称；续接时缺省沿用会话设置",
-            "title": "Prompt Name"
+            "description": "基础提示词 ID；续接时缺省沿用会话设置",
+            "title": "Prompt Id"
           },
           "session_id": {
             "anyOf": [
@@ -1766,7 +1785,7 @@
             "description": "续接的会话 id；缺省新建",
             "title": "Session Id"
           },
-          "skill_names": {
+          "skill_ids": {
             "anyOf": [
               {
                 "items": {
@@ -1778,8 +1797,8 @@
                 "type": "null"
               }
             ],
-            "description": "启用的 skill 清单；缺省沿用会话设置",
-            "title": "Skill Names"
+            "description": "启用的 skill ID 清单；缺省沿用会话设置",
+            "title": "Skill Ids"
           },
           "strategy_id": {
             "anyOf": [
@@ -1907,6 +1926,32 @@
         "title": "Problem",
         "type": "object"
       },
+      "PromptCreated": {
+        "description": "POST /api/prompts 的响应体（服务端分配 ID）。",
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "description": "提示词 ID（内部稳定身份，不随改名变化）",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "description": "显示名（可改、允许重名）",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description"
+        ],
+        "title": "PromptCreated",
+        "type": "object"
+      },
       "PromptFull": {
         "description": "提示词全文。",
         "properties": {
@@ -1918,12 +1963,19 @@
             "title": "Description",
             "type": "string"
           },
+          "id": {
+            "description": "提示词 ID（内部稳定身份，不随改名变化）",
+            "title": "Id",
+            "type": "string"
+          },
           "name": {
+            "description": "显示名（可改、允许重名）",
             "title": "Name",
             "type": "string"
           }
         },
         "required": [
+          "id",
           "name",
           "description",
           "body"
@@ -1938,12 +1990,19 @@
             "title": "Description",
             "type": "string"
           },
+          "id": {
+            "description": "提示词 ID（内部稳定身份，不随改名变化）",
+            "title": "Id",
+            "type": "string"
+          },
           "name": {
+            "description": "显示名（可改、允许重名）",
             "title": "Name",
             "type": "string"
           }
         },
         "required": [
+          "id",
           "name",
           "description"
         ],
@@ -1951,9 +2010,10 @@
         "type": "object"
       },
       "PromptRenameRequest": {
-        "description": "POST /api/prompts/{name}/rename 的请求体。",
+        "description": "POST /api/prompts/{id}/rename 的请求体。",
         "properties": {
           "new_name": {
+            "description": "新显示名（可改、允许重名）",
             "title": "New Name",
             "type": "string"
           }
@@ -1965,7 +2025,7 @@
         "type": "object"
       },
       "PromptSaveRequest": {
-        "description": "PUT /api/prompts/{name} 的请求体。",
+        "description": "POST /api/prompts 与 PUT /api/prompts/{id} 的请求体。",
         "properties": {
           "body": {
             "title": "Body",
@@ -1974,6 +2034,12 @@
           "description": {
             "default": "",
             "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "description": "显示名；缺省 = 沿用现有显示名",
+            "title": "Name",
             "type": "string"
           }
         },
@@ -2585,9 +2651,9 @@
         "type": "object"
       },
       "SettingsView": {
-        "description": "会话当前设置。",
+        "description": "会话当前设置（引用存各资产的稳定 ID）。",
         "properties": {
-          "prompt_name": {
+          "prompt_id": {
             "anyOf": [
               {
                 "type": "string"
@@ -2596,19 +2662,19 @@
                 "type": "null"
               }
             ],
-            "title": "Prompt Name"
+            "title": "Prompt Id"
           },
-          "skill_names": {
+          "skill_ids": {
             "items": {
               "type": "string"
             },
-            "title": "Skill Names",
+            "title": "Skill Ids",
             "type": "array"
           }
         },
         "required": [
-          "prompt_name",
-          "skill_names"
+          "prompt_id",
+          "skill_ids"
         ],
         "title": "SettingsView",
         "type": "object"
@@ -2691,7 +2757,7 @@
         "type": "object"
       },
       "SkillFilesResponse": {
-        "description": "GET /api/skills/{name}/files 的响应体。",
+        "description": "GET /api/skills/{id}/files 的响应体。",
         "properties": {
           "files": {
             "items": {
@@ -2700,12 +2766,17 @@
             "title": "Files",
             "type": "array"
           },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
           "name": {
             "title": "Name",
             "type": "string"
           }
         },
         "required": [
+          "id",
           "name",
           "files"
         ],
@@ -2738,6 +2809,11 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "id": {
+            "description": "新 skill 的稳定 ID（后续寻址用）",
+            "title": "Id",
+            "type": "string"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -2748,6 +2824,7 @@
           }
         },
         "required": [
+          "id",
           "name",
           "description",
           "enabled",
@@ -2772,12 +2849,19 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "id": {
+            "description": "skill ID（内部稳定身份，不随改名变化）",
+            "title": "Id",
+            "type": "string"
+          },
           "name": {
+            "description": "显示名（取自 SKILL.md frontmatter，可改、允许重名）",
             "title": "Name",
             "type": "string"
           }
         },
         "required": [
+          "id",
           "name",
           "description",
           "enabled",
@@ -2787,10 +2871,10 @@
         "type": "object"
       },
       "SkillRenameRequest": {
-        "description": "POST /api/skills/{name}/rename 的请求体。",
+        "description": "POST /api/skills/{id}/rename 的请求体。",
         "properties": {
           "new_name": {
-            "description": "目标名称（目录名即名称，校验规则与导入相同）",
+            "description": "新显示名（可改、允许重名）",
             "title": "New Name",
             "type": "string"
           }
@@ -2802,7 +2886,7 @@
         "type": "object"
       },
       "SnapshotEndpointView": {
-        "description": "快照端点的公开配置白名单，不返回凭据字段。",
+        "description": "快照端点的公开配置白名单，不返回凭据字段。\n\nid 仅 ID 化（2026-09-23）之后建的批次携带——旧快照没有这个键，视图按 None 呈现。",
         "properties": {
           "api_format": {
             "title": "Api Format",
@@ -2811,6 +2895,17 @@
           "base_url": {
             "title": "Base Url",
             "type": "string"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
           },
           "model": {
             "title": "Model",
@@ -2868,7 +2963,7 @@
       "StrategyRebindRequest": {
         "description": "POST /api/strategies/{id}/rebind 的请求体：缺失引用的「重新指定」。\n\n只更新提供的引用位，其余保持不变——对置灰策略来说，健康的引用没有理由\n被 UI 一起重交一遍。至少提供一个字段。",
         "properties": {
-          "endpoint": {
+          "endpoint_id": {
             "anyOf": [
               {
                 "type": "string"
@@ -2877,10 +2972,10 @@
                 "type": "null"
               }
             ],
-            "description": "新的端点配置名；缺省 = 不变",
-            "title": "Endpoint"
+            "description": "新的端点配置 ID；缺省 = 不变",
+            "title": "Endpoint Id"
           },
-          "prompt": {
+          "prompt_id": {
             "anyOf": [
               {
                 "type": "string"
@@ -2889,10 +2984,10 @@
                 "type": "null"
               }
             ],
-            "description": "新的基础提示词名；缺省 = 不变",
-            "title": "Prompt"
+            "description": "新的基础提示词 ID；缺省 = 不变",
+            "title": "Prompt Id"
           },
-          "skills": {
+          "skill_ids": {
             "anyOf": [
               {
                 "items": {
@@ -2904,8 +2999,8 @@
                 "type": "null"
               }
             ],
-            "description": "新的 Skill 清单（整体替换）；缺省 = 不变",
-            "title": "Skills"
+            "description": "新的 Skill ID 清单（整体替换）；缺省 = 不变",
+            "title": "Skill Ids"
           }
         },
         "title": "StrategyRebindRequest",
@@ -2953,9 +3048,9 @@
             "title": "Description",
             "type": "string"
           },
-          "endpoint": {
-            "description": "端点配置名（必须已存在）",
-            "title": "Endpoint",
+          "endpoint_id": {
+            "description": "端点配置 ID（必须已存在）",
+            "title": "Endpoint Id",
             "type": "string"
           },
           "name": {
@@ -2963,30 +3058,30 @@
             "title": "Name",
             "type": "string"
           },
-          "prompt": {
-            "description": "基础提示词名（必须已存在）",
-            "title": "Prompt",
+          "prompt_id": {
+            "description": "基础提示词 ID（必须已存在）",
+            "title": "Prompt Id",
             "type": "string"
           },
-          "skills": {
-            "description": "启用 Skill 名清单（必须已存在）",
+          "skill_ids": {
+            "description": "启用 Skill ID 清单（必须已存在）",
             "items": {
               "type": "string"
             },
-            "title": "Skills",
+            "title": "Skill Ids",
             "type": "array"
           }
         },
         "required": [
           "name",
-          "endpoint",
-          "prompt"
+          "endpoint_id",
+          "prompt_id"
         ],
         "title": "StrategySaveRequest",
         "type": "object"
       },
       "StrategyView": {
-        "description": "库策略条目——列表 / 详情 / 创建 / 更新的响应体。\n\navailable = 引用健康度（现查）：任一引用（端点配置 / 提示词 / Skill）已不存在\n则为 False，missing_refs 给出缺失清单（界面置灰、禁止应用、走重新指定）。",
+        "description": "库策略条目——列表 / 详情 / 创建 / 更新的响应体。\n\navailable = 引用健康度（现查）：任一引用（端点配置 / 提示词 / Skill）已不存在\n则为 False，missing_refs 给出缺失清单（界面置灰、禁止应用、走重新指定）。\n引用一律存各资产的稳定 ID（2026-09-23 ID 化；显示名由前端从各资产列表现查）。",
         "properties": {
           "available": {
             "description": "引用健康度：全部引用现存在才可用",
@@ -3008,9 +3103,9 @@
             "title": "Description",
             "type": "string"
           },
-          "endpoint": {
-            "description": "端点配置名引用",
-            "title": "Endpoint",
+          "endpoint_id": {
+            "description": "端点配置 ID 引用",
+            "title": "Endpoint Id",
             "type": "string"
           },
           "id": {
@@ -3031,17 +3126,17 @@
             "title": "Name",
             "type": "string"
           },
-          "prompt": {
-            "description": "基础提示词名引用",
-            "title": "Prompt",
+          "prompt_id": {
+            "description": "基础提示词 ID 引用",
+            "title": "Prompt Id",
             "type": "string"
           },
-          "skills": {
-            "description": "启用 Skill 名引用清单（有序）",
+          "skill_ids": {
+            "description": "启用 Skill ID 引用清单（有序）",
             "items": {
               "type": "string"
             },
-            "title": "Skills",
+            "title": "Skill Ids",
             "type": "array"
           },
           "updated_at": {
@@ -3054,9 +3149,9 @@
           "id",
           "name",
           "description",
-          "endpoint",
-          "prompt",
-          "skills",
+          "endpoint_id",
+          "prompt_id",
+          "skill_ids",
           "available",
           "missing_refs",
           "body_chars",
@@ -3502,17 +3597,7 @@
                 }
               }
             },
-            "description": "名称不合法 / 字段为空 / API 格式暂未支持"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "已存在同名（不区分大小写）配置"
+            "description": "显示名不合法 / 字段为空 / API 格式暂未支持"
           },
           "422": {
             "content": {
@@ -3573,17 +3658,17 @@
         ]
       }
     },
-    "/api/endpoints/{name}": {
+    "/api/endpoints/{cid}": {
       "delete": {
         "description": "删除一套端点配置（连同其密钥文件）。",
-        "operationId": "remove_api_endpoints__name__delete",
+        "operationId": "remove_api_endpoints__cid__delete",
         "parameters": [
           {
             "in": "path",
-            "name": "name",
+            "name": "cid",
             "required": true,
             "schema": {
-              "title": "Name",
+              "title": "Cid",
               "type": "string"
             }
           }
@@ -3629,15 +3714,15 @@
         ]
       },
       "put": {
-        "description": "更新一套配置的端点字段；api_key 缺省沿用已存密钥、参数块缺省沿用已有参数。\n\n带 ``new_name`` 时改名字段更新成功之后执行——参数校验失败时名字不动，报错不会\n引用一个不存在的新名字。",
-        "operationId": "update_api_endpoints__name__put",
+        "description": "更新一套配置的端点字段；api_key 缺省沿用已存密钥、参数块缺省沿用已有参数。\n\n带 ``new_name`` 时改显示名（只写 config.json 的 name 字段；显示名允许重名，\n无冲突语义——身份是 ID）。",
+        "operationId": "update_api_endpoints__cid__put",
         "parameters": [
           {
             "in": "path",
-            "name": "name",
+            "name": "cid",
             "required": true,
             "schema": {
-              "title": "Name",
+              "title": "Cid",
               "type": "string"
             }
           }
@@ -3671,7 +3756,7 @@
                 }
               }
             },
-            "description": "字段为空 / API 格式暂未支持 / 新名称不合法"
+            "description": "字段为空 / API 格式暂未支持 / 显示名不合法"
           },
           "404": {
             "content": {
@@ -3682,16 +3767,6 @@
               }
             },
             "description": "配置不存在"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "新名称与既有配置重名（不区分大小写）"
           },
           "422": {
             "content": {
@@ -3710,17 +3785,17 @@
         ]
       }
     },
-    "/api/endpoints/{name}/activate": {
+    "/api/endpoints/{cid}/activate": {
       "post": {
         "description": "把一套配置设为当前使用；对新请求立即生效。",
-        "operationId": "activate_api_endpoints__name__activate_post",
+        "operationId": "activate_api_endpoints__cid__activate_post",
         "parameters": [
           {
             "in": "path",
-            "name": "name",
+            "name": "cid",
             "required": true,
             "schema": {
-              "title": "Name",
+              "title": "Cid",
               "type": "string"
             }
           }
@@ -4197,19 +4272,59 @@
         "tags": [
           "提示词库"
         ]
+      },
+      "post": {
+        "description": "新建一条提示词（服务端分配 ID）。",
+        "operationId": "create_api_prompts_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromptSaveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromptCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create",
+        "tags": [
+          "提示词库"
+        ]
       }
     },
-    "/api/prompts/{name}": {
+    "/api/prompts/{pid}": {
       "delete": {
         "description": "删除提示词。",
-        "operationId": "remove_api_prompts__name__delete",
+        "operationId": "remove_api_prompts__pid__delete",
         "parameters": [
           {
             "in": "path",
-            "name": "name",
+            "name": "pid",
             "required": true,
             "schema": {
-              "title": "Name",
+              "title": "Pid",
               "type": "string"
             }
           }
@@ -4246,14 +4361,14 @@
       },
       "get": {
         "description": "读某条提示词全文。",
-        "operationId": "get_one_api_prompts__name__get",
+        "operationId": "get_one_api_prompts__pid__get",
         "parameters": [
           {
             "in": "path",
-            "name": "name",
+            "name": "pid",
             "required": true,
             "schema": {
-              "title": "Name",
+              "title": "Pid",
               "type": "string"
             }
           }
@@ -4306,15 +4421,15 @@
         ]
       },
       "put": {
-        "description": "保存提示词（不存在即新建、已存在即覆盖——旧版进 _history 滚动备份）。",
-        "operationId": "save_api_prompts__name__put",
+        "description": "覆盖保存提示词全文（旧版进 _history 滚动备份；显示名一并更新）。",
+        "operationId": "save_api_prompts__pid__put",
         "parameters": [
           {
             "in": "path",
-            "name": "name",
+            "name": "pid",
             "required": true,
             "schema": {
-              "title": "Name",
+              "title": "Pid",
               "type": "string"
             }
           }
@@ -4341,7 +4456,17 @@
                 }
               }
             },
-            "description": "名称不合法（含路径分隔符等）"
+            "description": "显示名不合法"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "提示词不存在"
           },
           "413": {
             "content": {
@@ -4370,17 +4495,17 @@
         ]
       }
     },
-    "/api/prompts/{name}/rename": {
+    "/api/prompts/{pid}/rename": {
       "post": {
-        "description": "重命名提示词（改文件名）；历史备份随改名迁移。",
-        "operationId": "rename_api_prompts__name__rename_post",
+        "description": "改显示名（只写 frontmatter 的 name 字段；引用存 ID、不受影响）。",
+        "operationId": "rename_api_prompts__pid__rename_post",
         "parameters": [
           {
             "in": "path",
-            "name": "name",
+            "name": "pid",
             "required": true,
             "schema": {
-              "title": "Name",
+              "title": "Pid",
               "type": "string"
             }
           }
@@ -4407,7 +4532,7 @@
                 }
               }
             },
-            "description": "新名称不合法（含路径分隔符等）"
+            "description": "新名称不合法"
           },
           "404": {
             "content": {
@@ -4418,16 +4543,6 @@
               }
             },
             "description": "要改名的提示词不存在"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "新名称的提示词已存在"
           },
           "422": {
             "content": {
@@ -4887,7 +5002,7 @@
     },
     "/api/skills/import": {
       "post": {
-        "description": "从本机路径导入 skill（默认启用）：目录整包复制；单个文件按 SKILL.md 单文件导入。\n\n目录源走 agentskills.io 标准整包复制；指向一个 ``.md`` 文件时视为「无文件夹结构的\n单文件 skill」——文件整体按 SKILL.md 交付，名称 / 描述取自它的 frontmatter。",
+        "description": "从本机路径导入 skill（默认启用）：目录整包复制；单个文件按 SKILL.md 单文件导入。\n\n目录源走 agentskills.io 标准整包复制；指向一个 ``.md`` 文件时视为「无文件夹结构的\n单文件 skill」——文件整体按 SKILL.md 交付，名称 / 描述取自它的 frontmatter。\n同显示名的包可并存（身份是 ID，导入不再拒绝重名）。",
         "operationId": "import_one_api_skills_import_post",
         "requestBody": {
           "content": {
@@ -4919,16 +5034,6 @@
               }
             },
             "description": "路径不存在 / 格式不合法"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "同名 skill 已存在（重名不合并）"
           },
           "422": {
             "content": {
@@ -4982,16 +5087,6 @@
             },
             "description": "上传内容不合法（缺 SKILL.md / 文件名穿越 / 格式非法）"
           },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "同名 skill 已存在（重名不合并）"
-          },
           "422": {
             "content": {
               "application/json": {
@@ -5009,17 +5104,17 @@
         ]
       }
     },
-    "/api/skills/{name}": {
+    "/api/skills/{sid}": {
       "delete": {
         "description": "删除 skill（整目录移除）。",
-        "operationId": "remove_api_skills__name__delete",
+        "operationId": "remove_api_skills__sid__delete",
         "parameters": [
           {
             "in": "path",
-            "name": "name",
+            "name": "sid",
             "required": true,
             "schema": {
-              "title": "Name",
+              "title": "Sid",
               "type": "string"
             }
           }
@@ -5055,17 +5150,17 @@
         ]
       }
     },
-    "/api/skills/{name}/disable": {
+    "/api/skills/{sid}/disable": {
       "post": {
         "description": "停用 skill（保留在库中，打标不注入）。",
-        "operationId": "disable_api_skills__name__disable_post",
+        "operationId": "disable_api_skills__sid__disable_post",
         "parameters": [
           {
             "in": "path",
-            "name": "name",
+            "name": "sid",
             "required": true,
             "schema": {
-              "title": "Name",
+              "title": "Sid",
               "type": "string"
             }
           }
@@ -5101,17 +5196,17 @@
         ]
       }
     },
-    "/api/skills/{name}/enable": {
+    "/api/skills/{sid}/enable": {
       "post": {
         "description": "启用 skill。",
-        "operationId": "enable_api_skills__name__enable_post",
+        "operationId": "enable_api_skills__sid__enable_post",
         "parameters": [
           {
             "in": "path",
-            "name": "name",
+            "name": "sid",
             "required": true,
             "schema": {
-              "title": "Name",
+              "title": "Sid",
               "type": "string"
             }
           }
@@ -5147,17 +5242,17 @@
         ]
       }
     },
-    "/api/skills/{name}/files": {
+    "/api/skills/{sid}/files": {
       "get": {
         "description": "列出技能包内文件（角色标注：SKILL.md 与 references/ 可预览，assets / scripts 灰显占位）。",
-        "operationId": "list_package_files_api_skills__name__files_get",
+        "operationId": "list_package_files_api_skills__sid__files_get",
         "parameters": [
           {
             "in": "path",
-            "name": "name",
+            "name": "sid",
             "required": true,
             "schema": {
-              "title": "Name",
+              "title": "Sid",
               "type": "string"
             }
           }
@@ -5200,17 +5295,17 @@
         ]
       }
     },
-    "/api/skills/{name}/files/{path}": {
+    "/api/skills/{sid}/files/{path}": {
       "get": {
         "description": "读技能包内一个可预览文件的文本内容（UTF-8；仅 SKILL.md 与 references/ 开放）。",
-        "operationId": "read_package_file_api_skills__name__files__path__get",
+        "operationId": "read_package_file_api_skills__sid__files__path__get",
         "parameters": [
           {
             "in": "path",
-            "name": "name",
+            "name": "sid",
             "required": true,
             "schema": {
-              "title": "Name",
+              "title": "Sid",
               "type": "string"
             }
           },
@@ -5273,14 +5368,14 @@
       },
       "put": {
         "description": "写回现有技能文本文件，SKILL.md 同时校验其 frontmatter。",
-        "operationId": "save_package_file_api_skills__name__files__path__put",
+        "operationId": "save_package_file_api_skills__sid__files__path__put",
         "parameters": [
           {
             "in": "path",
-            "name": "name",
+            "name": "sid",
             "required": true,
             "schema": {
-              "title": "Name",
+              "title": "Sid",
               "type": "string"
             }
           },
@@ -5362,17 +5457,17 @@
         ]
       }
     },
-    "/api/skills/{name}/rename": {
+    "/api/skills/{sid}/rename": {
       "post": {
-        "description": "重命名 skill：目录改名，SKILL.md frontmatter 的 name 同步改写。",
-        "operationId": "rename_api_skills__name__rename_post",
+        "description": "改显示名（只写 SKILL.md frontmatter 的 name 字段；引用存 ID、不受影响）。",
+        "operationId": "rename_api_skills__sid__rename_post",
         "parameters": [
           {
             "in": "path",
-            "name": "name",
+            "name": "sid",
             "required": true,
             "schema": {
-              "title": "Name",
+              "title": "Sid",
               "type": "string"
             }
           }
@@ -5400,16 +5495,6 @@
               }
             },
             "description": "skill 不存在"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "新名称已被占用"
           },
           "422": {
             "content": {

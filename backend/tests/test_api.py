@@ -30,7 +30,7 @@ from dataset_factory.llm import (
     VideoPart,
     read_stored_api_key,
 )
-from dataset_factory.prompts import Prompt, save_prompt
+from dataset_factory.prompts import Prompt, read_prompt, save_prompt
 from dataset_factory.sessions import list_sessions
 
 from .conftest import FakeCompleter
@@ -70,7 +70,7 @@ def test_label_first_turn(client: TestClient, fake_engine: FakeCompleter) -> Non
     _save_prompt("h3", "你是打标助手。")
 
     response = client.post(
-        "/api/label", json={"prompt_name": "h3", "instruction": "打标"}
+        "/api/label", json={"prompt_id": "h3", "instruction": "打标"}
     )
 
     assert response.status_code == 200
@@ -89,7 +89,7 @@ def test_label_with_data_url_image(
     response = client.post(
         "/api/label",
         json={
-            "prompt_name": "h3",
+            "prompt_id": "h3",
             "instruction": "描述",
             "image_base64": data_url,
             "image_name": "cat.png",
@@ -111,7 +111,7 @@ def test_session_attachment_serves_media_content_type(
     created = client.post(
         "/api/label",
         json={
-            "prompt_name": "h3",
+            "prompt_id": "h3",
             "instruction": "描述",
             "image_base64": data_url,
             "image_name": "cat.png",
@@ -141,9 +141,7 @@ def test_session_attachment_serves_media_content_type(
 def test_label_resume_iterates(client: TestClient, fake_engine: FakeCompleter) -> None:
     """带 session_id 续接：第二轮带历史（迭代改写）。"""
     _save_prompt("h3", "你是打标助手。")
-    first = client.post(
-        "/api/label", json={"prompt_name": "h3", "instruction": "第一轮"}
-    )
+    first = client.post("/api/label", json={"prompt_id": "h3", "instruction": "第一轮"})
     session_id = first.json()["session_id"]
 
     second = client.post(
@@ -161,7 +159,7 @@ def test_label_empty_turn_is_400(
     """无指令无图：400 + 可操作错误。"""
     _save_prompt("h3", "你是打标助手。")
 
-    response = client.post("/api/label", json={"prompt_name": "h3"})
+    response = client.post("/api/label", json={"prompt_id": "h3"})
 
     assert response.status_code == 400
     assert "内容" in response.json()["detail"]
@@ -175,7 +173,7 @@ def test_label_bad_base64_is_400(
 
     response = client.post(
         "/api/label",
-        json={"prompt_name": "h3", "instruction": "x", "image_base64": "!!!not-base64"},
+        json={"prompt_id": "h3", "instruction": "x", "image_base64": "!!!not-base64"},
     )
 
     assert response.status_code == 400
@@ -186,7 +184,7 @@ def test_label_unknown_prompt_is_404(
 ) -> None:
     """提示词不存在：404。"""
     response = client.post(
-        "/api/label", json={"prompt_name": "不存在", "instruction": "x"}
+        "/api/label", json={"prompt_id": "不存在", "instruction": "x"}
     )
 
     assert response.status_code == 404
@@ -196,7 +194,7 @@ def test_label_missing_config_is_400(client: TestClient) -> None:
     """未配置端点：400（ConfigError 映射，提示先配置；不走假引擎——ConfigError 来自真实装配）。"""
     _save_prompt("h3", "你是打标助手。")
 
-    response = client.post("/api/label", json={"prompt_name": "h3", "instruction": "x"})
+    response = client.post("/api/label", json={"prompt_id": "h3", "instruction": "x"})
 
     assert response.status_code == 400
     assert "config" in response.json()["detail"]
@@ -207,7 +205,7 @@ def test_label_validation_error_is_422(
 ) -> None:
     """请求字段类型错（skill_names 传字符串）：pydantic 自动 422。"""
     response = client.post(
-        "/api/label", json={"prompt_name": "h3", "skill_names": "不是列表"}
+        "/api/label", json={"prompt_id": "h3", "skill_ids": "不是列表"}
     )
 
     assert response.status_code == 422
@@ -225,16 +223,17 @@ def test_sessions_latest_and_get_by_id(
 ) -> None:
     """打一轮后：latest 与按 id 查询都返回快照（设置 + 历史）。"""
     _save_prompt("h3", "你是打标助手。")
-    label = client.post(
-        "/api/label", json={"prompt_name": "h3", "instruction": "描述图"}
-    )
+    label = client.post("/api/label", json={"prompt_id": "h3", "instruction": "描述图"})
     session_id = label.json()["session_id"]
 
     latest = client.get("/api/sessions/latest")
     by_id = client.get(f"/api/sessions/{session_id}")
 
     assert latest.status_code == 200
-    assert latest.json()["settings"] == {"prompt_name": "h3", "skill_names": []}
+    assert latest.json()["settings"] == {
+        "prompt_id": read_prompt("h3").id,
+        "skill_ids": [],
+    }
     assert latest.json()["messages"][0]["text"] == "描述图"
     assert by_id.status_code == 200
     assert by_id.json()["session_id"] == session_id
@@ -250,22 +249,25 @@ def test_sessions_unknown_is_404(
 
 
 def test_prompts_crud(client: TestClient) -> None:
-    """提示词 CRUD：put 新建 → list/get → put 覆盖 → delete → 404。"""
-    put = client.put(
-        "/api/prompts/h3", json={"description": "视频打标", "body": "你是打标助手。"}
+    """提示词 CRUD：post 新建（服务端分配 ID）→ list/get → put 覆盖 → delete → 404。"""
+    created = client.post(
+        "/api/prompts",
+        json={"name": "h3", "description": "视频打标", "body": "你是打标助手。"},
     )
-    listing = client.get("/api/prompts")
-    full = client.get("/api/prompts/h3")
-    put_again = client.put(
-        "/api/prompts/h3", json={"description": "改", "body": "新版正文"}
-    )
-    full_again = client.get("/api/prompts/h3")
-    removed = client.delete("/api/prompts/h3")
-    missing = client.get("/api/prompts/h3")
+    pid = created.json()["id"]
 
-    assert put.status_code == 204
+    listing = client.get("/api/prompts")
+    full = client.get(f"/api/prompts/{pid}")
+    put_again = client.put(
+        f"/api/prompts/{pid}", json={"description": "改", "body": "新版正文"}
+    )
+    full_again = client.get(f"/api/prompts/{pid}")
+    removed = client.delete(f"/api/prompts/{pid}")
+    missing = client.get(f"/api/prompts/{pid}")
+
+    assert created.status_code == 201
     assert listing.status_code == 200
-    assert listing.json() == [{"name": "h3", "description": "视频打标"}]
+    assert listing.json() == [{"id": pid, "name": "h3", "description": "视频打标"}]
     assert full.json()["body"] == "你是打标助手。"
     assert put_again.status_code == 204
     assert full_again.json()["body"] == "新版正文"
@@ -274,28 +276,26 @@ def test_prompts_crud(client: TestClient) -> None:
 
 
 def test_prompts_rename(client: TestClient) -> None:
-    """rename：204 且旧名 404、新名可读；撞名 409；源不存在 404。"""
-    client.put("/api/prompts/old", json={"description": "d", "body": "正文"})
-    client.put("/api/prompts/other", json={"description": "", "body": "x"})
+    """rename：204 且显示名更新、ID 不变（显示名允许重名，无冲突语义）；不存在 404。"""
+    pid = client.post(
+        "/api/prompts", json={"name": "old", "description": "d", "body": "正文"}
+    ).json()["id"]
 
-    renamed = client.post("/api/prompts/old/rename", json={"new_name": "new"})
-    old_gone = client.get("/api/prompts/old")
-    new_full = client.get("/api/prompts/new")
-    conflict = client.post("/api/prompts/new/rename", json={"new_name": "other"})
+    renamed = client.post(f"/api/prompts/{pid}/rename", json={"new_name": "new"})
+    new_full = client.get(f"/api/prompts/{pid}")
+    by_new_name = client.get("/api/prompts/new")
     missing = client.post("/api/prompts/ghost/rename", json={"new_name": "z"})
 
     assert renamed.status_code == 204
-    assert old_gone.status_code == 404
-    assert new_full.status_code == 200
-    assert new_full.json()["body"] == "正文"
-    assert conflict.status_code == 409
+    assert new_full.json()["name"] == "new"
+    assert by_new_name.json()["id"] == pid
     assert missing.status_code == 404
 
 
 def test_prompts_invalid_name_is_400(client: TestClient) -> None:
-    """名称含非法字符（Windows 禁字符 :）：400。"""
-    response = client.put(
-        "/api/prompts/bad%3Aname", json={"description": "", "body": "x"}
+    """显示名非法（纯空白）：400。"""
+    response = client.post(
+        "/api/prompts", json={"name": "   ", "description": "", "body": "x"}
     )
 
     assert response.status_code == 400
@@ -374,39 +374,36 @@ def test_skills_list_degrades_corrupt_package(
 
 
 def test_skill_rename_roundtrip_and_conflict(client: TestClient) -> None:
-    """改名：204 + 列表出现新名（frontmatter 同步）；撞名 409、旧名 404。"""
-    client.post("/api/skills/import", json={"path": str(_SKILL_PACK)})
+    """改名：204 + 列表出现新名（frontmatter 同步）、ID 不变；显示名允许重名；不存在 404。"""
+    sid = client.post("/api/skills/import", json={"path": str(_SKILL_PACK)}).json()[
+        "id"
+    ]
 
     renamed = client.post(
-        "/api/skills/example-caption-skill/rename", json={"new_name": "renamed-skill"}
+        f"/api/skills/{sid}/rename", json={"new_name": "renamed-skill"}
     )
     assert renamed.status_code == 204
-    names = {item["name"] for item in client.get("/api/skills").json()}
-    assert names == {"renamed-skill"}
+    listing = client.get("/api/skills").json()
+    assert [item["name"] for item in listing] == ["renamed-skill"]
+    assert listing[0]["id"] == sid
 
-    conflict = client.post(
-        "/api/skills/renamed-skill/rename", json={"new_name": "renamed-skill"}
-    )
-    assert conflict.status_code == 204  # 同名 = 无操作，不算错误
-
-    client.post("/api/skills/import", json={"path": str(_SKILL_PACK)})
-    dup = client.post(
-        "/api/skills/renamed-skill/rename",
-        json={"new_name": "example-caption-skill"},
-    )
-    assert dup.status_code == 409
+    # 同名改名 = 无操作，不算错误（显示名允许重名，身份是 ID）。
+    same = client.post(f"/api/skills/{sid}/rename", json={"new_name": "renamed-skill"})
+    assert same.status_code == 204
 
     missing = client.post("/api/skills/ghost/rename", json={"new_name": "whatever"})
     assert missing.status_code == 404
 
 
-def test_skills_import_conflict_is_409(client: TestClient) -> None:
-    """重复导入同名 skill：409（重名不合并）。"""
-    client.post("/api/skills/import", json={"path": str(_SKILL_PACK)})
+def test_skills_import_duplicate_names_allowed(client: TestClient) -> None:
+    """重复导入同名 skill：各自分配新 ID、并存（同显示名可并存，身份是 ID）。"""
+    first = client.post("/api/skills/import", json={"path": str(_SKILL_PACK)})
+    second = client.post("/api/skills/import", json={"path": str(_SKILL_PACK)})
 
-    response = client.post("/api/skills/import", json={"path": str(_SKILL_PACK)})
-
-    assert response.status_code == 409
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["id"] != second.json()["id"]
+    assert len(client.get("/api/skills").json()) == 2
 
 
 def test_skills_import_bad_path_is_400(client: TestClient) -> None:
@@ -428,7 +425,9 @@ def test_skills_import_single_file(client: TestClient, tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert response.json()["name"] == "single-file-skill"
-    listing = client.get("/api/skills/single-file-skill/files").json()
+    sid = response.json()["id"]
+    listing = client.get(f"/api/skills/{sid}/files").json()
+    assert listing["id"] == sid
     assert [item["path"] for item in listing["files"]] == ["SKILL.md"]
 
 
@@ -439,6 +438,7 @@ def test_config_get_empty(client: TestClient) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body == {
+        "id": None,
         "name": None,
         "base_url": None,
         "model": None,
@@ -524,7 +524,10 @@ def test_endpoints_create_and_list(client: TestClient) -> None:
     current = client.get("/api/config")
 
     assert response.status_code == 201
-    assert response.json() == {
+    created = response.json()
+    assert created["id"]
+    assert created == {
+        "id": created["id"],
         "name": "siliconflow",
         "base_url": "https://api.example.com/v1",
         "model": "m1",
@@ -545,25 +548,31 @@ def test_endpoints_create_and_list(client: TestClient) -> None:
     assert current.json()["name"] == "siliconflow"
 
 
-def test_endpoints_create_duplicate_conflict_409(client: TestClient) -> None:
-    """重名（不区分大小写）：409 冲突。"""
-    client.post(
+def test_endpoints_create_duplicate_display_name_allowed(client: TestClient) -> None:
+    """同显示名（不区分大小写）可并存：各自有独立 ID（身份是 ID）。"""
+    first = client.post(
         "/api/endpoints",
         json={"name": "Alpha", "base_url": "https://a/v1", "model": "m"},
     )
-    response = client.post(
+    second = client.post(
         "/api/endpoints",
         json={"name": "alpha", "base_url": "https://b/v1", "model": "m"},
     )
 
-    assert response.status_code == 409
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["id"] != second.json()["id"]
+    names = sorted(
+        item["name"].casefold() for item in client.get("/api/endpoints").json()
+    )
+    assert names == ["alpha", "alpha"]
 
 
 def test_endpoints_create_invalid_name_400(client: TestClient) -> None:
-    """非法名称（含路径分隔符）：400。"""
+    """显示名非法（纯空白）：400（路径分隔符等约束随 ID 化取消）。"""
     response = client.post(
         "/api/endpoints",
-        json={"name": "a/b", "base_url": "https://a/v1", "model": "m"},
+        json={"name": "   ", "base_url": "https://a/v1", "model": "m"},
     )
 
     assert response.status_code == 400
@@ -662,37 +671,28 @@ def test_endpoints_rename_via_put(client: TestClient) -> None:
     assert names == ["production"]
 
 
-def test_endpoints_rename_conflict_409(client: TestClient) -> None:
-    """新名与既有配置重名（不区分大小写）：409。
-
-    顺序是「字段更新成功 → 改名」：字段改动已落盘、名字保持旧名（参数校验失败
-    不动名字），前端据此提示换名重试。
-    """
-    client.post(
+def test_endpoints_rename_keeps_identity(client: TestClient) -> None:
+    """改名只换显示名：ID 不变、字段更新照常生效（显示名允许重名，无冲突语义）。"""
+    created = client.post(
         "/api/endpoints",
         json={"name": "alpha", "base_url": "https://a/v1", "model": "m"},
     )
-    client.post(
-        "/api/endpoints",
-        json={"name": "beta", "base_url": "https://b/v1", "model": "m"},
-    )
+    cid = created.json()["id"]
 
     response = client.put(
-        "/api/endpoints/alpha",
+        f"/api/endpoints/{cid}",
         json={"base_url": "https://changed/v1", "model": "m", "new_name": "BETA"},
     )
 
-    assert response.status_code == 409
-    names = {item["name"] for item in client.get("/api/endpoints").json()}
-    assert names == {"alpha", "beta"}
-    alpha = next(
-        item for item in client.get("/api/endpoints").json() if item["name"] == "alpha"
-    )
-    assert alpha["base_url"] == "https://changed/v1"
+    assert response.status_code == 200
+    assert response.json()["name"] == "BETA"
+    assert response.json()["id"] == cid
+    names = [item["name"] for item in client.get("/api/endpoints").json()]
+    assert names == ["BETA"]
 
 
 def test_endpoints_rename_new_name_invalid_400(client: TestClient) -> None:
-    """新名含保留字符：400，且原配置不受影响。"""
+    """新显示名非法（纯空白）：400，且原配置不受影响。"""
     client.post(
         "/api/endpoints",
         json={"name": "prod", "base_url": "https://a/v1", "model": "m"},
@@ -700,7 +700,7 @@ def test_endpoints_rename_new_name_invalid_400(client: TestClient) -> None:
 
     response = client.put(
         "/api/endpoints/prod",
-        json={"base_url": "https://a/v1", "model": "m", "new_name": "bad:name"},
+        json={"base_url": "https://a/v1", "model": "m", "new_name": "   "},
     )
 
     assert response.status_code == 400
@@ -1048,7 +1048,7 @@ def test_endpoints_test_falls_back_to_stored_key(
         json={
             "base_url": "https://example.com/v1",
             "model": "test-model",
-            "name": "stored",
+            "id": created.json()["id"],
         },
     )
 
@@ -1198,7 +1198,7 @@ def test_label_stream_sse(client: TestClient, fake_engine: FakeCompleter) -> Non
 
     response = client.post(
         "/api/label/stream",
-        json={"prompt_name": "p1", "instruction": "描述它"},
+        json={"prompt_id": "p1", "instruction": "描述它"},
     )
 
     assert response.status_code == 200
@@ -1230,9 +1230,7 @@ def test_session_snapshot_exposes_persisted_reasoning(
         lambda: LabelingEngine(ThinkingCompleter(), "test-model"),
     )
     _save_prompt("p1", "你是打标助手。")
-    client.post(
-        "/api/label/stream", json={"prompt_name": "p1", "instruction": "描述它"}
-    )
+    client.post("/api/label/stream", json={"prompt_id": "p1", "instruction": "描述它"})
 
     messages = client.get("/api/sessions/latest").json()["messages"]
 
@@ -1259,7 +1257,7 @@ def test_label_stream_mid_stream_error_emits_error_frame(
 
     _save_prompt("p1", "你是打标助手。")
     response = client.post(
-        "/api/label/stream", json={"prompt_name": "p1", "instruction": "x"}
+        "/api/label/stream", json={"prompt_id": "p1", "instruction": "x"}
     )
 
     assert response.status_code == 200
@@ -1269,13 +1267,15 @@ def test_label_stream_mid_stream_error_emits_error_frame(
     assert "模型流中途失败" in frames[-1]
 
 
-def test_skills_import_upload_conflict_409(client: TestClient) -> None:
-    """上传导入：重名不合并 → 第二次 409。"""
+def test_skills_import_upload_duplicate_names_allowed(client: TestClient) -> None:
+    """上传导入：同显示名各自分配新 ID、并存（身份是 ID）。"""
     first = client.post("/api/skills/import-upload", files=_SKILL_UPLOAD_FILES)
     second = client.post("/api/skills/import-upload", files=_SKILL_UPLOAD_FILES)
 
     assert first.status_code == 200
-    assert second.status_code == 409
+    assert second.status_code == 200
+    assert first.json()["id"] != second.json()["id"]
+    assert len(client.get("/api/skills").json()) == 2
 
 
 def test_label_with_video_uses_video_params(
@@ -1288,7 +1288,7 @@ def test_label_with_video_uses_video_params(
     response = client.post(
         "/api/label",
         json={
-            "prompt_name": "p1",
+            "prompt_id": "p1",
             "instruction": "描述动作",
             "video_base64": payload,
             "video_name": "clip.mp4",
@@ -1314,7 +1314,7 @@ def test_label_with_fractional_fps_is_422(
     response = client.post(
         "/api/label",
         json={
-            "prompt_name": "p1",
+            "prompt_id": "p1",
             "instruction": "x",
             "video_base64": payload,
             "video_fps": 1.5,
@@ -1333,7 +1333,7 @@ def test_label_image_and_video_together_is_400(
     response = client.post(
         "/api/label",
         json={
-            "prompt_name": "p1",
+            "prompt_id": "p1",
             "instruction": "x",
             "image_base64": payload,
             "video_base64": payload,
@@ -1354,7 +1354,7 @@ class TestSessionOwnershipApi:
 
         first = client.post(
             "/api/label",
-            json={"prompt_name": "h3", "instruction": "一轮", "strategy_id": "s-x"},
+            json={"prompt_id": "h3", "instruction": "一轮", "strategy_id": "s-x"},
         )
         assert first.status_code == 200
         session_id = first.json()["session_id"]
@@ -1380,7 +1380,7 @@ class TestSessionOwnershipApi:
         session_id = client.post(
             "/api/label",
             json={
-                "prompt_name": "h3",
+                "prompt_id": "h3",
                 "instruction": "草稿轮",
                 "strategy_id": "__new__",
             },
@@ -1429,9 +1429,9 @@ class TestSessionOwnershipApi:
             json={
                 "name": "删除我",
                 "description": "",
-                "endpoint": "main",
-                "prompt": "h3",
-                "skills": [],
+                "endpoint_id": "main",
+                "prompt_id": "h3",
+                "skill_ids": [],
             },
         )
         assert created.status_code == 201, created.text
@@ -1439,7 +1439,7 @@ class TestSessionOwnershipApi:
         session_id = client.post(
             "/api/label",
             json={
-                "prompt_name": "h3",
+                "prompt_id": "h3",
                 "instruction": "一轮",
                 "strategy_id": strategy_id,
             },
@@ -1466,7 +1466,7 @@ class TestSessionOwnershipApi:
         _save_prompt("h3", "你是打标助手。")
         session_id = client.post(
             "/api/label",
-            json={"prompt_name": "h3", "instruction": "一轮", "strategy_id": "s-busy"},
+            json={"prompt_id": "h3", "instruction": "一轮", "strategy_id": "s-busy"},
         ).json()["session_id"]
 
         # 直接登记一个进行中轮次，模拟流式生成中。

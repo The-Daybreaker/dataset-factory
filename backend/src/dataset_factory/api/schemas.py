@@ -28,11 +28,11 @@ class LabelRequest(BaseModel):
     """POST /api/label 的请求体。"""
 
     session_id: str | None = Field(default=None, description="续接的会话 id；缺省新建")
-    prompt_name: str | None = Field(
-        default=None, description="基础提示词名称；续接时缺省沿用会话设置"
+    prompt_id: str | None = Field(
+        default=None, description="基础提示词 ID；续接时缺省沿用会话设置"
     )
-    skill_names: list[str] | None = Field(
-        default=None, description="启用的 skill 清单；缺省沿用会话设置"
+    skill_ids: list[str] | None = Field(
+        default=None, description="启用的 skill ID 清单；缺省沿用会话设置"
     )
     instruction: str = Field(default="", description="打标指令（纯图轮可空）")
     image_base64: str | None = Field(
@@ -83,10 +83,10 @@ class LabelResponse(BaseModel):
 
 
 class SettingsView(BaseModel):
-    """会话当前设置。"""
+    """会话当前设置（引用存各资产的稳定 ID）。"""
 
-    prompt_name: str | None
-    skill_names: list[str]
+    prompt_id: str | None
+    skill_ids: list[str]
 
 
 class HistoryMessageView(BaseModel):
@@ -151,7 +151,8 @@ class AssignStrategyRequest(BaseModel):
 class PromptInfo(BaseModel):
     """提示词条目（列表项）。"""
 
-    name: str
+    id: str = Field(description="提示词 ID（内部稳定身份，不随改名变化）")
+    name: str = Field(description="显示名（可改、允许重名）")
     description: str
 
 
@@ -161,23 +162,29 @@ class PromptFull(PromptInfo):
     body: str
 
 
-class PromptSaveRequest(BaseModel):
-    """PUT /api/prompts/{name} 的请求体。"""
+class PromptCreated(PromptInfo):
+    """POST /api/prompts 的响应体（服务端分配 ID）。"""
 
+
+class PromptSaveRequest(BaseModel):
+    """POST /api/prompts 与 PUT /api/prompts/{id} 的请求体。"""
+
+    name: str = Field(default="", description="显示名；缺省 = 沿用现有显示名")
     description: str = ""
     body: str
 
 
 class PromptRenameRequest(BaseModel):
-    """POST /api/prompts/{name}/rename 的请求体。"""
+    """POST /api/prompts/{id}/rename 的请求体。"""
 
-    new_name: str
+    new_name: str = Field(description="新显示名（可改、允许重名）")
 
 
 class SkillInfo(BaseModel):
     """skill 条目。"""
 
-    name: str
+    id: str = Field(description="skill ID（内部稳定身份，不随改名变化）")
+    name: str = Field(description="显示名（取自 SKILL.md frontmatter，可改、允许重名）")
     description: str
     enabled: bool
     body_chars: int = Field(
@@ -186,9 +193,9 @@ class SkillInfo(BaseModel):
 
 
 class SkillRenameRequest(BaseModel):
-    """POST /api/skills/{name}/rename 的请求体。"""
+    """POST /api/skills/{id}/rename 的请求体。"""
 
-    new_name: str = Field(description="目标名称（目录名即名称，校验规则与导入相同）")
+    new_name: str = Field(description="新显示名（可改、允许重名）")
 
 
 class SkillFileInfo(BaseModel):
@@ -205,8 +212,9 @@ class SkillFileInfo(BaseModel):
 
 
 class SkillFilesResponse(BaseModel):
-    """GET /api/skills/{name}/files 的响应体。"""
+    """GET /api/skills/{id}/files 的响应体。"""
 
+    id: str
     name: str
     files: list[SkillFileInfo]
 
@@ -237,6 +245,7 @@ class SkillFileSaveRequest(BaseModel):
 class SkillImportResponse(BaseModel):
     """导入结果。"""
 
+    id: str = Field(description="新 skill 的稳定 ID（后续寻址用）")
     name: str
     description: str
     enabled: bool
@@ -246,7 +255,10 @@ class SkillImportResponse(BaseModel):
 class ConfigResponse(BaseModel):
     """GET /api/config 的响应体——密钥只报来源、绝不回内容。"""
 
-    name: str | None = None
+    id: str | None = Field(default=None, description="当前使用的配置 ID；未配置为 null")
+    name: str | None = Field(
+        default=None, description="当前使用的配置显示名；未配置为 null"
+    )
     base_url: str | None
     model: str | None
     api_key_configured: bool
@@ -310,8 +322,9 @@ class EndpointTestRequest(BaseModel):
         default=None,
         description="密钥；缺省先回落环境变量 DSF_API_KEY，再回落该配置已存密钥",
     )
-    name: str | None = Field(
-        default=None, description="配置名（回落已存密钥时用它定位）"
+    id: str | None = Field(
+        default=None,
+        description="配置 ID（回落该配置已存密钥时用它定位；缺省 = 表单密钥与环境变量通道）",
     )
     request_params: EndpointRequestParams | None = Field(
         default=None,
@@ -338,7 +351,8 @@ class EndpointConfigSummary(BaseModel):
     # 抄本会在「模型加了字段、搬运忘了改」时把每个请求打成 500。契约仍是下面这张字段表。
     model_config = ConfigDict(from_attributes=True)
 
-    name: str = Field(description="配置名（endpoints/ 下的目录名）")
+    id: str = Field(description="配置 ID（内部稳定身份，目录名即 ID，不随改名变化）")
+    name: str = Field(description="显示名（可改、允许重名）")
     base_url: str = Field(description="端点地址")
     model: str = Field(description="模型名")
     api_format: str = Field(
@@ -555,14 +569,15 @@ class StrategyView(BaseModel):
 
     available = 引用健康度（现查）：任一引用（端点配置 / 提示词 / Skill）已不存在
     则为 False，missing_refs 给出缺失清单（界面置灰、禁止应用、走重新指定）。
+    引用一律存各资产的稳定 ID（2026-09-23 ID 化；显示名由前端从各资产列表现查）。
     """
 
     id: str = Field(description="库策略 ID（内部稳定标识，改名不变）")
     name: str = Field(description="显示名（可改、允许重名）")
     description: str = Field(description="说明文字")
-    endpoint: str = Field(description="端点配置名引用")
-    prompt: str = Field(description="基础提示词名引用")
-    skills: list[str] = Field(description="启用 Skill 名引用清单（有序）")
+    endpoint_id: str = Field(description="端点配置 ID 引用")
+    prompt_id: str = Field(description="基础提示词 ID 引用")
+    skill_ids: list[str] = Field(description="启用 Skill ID 引用清单（有序）")
     available: bool = Field(description="引用健康度：全部引用现存在才可用")
     missing_refs: list[str] = Field(description="缺失引用的可读描述（健康时为空）")
     body_chars: int = Field(
@@ -578,10 +593,10 @@ class StrategySaveRequest(BaseModel):
 
     name: str = Field(description="显示名（非空）")
     description: str = Field(default="", description="说明文字")
-    endpoint: str = Field(description="端点配置名（必须已存在）")
-    prompt: str = Field(description="基础提示词名（必须已存在）")
-    skills: list[str] = Field(
-        default_factory=list, description="启用 Skill 名清单（必须已存在）"
+    endpoint_id: str = Field(description="端点配置 ID（必须已存在）")
+    prompt_id: str = Field(description="基础提示词 ID（必须已存在）")
+    skill_ids: list[str] = Field(
+        default_factory=list, description="启用 Skill ID 清单（必须已存在）"
     )
 
 
@@ -592,22 +607,26 @@ class StrategyRebindRequest(BaseModel):
     被 UI 一起重交一遍。至少提供一个字段。
     """
 
-    endpoint: str | None = Field(
-        default=None, description="新的端点配置名；缺省 = 不变"
+    endpoint_id: str | None = Field(
+        default=None, description="新的端点配置 ID；缺省 = 不变"
     )
-    prompt: str | None = Field(
-        default=None, description="新的基础提示词名；缺省 = 不变"
+    prompt_id: str | None = Field(
+        default=None, description="新的基础提示词 ID；缺省 = 不变"
     )
-    skills: list[str] | None = Field(
-        default=None, description="新的 Skill 清单（整体替换）；缺省 = 不变"
+    skill_ids: list[str] | None = Field(
+        default=None, description="新的 Skill ID 清单（整体替换）；缺省 = 不变"
     )
 
     @model_validator(mode="after")
     def _at_least_one(self) -> StrategyRebindRequest:
         """至少指定一个引用位，否则这次调用没有语义。"""
-        if self.endpoint is None and self.prompt is None and self.skills is None:
+        if (
+            self.endpoint_id is None
+            and self.prompt_id is None
+            and self.skill_ids is None
+        ):
             raise ValueError(
-                "至少提供一个要重新指定的引用位（endpoint / prompt / skills 之一）。"
+                "至少提供一个要重新指定的引用位（endpoint_id / prompt_id / skill_ids 之一）。"
             )
         return self
 
@@ -670,9 +689,13 @@ class SnapshotTextView(BaseModel):
 
 
 class SnapshotEndpointView(BaseModel):
-    """快照端点的公开配置白名单，不返回凭据字段。"""
+    """快照端点的公开配置白名单，不返回凭据字段。
+
+    id 仅 ID 化（2026-09-23）之后建的批次携带——旧快照没有这个键，视图按 None 呈现。
+    """
 
     model_config = ConfigDict(strict=True)
+    id: str | None = None
     name: str
     base_url: str
     model: str
@@ -713,10 +736,14 @@ class BatchCreateRequest(BaseModel):
     description: str | None = Field(
         default=None, description="说明文字；library 缺省沿用库策略"
     )
-    endpoint: str | None = Field(default=None, description="端点配置名（scratch 必填）")
-    prompt: str | None = Field(default=None, description="基础提示词名（scratch 必填）")
-    skills: list[str] | None = Field(
-        default=None, description="启用 Skill 名清单（scratch 可缺省 = 空）"
+    endpoint_id: str | None = Field(
+        default=None, description="端点配置 ID（scratch 必填）"
+    )
+    prompt_id: str | None = Field(
+        default=None, description="基础提示词 ID（scratch 必填）"
+    )
+    skill_ids: list[str] | None = Field(
+        default=None, description="启用 Skill ID 清单（scratch 可缺省 = 空）"
     )
 
     @model_validator(mode="after")
@@ -729,7 +756,7 @@ class BatchCreateRequest(BaseModel):
         if self.type == "scratch":
             missing = [
                 field_name
-                for field_name in ("name", "endpoint", "prompt")
+                for field_name in ("name", "endpoint_id", "prompt_id")
                 if getattr(self, field_name) is None
             ]
             if missing:

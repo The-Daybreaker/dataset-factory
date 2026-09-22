@@ -13,14 +13,29 @@ import pytest
 from fastapi.testclient import TestClient
 
 from dataset_factory.api import create_app
-from dataset_factory.llm import create_config
-from dataset_factory.prompts import Prompt, delete_prompt, save_prompt
+from dataset_factory.llm import create_config, list_configs
+from dataset_factory.prompts import Prompt, delete_prompt, read_prompt, save_prompt
 from dataset_factory.runs.journal import RunJournal
-from dataset_factory.skills import import_skill
+from dataset_factory.skills import get_skill, import_skill
 from dataset_factory.workdir import WorkdirRegistry, WorkdirStore
 
 _FIXTURE_PACK = Path(__file__).parent / "fixtures" / "skill-pack"
 _SKILL_NAME = "example-caption-skill"
+
+
+def _skill_ref() -> str:
+    """fixture skill 的稳定 ID。"""
+    return get_skill(_SKILL_NAME).id
+
+
+def _prompt_ref(name: str) -> str:
+    """按唯一显示名取提示词 ID。"""
+    return read_prompt(name).id
+
+
+def _endpoint_ref() -> str:
+    """fixture 端点配置「main」的稳定 ID。"""
+    return next(info.id for info in list_configs() if info.name == "main")
 
 
 @pytest.fixture
@@ -51,9 +66,9 @@ def _strategy_payload(**overrides: str) -> dict[str, object]:
     payload: dict[str, object] = {
         "name": "详细描述A",
         "description": "",
-        "endpoint": "main",
-        "prompt": "详细描述",
-        "skills": [_SKILL_NAME],
+        "endpoint_id": "main",
+        "prompt_id": "详细描述",
+        "skill_ids": [_SKILL_NAME],
     }
     payload.update(overrides)
     return payload
@@ -72,7 +87,7 @@ def test_library_crud_roundtrip(client: TestClient, assets: None) -> None:
     entry = created.json()
     assert entry["available"] is True
     assert entry["missing_refs"] == []
-    assert entry["skills"] == [_SKILL_NAME]
+    assert entry["skill_ids"] == [_skill_ref()]
 
     listed = client.get("/api/strategies").json()
     assert [item["id"] for item in listed] == [entry["id"]]
@@ -127,17 +142,17 @@ def test_library_copy_and_rebind(client: TestClient, assets: None) -> None:
     assert clone.status_code == 201
     clone_entry = clone.json()
     assert clone_entry["id"] != source["id"]
-    assert clone_entry["endpoint"] == source["endpoint"]
+    assert clone_entry["endpoint_id"] == source["endpoint_id"]
 
     save_prompt(Prompt(name="替补", description="", body="替补正文"))
     rebound = client.post(
-        f"/api/strategies/{source['id']}/rebind", json={"prompt": "替补"}
+        f"/api/strategies/{source['id']}/rebind", json={"prompt_id": "替补"}
     )
     assert rebound.status_code == 200
     body = rebound.json()
-    assert body["prompt"] == "替补"
-    assert body["endpoint"] == "main"
-    assert body["skills"] == [_SKILL_NAME]
+    assert body["prompt_id"] == _prompt_ref("替补")
+    assert body["endpoint_id"] == _endpoint_ref()
+    assert body["skill_ids"] == [_skill_ref()]
 
 
 def test_library_rebind_without_any_ref_returns_422(
@@ -156,7 +171,7 @@ def test_library_create_with_missing_ref_returns_problem_json(
 ) -> None:
     """引用不存在 → 400 problem+json（strategy-refs-invalid）。"""
     response = client.post(
-        "/api/strategies", json=_strategy_payload(prompt="没有的提示词")
+        "/api/strategies", json=_strategy_payload(prompt_id="没有的提示词")
     )
 
     assert response.status_code == 400
@@ -176,7 +191,7 @@ def test_library_health_shows_missing_refs_after_delete(
     body = client.get(f"/api/strategies/{entry['id']}").json()
 
     assert body["available"] is False
-    assert body["missing_refs"] == ["基础提示词「详细描述」不存在"]
+    assert body["missing_refs"] == [f"基础提示词「{body['prompt_id']}」不存在"]
 
 
 def test_library_unknown_id_returns_problem_json_404(
@@ -227,8 +242,8 @@ def test_snapshot_warns_after_manual_change_without_rewriting(
         json={
             "type": "scratch",
             "name": "测试",
-            "endpoint": "main",
-            "prompt": "详细描述",
+            "endpoint_id": "main",
+            "prompt_id": "详细描述",
         },
     )
     store = WorkdirStore(Path(WorkdirRegistry.get(wid).path))
@@ -276,7 +291,7 @@ def test_snapshot_warns_after_manual_change_without_rewriting(
     assert path.read_bytes() == changed
 
 
-@pytest.mark.parametrize("contents", [b"not-json", b"\xff", b'{"endpoint": null}'])
+@pytest.mark.parametrize("contents", [b"not-json", b"\xff", b'{"endpoint_id": null}'])
 def test_snapshot_invalid_file_returns_problem(
     client: TestClient, assets: None, wid: str, contents: bytes
 ) -> None:
@@ -286,8 +301,8 @@ def test_snapshot_invalid_file_returns_problem(
         json={
             "type": "scratch",
             "name": "测试",
-            "endpoint": "main",
-            "prompt": "详细描述",
+            "endpoint_id": "main",
+            "prompt_id": "详细描述",
         },
     )
     path = WorkdirStore(Path(WorkdirRegistry.get(wid).path)).strategies_dir / "s1.json"
@@ -340,9 +355,9 @@ def test_create_batch_scratch_and_delete(
         json={
             "type": "scratch",
             "name": "从零来",
-            "endpoint": "main",
-            "prompt": "详细描述",
-            "skills": [_SKILL_NAME],
+            "endpoint_id": "main",
+            "prompt_id": "详细描述",
+            "skill_ids": [_SKILL_NAME],
         },
     )
 
@@ -379,7 +394,12 @@ def test_create_batch_unknown_workdir_or_strategy_returns_404(
     """wid 不在注册表 / 库策略 ID 不存在 → 各自的 404 problem+json。"""
     missing_workdir = client.post(
         "/api/workdirs/no-such-wid/batches",
-        json={"type": "scratch", "name": "x", "endpoint": "main", "prompt": "详细描述"},
+        json={
+            "type": "scratch",
+            "name": "x",
+            "endpoint_id": "main",
+            "prompt_id": "详细描述",
+        },
     )
     assert missing_workdir.status_code == 404
     assert missing_workdir.json()["type"] == "workdir-not-found"
@@ -416,8 +436,8 @@ def test_get_batch_detail_and_patch_clears_description(
             "type": "scratch",
             "name": "从零来",
             "description": "备注文字",
-            "endpoint": "main",
-            "prompt": "详细描述",
+            "endpoint_id": "main",
+            "prompt_id": "详细描述",
         },
     )
 
@@ -439,14 +459,14 @@ def test_patch_batch_rejects_combo_fields_with_422(
         json={
             "type": "scratch",
             "name": "从零来",
-            "endpoint": "main",
-            "prompt": "详细描述",
+            "endpoint_id": "main",
+            "prompt_id": "详细描述",
         },
     )
 
     response = client.patch(
         f"/api/workdirs/{wid}/batches/s1",
-        json={"endpoint": "main", "prompt": "另一条", "skills": []},
+        json={"endpoint_id": "main", "prompt_id": "另一条", "skill_ids": []},
     )
 
     assert response.status_code == 422
@@ -461,8 +481,8 @@ def test_hide_unhide_and_delete_unknown_batch_problem_json(
         json={
             "type": "scratch",
             "name": "从零来",
-            "endpoint": "main",
-            "prompt": "详细描述",
+            "endpoint_id": "main",
+            "prompt_id": "详细描述",
         },
     )
 
@@ -486,8 +506,8 @@ def test_exclusions_add_and_remove(client: TestClient, assets: None, wid: str) -
         json={
             "type": "scratch",
             "name": "从零来",
-            "endpoint": "main",
-            "prompt": "详细描述",
+            "endpoint_id": "main",
+            "prompt_id": "详细描述",
         },
     )
 
@@ -542,9 +562,9 @@ def test_strategy_references_lists_applying_batches(
         json={
             "type": "scratch",
             "name": "手搓",
-            "endpoint": "main",
-            "prompt": "详细描述",
-            "skills": [_SKILL_NAME],
+            "endpoint_id": "main",
+            "prompt_id": "详细描述",
+            "skill_ids": [_SKILL_NAME],
         },
     )
 

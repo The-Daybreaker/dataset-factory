@@ -28,9 +28,9 @@ from dataset_factory.workdir.locks import StateLock
 LOCK_TIMEOUT = 20.0
 
 
-def _prompt(name: str, body: str) -> Prompt:
-    """测试便捷封装：一条合法提示词。"""
-    return Prompt(name=name, description="", body=body)
+def _prompt(name: str, body: str, pid: str = "") -> Prompt:
+    """测试便捷封装：一条合法提示词（pid 传入 = 覆写同一条，ID 语义）。"""
+    return Prompt(id=pid, name=name, description="", body=body)
 
 
 def test_nested_acquire_on_same_path_does_not_self_lock(tmp_path: Path) -> None:
@@ -93,7 +93,7 @@ def test_concurrent_prompt_saves_keep_every_history_entry(
     temp_data_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """并发保存同一条提示词：历史一份不吞、当前版是两次写入之一的完整内容。"""
-    save_prompt(_prompt("caption", "第一版"))
+    pid = save_prompt(_prompt("caption", "第一版"))
     history_dir = temp_data_root / "prompts" / "_history"
     barrier = threading.Barrier(3)
     errors: list[BaseException] = []
@@ -101,7 +101,7 @@ def test_concurrent_prompt_saves_keep_every_history_entry(
     def writer(body: str) -> None:
         try:
             barrier.wait(LOCK_TIMEOUT)
-            save_prompt(_prompt("caption", body))
+            save_prompt(_prompt("caption", body, pid=pid))
         except BaseException as exc:  # noqa: BLE001 - 异常带回主线程断言
             errors.append(exc)
 
@@ -117,9 +117,9 @@ def test_concurrent_prompt_saves_keep_every_history_entry(
 
     assert not errors
     assert len(list_prompts()) == 1
-    history = sorted(path.name for path in history_dir.glob("caption.*.md"))
+    history = sorted(path.name for path in history_dir.glob(f"{pid}.*.md"))
     assert len(history) == 2
-    current = (temp_data_root / "prompts" / "caption.md").read_text(encoding="utf-8")
+    current = (temp_data_root / "prompts" / f"{pid}.md").read_text(encoding="utf-8")
     assert "第 1 版" in current or "第 2 版" in current
 
 
@@ -130,8 +130,8 @@ def test_prompt_lock_reports_busy_when_another_writer_holds_it(
 
     必须换个线程持锁——同线程嵌套是共享实例的可重入，本来就该过（前一条用例就是它）。
     """
-    save_prompt(_prompt("locked", "原版"))
-    lock_path = temp_data_root / "prompts" / ".locked.edit.lock"
+    pid = save_prompt(_prompt("locked", "原版"))
+    lock_path = temp_data_root / "prompts" / f".{pid}.edit.lock"
     acquired = threading.Event()
     release = threading.Event()
 
@@ -146,12 +146,12 @@ def test_prompt_lock_reports_busy_when_another_writer_holds_it(
     monkeypatch.setattr("dataset_factory.prompts.store._EDIT_LOCK_TIMEOUT_SECONDS", 0.2)
     try:
         with pytest.raises(PromptError, match="正在被另一个进程修改"):
-            save_prompt(_prompt("locked", "新版"))
+            save_prompt(_prompt("locked", "新版", pid=pid))
     finally:
         release.set()
         thread.join(LOCK_TIMEOUT)
 
-    assert "原版" in (temp_data_root / "prompts" / "locked.md").read_text(
+    assert "原版" in (temp_data_root / "prompts" / f"{pid}.md").read_text(
         encoding="utf-8"
     )
 

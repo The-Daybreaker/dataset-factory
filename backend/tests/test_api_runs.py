@@ -81,9 +81,9 @@ def batch_env(temp_data_root: Path, tmp_path: Path) -> tuple[Path, str]:
         workdir,
         name="一号批",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
     entry = WorkdirRegistry.register(workdir, title="")
     return workdir, entry.id
@@ -331,9 +331,9 @@ def test_current_run_rejects_wrong_batch(
         workdir,
         name="二号批",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
     gates = _gates(1)
     _inject_fake_completer(monkeypatch, GatedCompleter(gates))
@@ -859,9 +859,9 @@ def test_clear_retry_list_only_clears_this_batch(
         workdir,
         name="二号批",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
     _mark_done(workdir, "cat_001")
     retry_client.post(
@@ -920,9 +920,9 @@ def test_delete_batch_clears_its_retry_records(
         workdir,
         name="二号批",
         description="",
-        endpoint="main",
-        prompt="详细描述",
-        skills=[],
+        endpoint_id="main",
+        prompt_id="详细描述",
+        skill_ids=[],
     )
     _mark_done(workdir, "cat_001")
     add_retry_items(workdir, 1, ["cat_001", "cat_002"])

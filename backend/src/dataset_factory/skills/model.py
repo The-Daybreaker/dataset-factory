@@ -22,17 +22,19 @@ class Skill:
     """一个已导入的 skill。
 
     Attributes:
-        name: skill 名称（取自 SKILL.md frontmatter，也是库里的目录名）。
+        name: 显示名（取自 SKILL.md frontmatter；可改、允许重名）。
         description: 用途说明（取自 frontmatter，供选择器展示）。
         enabled: 库级启用状态；停用的 skill 保留在库里、但不供打标注入（停用不删除）。
         body_chars: 注入全文字符数（SKILL.md + references/ 全部文件，即打标请求的实际
             注入量；列表展示用。非列表路径构造时可为 0）。
+        id: 内部稳定 ID（= 库里的目录名，创建时分配、不随改名变化；2026-09-23 ID 化）。
     """
 
     name: str
     description: str
     enabled: bool
     body_chars: int = 0
+    id: str = ""
 
 
 @dataclass(frozen=True)

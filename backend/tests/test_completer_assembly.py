@@ -142,6 +142,12 @@ def test_no_key_on_either_channel_raises(
     monkeypatch: pytest.MonkeyPatch, temp_data_root: Path
 ) -> None:
     """两个密钥通道都没有：报错点出配置命令与环境变量名，不装配半截客户端。"""
+    create_config(
+        "snap-endpoint",
+        base_url="https://snap.example/v1",
+        model="m-snap",
+        api_key=None,
+    )
     monkeypatch.delenv("DSF_API_KEY", raising=False)
 
     with pytest.raises(ConfigError, match="DSF_API_KEY"):

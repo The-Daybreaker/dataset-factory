@@ -1,26 +1,32 @@
 """端点多配置存储（endpoints/ 目录）——全项目唯一读写多套端点配置的地方。
 
-目录布局（design.md「存储方案」，ADR「端点多配置与激活机制」）：
+目录布局（ID 身份，2026-09-23 定案；与策略库同构——名字只是显示字段）：
 
     ~/.dataset_factory/endpoints/
-    ├── <配置名>/config.json   # 该配置的非敏感字段：base_url / model / api_format
-    │                          #   （+ 用户手配的请求参数，更新时原样保留）
-    ├── <配置名>/credentials   # 该配置的密钥（Unix 0600；界面与接口均不回显）
-    └── active                 # 当前使用的配置名（纯文本一行）
+    ├── <配置ID>/config.json   # 非敏感字段：id / name（显示名）/ base_url / model /
+    │                          #   api_format（+ 用户手配的请求参数，更新时原样保留）
+    ├── <配置ID>/credentials   # 密钥（Unix 0600；界面与接口均不回显）
+    └── active                 # 当前使用的配置 ID（纯文本一行）
 
 设计要点：
 
+- **身份 = 内部稳定 ID**（创建时分配，目录名即 ID）；显示名可改、允许重名——改名只写
+  config.json 的 name 字段，不动目录、不动指针。引用（策略库 / 快照）一律存 ID，
+  「改名炸引用」在结构上不可能再发生（2026-09-22 事故的根治）；
+- **存量迁移**：读侧发现 config.json 缺 id（旧版以名字当身份、目录名即名字）即惰性
+  升级——分配 ID、回写、目录改名；逐配置原子写、幂等，中途断电无半截状态；
 - 密钥只进不出：列表与概要只给「是否已配置」，绝不回显内容；SecretValue 字符串化即脱敏；
 - 写操作全部原子写（同目录临时文件 + os.replace，见 _fs），credentials 在 Unix 上以
   0600 落盘（mkstemp 默认权限）；
-- 边界 Fail-Fast：名称不合法 / 重名 / 配置不存在 / 删除当前使用中的配置，一律抛
-  ConfigError（哪里错、怎么修），不甩原始栈、不泄密钥；
+- 边界 Fail-Fast：ID 不存在 / 显示名不合法 / 删除当前使用中的配置，一律抛 ConfigError；
 - llm 不依赖任何功能模块（import-linter forbidden 契约守）。
 """
 
 from __future__ import annotations
 
 import json
+import re
+import secrets
 import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -37,7 +43,7 @@ _CREDENTIALS_FILENAME = (
 )
 _MASK = "**********"
 
-# 空数据根上首次创建配置时用的名字（入口层「一套都没有」时也拿它兜底创建）。
+# 默认显示名（入口层「一套都没有」时兜底创建的那套用；ID 总是另行分配）。
 DEFAULT_CONFIG_NAME = "default"
 
 # 一期唯一支持的 API 调用格式：随配置存储、其余格式在界面上灰显预留（未来补适配器即启用）。
@@ -64,25 +70,26 @@ _FLOAT_PARAM_KEYS = ("temperature", "top_p", "timeout_seconds")
 _INT_PARAM_KEYS = ("max_tokens", "max_retries")
 _BOOL_PARAM_KEYS = ("enable_thinking",)
 
-_MAX_NAME_LENGTH = 64
-# Windows 文件名保留字符。数据根可能随 DATASET_FACTORY_HOME 搬到任何平台，统一按最严
-# 平台校验，保证同一份数据在哪都能落盘。
-_FORBIDDEN_NAME_CHARS = set('<>:"/\\|?*')
+# 显示名长度上限（纯显示别名、允许重名，对齐策略库口径）。
+_MAX_NAME_LENGTH = 100
+
+# 配置 ID 形状（目录名即 ID；与策略 ID 同一模式，字母开头避免被 CLI 解析为选项）。
+_CONFIG_ID_RE = re.compile(r"^[a-z][A-Za-z0-9_-]{10}$")
 
 
 class ConfigError(Exception):
-    """配置 / 密钥不可用（缺失、损坏、字段不全、名称不合法）。
+    """配置 / 密钥不可用（缺失、损坏、字段不全、显示名不合法）。
 
     消息只描述「哪里错、怎么修」，绝不含密钥内容。
     """
 
 
 class ConfigNotFoundError(ConfigError):
-    """端点配置不存在（按名称找不到）。"""
+    """端点配置不存在（按 ID 找不到）。"""
 
 
 class ConfigConflictError(ConfigError):
-    """配置状态冲突（重名、删除当前使用中的配置等）。"""
+    """配置状态冲突（删除当前使用中的配置等）。"""
 
 
 def validated_request_params(
@@ -152,7 +159,8 @@ class EndpointConfigInfo:
     """一套端点配置的概要（不含密钥内容）。
 
     Attributes:
-        name: 配置名（即 endpoints/ 下的目录名）。
+        id: 内部稳定 ID（endpoints/ 下的目录名，不随改名变化）。
+        name: 显示名（可改、允许重名）。
         base_url: 端点地址。
         model: 模型名。
         api_format: API 调用格式（一期仅 OpenAI Chat Completions）。
@@ -162,6 +170,7 @@ class EndpointConfigInfo:
             validated_request_params 类型校验）。
     """
 
+    id: str
     name: str
     base_url: str
     model: str
@@ -171,46 +180,172 @@ class EndpointConfigInfo:
     request_params: Mapping[str, object]
 
 
-def validate_config_name(raw: str) -> str:
-    """校验并规整配置名（去除首尾空白后返回）。
+def _generate_id() -> str:
+    """生成字母开头的随机短 ID（目录名即 ID；字母开头避免被 CLI 解析为选项）。"""
+    return "e" + secrets.token_urlsafe(8)[:10]
 
-    规则：1–64 个字符；不含 Windows 保留字符与控制字符；不为 ``.`` / ``..``、不以点开头
-    或结尾（Windows 会吞掉结尾的点，造成与预期不符的重名）。
+
+def _validate_display_name(raw: str) -> str:
+    """校验显示名：去首尾空白后非空、不超长；返回规整后的名字。
+
+    显示名不再是文件名（目录名是 ID），文件名保留字符约束不再适用——只挡空与离谱长度，
+    与策略库同口径。
+    """
+    cleaned = raw.strip()
+    if not cleaned:
+        raise ConfigError("配置名不能为空；请填写名称。")
+    if len(cleaned) > _MAX_NAME_LENGTH:
+        raise ConfigError(
+            f"配置名过长（{len(cleaned)} 字符，上限 {_MAX_NAME_LENGTH}）——请缩短后重试。"
+        )
+    return cleaned
+
+
+def _endpoints_root() -> Path:
+    """endpoints/ 目录路径（不隐含创建——创建时机归各写操作，便于区分错误来源）。"""
+    return data_root() / ENDPOINTS_DIRNAME
+
+
+def _iter_entry_dirs() -> list[Path]:
+    """列出 endpoints/ 下含 config.json 的配置目录（库目录不存在视为没有配置）。"""
+    root = _endpoints_root()
+    if not root.is_dir():
+        return []
+    return [
+        entry
+        for entry in root.iterdir()
+        if entry.is_dir() and (entry / _CONFIG_FILENAME).is_file()
+    ]
+
+
+def _read_config_at(path: Path, fallback_name: str) -> dict[str, object]:
+    """读并校验一个 config.json（合法 JSON 对象 + base_url / model 非空）。
 
     Args:
-        raw: 用户输入的配置名。
-
-    Returns:
-        规整后的配置名。
+        path: config.json 路径。
+        fallback_name: 报错信息里指代这套配置的名字（目录名或 ID）。
 
     Raises:
-        ConfigError: 名称不合法（消息点名原因）。
+        ConfigError: 读不了 / 非法 JSON / 顶层非对象 / 字段缺失或类型错。
     """
-    name = raw.strip()
-    if not name:
-        raise ConfigError("配置名不能为空；请填写名称。")
-    if len(name) > _MAX_NAME_LENGTH:
-        raise ConfigError(f"配置名过长（最多 {_MAX_NAME_LENGTH} 个字符）；请缩短。")
-    if name.startswith(".") or name.endswith("."):
-        raise ConfigError(f"配置名「{name}」不合法；不能以点开头或结尾，请换一个名称。")
-    if any(ch in _FORBIDDEN_NAME_CHARS or ord(ch) < 32 for ch in name):
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
         raise ConfigError(
-            f"配置名「{name}」含不合法字符；请避免冒号、斜杠、引号等文件名保留字符。"
+            f"无法读取端点配置「{fallback_name}」的 config.json：{exc}"
+        ) from exc
+    try:
+        parsed: object = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ConfigError(
+            f"端点配置「{fallback_name}」的 config.json 不是合法 JSON"
+            f"（第 {exc.lineno} 行第 {exc.colno} 列）；请检查语法。"
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise ConfigError(
+            f"端点配置「{fallback_name}」的 config.json 顶层应为 JSON 对象；请检查内容。"
         )
-    return name
+    data = cast(dict[str, object], parsed)
+    base_url = data.get("base_url")
+    model = data.get("model")
+    if not isinstance(base_url, str) or not base_url.strip():
+        raise ConfigError(
+            f"端点配置「{fallback_name}」的 base_url 缺失或不是非空字符串；请补全。"
+        )
+    if not isinstance(model, str) or not model.strip():
+        raise ConfigError(
+            f"端点配置「{fallback_name}」的 model 缺失或不是非空字符串；请补全。"
+        )
+    return data
 
 
-def active_config_name() -> str | None:
-    """读当前使用的配置名；未设置（无指针文件或内容为空）返回 None。
+def _load_entries() -> dict[str, tuple[Path, dict[str, object]]]:
+    """扫描并返回全部配置：{id: (目录路径, config.json 数据)}；顺手完成存量惰性迁移。
 
-    指针内容不在这里校验合法性——「悬空指向不存在的配置」由 read_active_files 等调用方
-    结合 has_config 判断并给出各自的错误消息。
+    迁移判据：config.json 缺 id（或不合 ID 形状）= 旧版条目（目录名即旧配置名）→
+    分配 ID、把旧名写进 name 字段、原子回写，再把目录改名为 ID。已迁移条目零写操作。
+    坏文件 fail loud（与旧口径一致：坏数据不该被列表悄悄藏起来）。
+    """
+    entries: dict[str, tuple[Path, dict[str, object]]] = {}
+    for directory in _iter_entry_dirs():
+        data = _read_config_at(directory / _CONFIG_FILENAME, directory.name)
+        raw_id = data.get("id")
+        if not isinstance(raw_id, str) or not _CONFIG_ID_RE.fullmatch(raw_id):
+            raw_id = _generate_id()
+            data["id"] = raw_id
+        current_name = data.get("name")
+        if not isinstance(current_name, str) or not current_name:
+            # 旧版条目：目录名即当时的配置名——迁移进 name 字段。
+            data["name"] = directory.name
+        if directory.name != raw_id:
+            try:
+                directory.rename(_endpoints_root() / raw_id)
+            except OSError as exc:
+                raise ConfigError(
+                    f"无法把端点配置目录「{directory.name}」改名为 ID「{raw_id}」："
+                    f"{exc.strerror or exc}"
+                ) from exc
+            atomic_write_bytes(
+                _endpoints_root() / raw_id / _CONFIG_FILENAME,
+                (json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+            )
+        entries[raw_id] = (_endpoints_root() / raw_id, data)
+    return entries
 
-    Returns:
-        当前使用的配置名，未设置时 None。
+
+def _require_entry(cid: str) -> tuple[Path, dict[str, object]]:
+    """要求引用可解析（配置 ID 优先；唯一显示名次之），返回（目录路径, 数据）。
+
+    读取与写操作的宽容解析与 CLI 口径一致；引用健康度（has_config）保持严格 ID。
 
     Raises:
-        ConfigError: 指针文件存在但读不出来。
+        ConfigNotFoundError: 引用解析不到。
+    """
+    entries = _load_entries()
+    if cid in entries:
+        return entries[cid]
+    matches = [
+        (key, value) for key, value in entries.items() if value[1].get("name") == cid
+    ]
+    if len(matches) == 1:
+        return matches[0][1]
+    raise ConfigNotFoundError(f"端点配置「{cid}」不存在；请检查 ID 或显示名。")
+
+
+def _entry_info(
+    cid: str, data: Mapping[str, object], active: str | None
+) -> EndpointConfigInfo:
+    """条目数据 → 概要（列表与单套读共用这一份取数规则）。"""
+    name = data.get("name")
+    display = name if isinstance(name, str) and name else cid
+    return EndpointConfigInfo(
+        id=cid,
+        name=display,
+        base_url=cast(str, data["base_url"]),
+        model=cast(str, data["model"]),
+        api_format=cast("str | None", data.get("api_format")) or SUPPORTED_API_FORMAT,
+        has_api_key=_has_file_key(_endpoints_root() / cid / _CREDENTIALS_FILENAME),
+        is_active=active == cid,
+        request_params=validated_request_params(data, display),
+    )
+
+
+def config_id_by_display_name(name: str) -> str | None:
+    """按显示名查唯一配置 ID；不存在或重名（不唯一）返回 None。
+
+    供存量迁移（策略 JSON 里的旧版名字引用 → ID）与 CLI 的名称便利解析使用。
+    """
+    matches = [
+        cid for cid, (_, data) in _load_entries().items() if data.get("name") == name
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def active_config_id() -> str | None:
+    """读当前使用的配置 ID；未设置（无指针文件或内容为空）返回 None。
+
+    旧版指针内容是配置名：能在条目里按名唯一命中就解析成 ID 返回（读路径不改写指针，
+    下一次显式切换自然落新格式）；命中不了按悬空处理，由调用方结合 has_config 报错。
     """
     pointer = _endpoints_root() / ACTIVE_FILENAME
     if not pointer.is_file():
@@ -219,34 +354,39 @@ def active_config_name() -> str | None:
         raw = pointer.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         raise ConfigError(f"无法读取当前配置指针 {ACTIVE_FILENAME}：{exc}") from exc
-    name = raw.strip()
-    return name or None
+    ref = raw.strip()
+    if not ref:
+        return None
+    if ref in _load_entries():
+        return ref
+    by_name = config_id_by_display_name(ref)
+    return by_name if by_name is not None else ref
 
 
-def has_config(name: str) -> bool:
-    """判断一套配置是否存在（endpoints/<名称>/config.json 在不在）。
+def has_config(cid: str) -> bool:
+    """判断一套配置是否存在（按 ID）。
 
-    名称不合法（含路径穿越形态如 ``..``）一律视为不存在，不抛错——本函数服务「探一探」
-    场景（诊断视图、入口层判断），不该反过来炸调用方。
+    ID 不存在就是不存在，不抛错——本函数服务「探一探」场景（策略引用健康度、
+    入口层判断），不该反过来炸调用方。
     """
-    try:
-        clean = validate_config_name(name)
-    except ConfigError:
-        return False
-    return (_config_dir(clean) / _CONFIG_FILENAME).is_file()
+    return cid in _load_entries()
 
 
-def has_stored_key(name: str) -> bool:
-    """判断一套配置是否已在 credentials 文件存了非空密钥（名称不合法视为没有）。"""
-    try:
-        clean = validate_config_name(name)
-    except ConfigError:
-        return False
-    return _has_file_key(_config_dir(clean) / _CREDENTIALS_FILENAME)
+def has_stored_key(cid: str) -> bool:
+    """判断一套配置是否已在 credentials 文件存了非空密钥（引用解析不到视为没有）。"""
+    entries = _load_entries()
+    if cid in entries:
+        dir_path = entries[cid][0]
+    else:
+        try:
+            dir_path, _ = _require_entry(cid)
+        except ConfigNotFoundError:
+            return False
+    return _has_file_key(dir_path / _CREDENTIALS_FILENAME)
 
 
 def list_configs() -> list[EndpointConfigInfo]:
-    """列出全部端点配置概要（按名称排序、不区分大小写；不含密钥内容）。
+    """列出全部端点配置概要（按显示名排序、不区分大小写；不含密钥内容）。
 
     Returns:
         配置概要列表；每套配置的 is_active 按 active 指针判定。
@@ -255,65 +395,52 @@ def list_configs() -> list[EndpointConfigInfo]:
         ConfigError: 任一配置的 config.json 缺失 / 损坏 / 字段不全（fail loud，不静默跳过——
             坏数据不该被列表悄悄藏起来）。
     """
-    active = active_config_name()
-    return [
-        _config_info(name, _read_config_file(name), active)
-        for name in _existing_config_dirs()
-    ]
+    entries = _load_entries()
+    active = active_config_id()
+    infos = [_entry_info(cid, data, active) for cid, (_, data) in entries.items()]
+    return sorted(infos, key=lambda info: info.name.casefold())
 
 
-def config_info(name: str) -> EndpointConfigInfo:
+def config_info(cid: str) -> EndpointConfigInfo:
     """读单套配置的概要（与 list_configs 走同一份取数规则）。
 
-    Args:
-        name: 配置名（先过名称校验，杜绝路径穿越）。
-
-    Returns:
-        该配置的概要；is_active 按 active 指针判定。
+    入参接受配置 ID 或唯一显示名；返回的 id 恒为解析后的稳定 ID（来自数据本身，
+    不抄入参——显示名引用时入参不是 ID）。
 
     Raises:
-        ConfigError: 名称不合法 / config.json 缺失 / 损坏 / 字段不全。
+        ConfigNotFoundError: ID 不存在。
+        ConfigError: config.json 损坏 / 字段不全。
     """
-    clean = validate_config_name(name)
-    return _config_info(clean, _read_config_file(clean), active_config_name())
+    _, data = _require_entry(cid)
+    resolved = cast(str, data["id"])
+    return _entry_info(resolved, data, active_config_id())
 
 
-def read_config_data(name: str) -> dict[str, object]:
+def read_config_data(cid: str) -> dict[str, object]:
     """读一套配置的 config.json 并做结构校验（合法 JSON 对象 + base_url / model 非空）。
 
     api_format 不在此校验：缺失视为支持格式（旧文件没有该字段），存了别的值由调用方按
-    用途决定怎么处理（展示原样、构建请求时才真正依赖格式）。
-
-    Args:
-        name: 配置名（先过名称校验，杜绝路径穿越）。
-
-    Returns:
-        解析后的 config.json 对象。
+    用途决定怎么处理。
 
     Raises:
-        ConfigError: 名称不合法 / 文件缺失 / 非法 JSON / 顶层非对象 / 字段缺失或类型错。
+        ConfigNotFoundError: ID 不存在。
+        ConfigError: config.json 损坏 / 字段不全。
     """
-    clean = validate_config_name(name)
-    return _read_config_file(clean)
+    _, data = _require_entry(cid)
+    return data
 
 
-def read_stored_api_key(name: str) -> SecretValue | None:
+def read_stored_api_key(cid: str) -> SecretValue | None:
     """读指定配置已存的密钥（仅 credentials 文件，不含环境变量通道）；未配置返回 None。
 
     供入口层做「密钥留空沿用」（改 base_url 不必重输密钥）。与请求时的密钥解析（config
     层，环境变量优先）刻意不同：这里只看文件里的值，避免把环境变量误持久化进文件。
 
-    Args:
-        name: 配置名（先过名称校验，杜绝路径穿越）。
-
-    Returns:
-        包好的密钥；未存密钥（无文件 / 空白 / 读不了）返回 None。
-
     Raises:
-        ConfigError: 名称不合法。
+        ConfigNotFoundError: 引用解析不到。
     """
-    clean = validate_config_name(name)
-    credentials = _config_dir(clean) / _CREDENTIALS_FILENAME
+    dir_path, _ = _require_entry(cid)
+    credentials = dir_path / _CREDENTIALS_FILENAME
     if not credentials.is_file():
         return None
     try:
@@ -324,246 +451,30 @@ def read_stored_api_key(name: str) -> SecretValue | None:
 
 
 def read_active_files() -> tuple[str, dict[str, object], SecretValue | None]:
-    """读当前使用配置的原始数据：（配置名, config.json 解析结果, 文件中的密钥或 None）。
+    """读当前使用配置的原始数据：（配置 ID, config.json 解析结果, 文件中的密钥或 None）。
 
     密钥只从该配置的 credentials 文件取；环境变量 DSF_API_KEY 的覆盖在 config 层做——
     那是「构建请求」的语义，不属于存储。
 
-    Returns:
-        (配置名, config.json 解析对象, 文件密钥或 None) 三元组。
-
     Raises:
         ConfigError: 未配置任何端点 / active 指向不存在的配置 / config.json 损坏或字段不全。
     """
-    name = active_config_name()
-    if name is None:
+    cid = active_config_id()
+    if cid is None:
         raise ConfigError(
             "未配置任何端点；请先用 `dsf config set` 设置，或在 Web 设置页添加端点配置。"
         )
-    if not has_config(name):
+    if not has_config(cid):
         raise ConfigError(
-            f"当前使用的端点配置「{name}」不存在；请重新选择当前使用的配置，"
+            f"当前使用的端点配置「{cid}」不存在；请重新选择当前使用的配置，"
             "或检查数据根下 endpoints/ 目录。"
         )
-    data = read_config_data(name)
-    return name, data, read_stored_api_key(name)
-
-
-def create_config(
-    name: str,
-    base_url: str,
-    model: str,
-    api_key: SecretValue | None,
-    api_format: str = SUPPORTED_API_FORMAT,
-    request_params: Mapping[str, object] | None = None,
-) -> str:
-    """新增一套端点配置；当前没有生效的 active 指针时，顺手把它设为当前使用。
-
-    自动激活只发生在「指针缺失」时（典型：第一套配置，创建完就能用）；指针已指向其他
-    配置时不抢当前使用权——切换是显式动作（set_active_config）。
-
-    Args:
-        name: 配置名（校验合法性 + 不区分大小写的重名检查）。
-        base_url: 端点地址（非空）。
-        model: 模型名（非空）。
-        api_key: 密钥；None = 暂不配置（请求时可用 DSF_API_KEY 环境变量兜底）。
-        api_format: API 调用格式；一期仅支持 OpenAI Chat Completions。
-        request_params: 请求参数（生成 + 传输）；None = 全不设（用内置默认）。只认
-            _REQUEST_PARAM_KEYS 里的键，其余键丢弃（厂商专有参数请放 extra_body）。
-
-    Returns:
-        规整后的配置名（去首尾空白）——落盘目录即此名，入口层组装响应要用它。
-
-    Raises:
-        ConfigConflictError: 已存在同名（或仅大小写不同）的配置。
-        ConfigError: 名称不合法 / 字段为空 / 格式不支持 / 参数类型不合法 / 落盘失败。
-    """
-    clean = validate_config_name(name)
-    clean_base_url = _require_clean(base_url, "base_url")
-    clean_model = _require_clean(model, "model")
-    _require_supported_format(api_format)
-    if api_key is not None and not api_key.reveal().strip():
-        raise ConfigError("API 密钥不能为空白；请填写有效密钥。")
-    params_payload = (
-        validated_request_params(request_params, clean)
-        if request_params is not None
-        else None
-    )
-    _require_name_available(clean)
-    _write_config_files(
-        _config_dir(clean),
-        clean_base_url,
-        clean_model,
-        api_format,
-        api_key,
-        request_params=params_payload,
-    )
-    if active_config_name() is None:
-        set_active_config(clean)
-    return clean
-
-
-def update_config(
-    name: str,
-    base_url: str,
-    model: str,
-    api_key: SecretValue | None = None,
-    api_format: str = SUPPORTED_API_FORMAT,
-    request_params: Mapping[str, object] | None = None,
-) -> str:
-    """更新一套已存在配置的端点字段；api_key 传 None 表示沿用该配置已存的密钥。
-
-    「沿用」= 不动 credentials 文件（而不是把环境变量或其他配置的密钥抄过来）。
-    请求参数的更新语义：request_params 缺省（None）= 已有参数原样保留（与密钥的沿用
-    同一套心智——调用方没提的就是不改）；显式给出 = **整体替换**该配置的请求参数块
-    （未提供的参数键视为清除——「给什么存什么」，不给清空语义的调用方留歧义）。
-
-    Args:
-        name: 配置名（必须已存在）。
-        base_url: 端点地址（非空）。
-        model: 模型名（非空）。
-        api_key: 新密钥；None = 沿用已存密钥。
-        api_format: API 调用格式；一期仅支持 OpenAI Chat Completions。
-        request_params: 请求参数；None = 沿用已有参数不变。只认 _REQUEST_PARAM_KEYS
-            里的键，其余键丢弃（厂商专有参数请放 extra_body）。
-
-    Returns:
-        规整后的配置名（去首尾空白）。
-
-    Raises:
-        ConfigNotFoundError: 配置不存在。
-        ConfigError: 名称不合法 / 字段为空 / 格式不支持 / 参数类型不合法 / 落盘失败。
-    """
-    clean = validate_config_name(name)
-    clean_base_url = _require_clean(base_url, "base_url")
-    clean_model = _require_clean(model, "model")
-    _require_supported_format(api_format)
-    if api_key is not None and not api_key.reveal().strip():
-        raise ConfigError("API 密钥不能为空白；请填写有效密钥。")
-    params_payload = (
-        validated_request_params(request_params, clean)
-        if request_params is not None
-        else None
-    )
-    dir_path = _require_config_exists(clean)
-    _write_config_files(
-        dir_path,
-        clean_base_url,
-        clean_model,
-        api_format,
-        api_key,
-        request_params=params_payload,
-        preserve_params_from=dir_path if params_payload is None else None,
-    )
-    return clean
-
-
-def rename_config(old_name: str, new_name: str) -> str:
-    """把一套已存在配置改名为 new_name（目录重命名；凭据与参数随目录整体走）。
-
-    当前使用指针指向旧名时同步改写——否则改名后 active 悬空，下一次请求即报
-    「当前使用的端点配置不存在」。纯大小写改名（``aaa`` → ``AAA``）放行：唯一重名
-    就是它自己，Windows 目录名不区分大小写、原地改名合法。
-
-    Args:
-        old_name: 现有配置名（必须已存在）。
-        new_name: 新配置名（校验合法性 + 不区分大小写的重名检查）。
-
-    Returns:
-        规整后的新配置名（去首尾空白）。
-
-    Raises:
-        ConfigNotFoundError: 旧配置不存在。
-        ConfigConflictError: 新名与既有配置重名（不区分大小写）。
-        ConfigError: 任一名称不合法 / 目录改名或指针写入失败。
-    """
-    clean_old = validate_config_name(old_name)
-    clean_new = validate_config_name(new_name)
-    dir_path = _require_config_exists(clean_old)
-    if clean_new != clean_old:
-        if clean_new.casefold() != clean_old.casefold():
-            _require_name_available(clean_new)
-        target = _config_dir(clean_new)
-        try:
-            dir_path.rename(target)
-        except OSError as exc:
-            raise ConfigError(
-                f"无法把配置「{clean_old}」改名为「{clean_new}」：{exc.strerror or exc}"
-            ) from exc
-        # 指针在目录改名成功之后写（顺序不可反：先写指针会短暂指向不存在的目录）。
-        if active_config_name() == clean_old:
-            set_active_config(clean_new)
-    return clean_new
-
-
-def delete_config(name: str) -> None:
-    """删除一套端点配置（连同其 credentials）；当前使用中的配置不允许删。
-
-    Args:
-        name: 配置名（必须已存在）。
-
-    Raises:
-        ConfigNotFoundError: 配置不存在。
-        ConfigConflictError: 试图删除当前使用中的配置。
-        ConfigError: 名称不合法 / 删除失败。
-    """
-    clean = validate_config_name(name)
-    dir_path = _require_config_exists(clean)
-    active = active_config_name()
-    if active is not None and active == clean:
-        raise ConfigConflictError(
-            f"「{clean}」是当前使用的配置；请先切换到其他配置再删除。"
-        )
-    try:
-        shutil.rmtree(dir_path)
-    except OSError as exc:
-        raise ConfigError(
-            f"无法删除端点配置「{clean}」：{exc.strerror or exc}"
-        ) from exc
-
-
-def set_active_config(name: str) -> None:
-    """把当前使用指针指向一套已存在的配置；对新请求立即生效（下次构建客户端即读它）。
-
-    Args:
-        name: 配置名（必须已存在）。
-
-    Raises:
-        ConfigError: 名称不合法 / 配置不存在 / 指针写入失败。
-    """
-    clean = validate_config_name(name)
-    _require_config_exists(clean)
-    pointer = _endpoints_root() / ACTIVE_FILENAME
-    try:
-        pointer.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_bytes(pointer, f"{clean}\n".encode())
-    except (OSError, UnicodeEncodeError) as exc:
-        raise ConfigError(f"无法写入当前配置指针：{exc}") from exc
-
-
-def _endpoints_root() -> Path:
-    """endpoints/ 目录路径（不隐含创建——创建时机归各写操作，便于区分错误来源）。"""
-    return data_root() / ENDPOINTS_DIRNAME
-
-
-def _config_dir(name: str) -> Path:
-    """某套配置的目录路径。调用方负责先校验名称（杜绝路径穿越）。"""
-    return _endpoints_root() / name
+    data = read_config_data(cid)
+    return cid, data, read_stored_api_key(cid)
 
 
 def _require_clean(value: str, field: str) -> str:
-    """去首尾空白并要求非空（base_url / model 等必填字段的统一小闸门）。
-
-    Args:
-        value: 原始输入。
-        field: 字段名（用于错误消息）。
-
-    Returns:
-        规整后的值。
-
-    Raises:
-        ConfigError: 去空白后为空。
-    """
+    """去首尾空白并要求非空（base_url / model 等必填字段的统一小闸门）。"""
     cleaned = value.strip()
     if not cleaned:
         raise ConfigError(f"{field} 不能为空；请填写。")
@@ -571,130 +482,18 @@ def _require_clean(value: str, field: str) -> str:
 
 
 def _require_supported_format(api_format: str) -> None:
-    """校验 API 调用格式是当前支持的唯一值。
-
-    Raises:
-        ConfigError: 不支持（消息说明当前仅支持什么）。
-    """
+    """校验 API 调用格式是当前支持的唯一值。"""
     if api_format != SUPPORTED_API_FORMAT:
         raise ConfigError(
             f"API 格式「{api_format}」暂未支持；当前仅支持 OpenAI Chat Completions。"
         )
 
 
-def _require_name_available(name: str) -> None:
-    """重名检查（不区分大小写——Windows 目录名不区分大小写，跨平台口径取其严）。
-
-    Raises:
-        ConfigConflictError: 已存在同名（或仅大小写不同）的配置。
-    """
-    for existing in _existing_config_dirs():
-        if existing.casefold() == name.casefold():
-            raise ConfigConflictError(
-                f"已存在配置「{existing}」（名称不区分大小写）；请换一个名称。"
-            )
-
-
-def _require_config_exists(name: str) -> Path:
-    """要求配置存在，返回其目录路径。
-
-    Raises:
-        ConfigNotFoundError: 配置不存在。
-    """
-    dir_path = _config_dir(name)
-    if not (dir_path / _CONFIG_FILENAME).is_file():
-        raise ConfigNotFoundError(f"端点配置「{name}」不存在；请检查名称。")
-    return dir_path
-
-
-def _existing_config_dirs() -> list[str]:
-    """列出 endpoints/ 下的配置目录名（含 config.json 的才算配置），按名称排序。
-
-    endpoints/ 不存在视为没有配置；目录里没有 config.json 的（用户手动建的杂物目录）
-    不算配置、静默跳过。
-    """
-    root = _endpoints_root()
-    if not root.is_dir():
-        return []
-    names = [
-        entry.name
-        for entry in root.iterdir()
-        if entry.is_dir() and (entry / _CONFIG_FILENAME).is_file()
-    ]
-    return sorted(names, key=str.casefold)
-
-
-def _read_config_file(name: str) -> dict[str, object]:
-    """读并校验一套配置的 config.json（列表、单套读与请求装配共用的底层读取）。
-
-    Args:
-        name: 配置名（来自文件系统枚举或已校验的指针，不再重复名称校验）。
-
-    Returns:
-        解析并校验过 base_url / model 的 config.json 对象。
-
-    Raises:
-        ConfigError: 文件缺失 / 读不了 / 非法 JSON / 顶层非对象 / 字段缺失或类型错。
-    """
-    path = _config_dir(name) / _CONFIG_FILENAME
-    if not path.is_file():
-        raise ConfigError(f"端点配置「{name}」缺少 config.json；请补全或删除该配置。")
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        raise ConfigError(f"无法读取端点配置「{name}」的 config.json：{exc}") from exc
-    try:
-        parsed: object = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ConfigError(
-            f"端点配置「{name}」的 config.json 不是合法 JSON"
-            f"（第 {exc.lineno} 行第 {exc.colno} 列）；请检查语法。"
-        ) from exc
-    if not isinstance(parsed, dict):
-        raise ConfigError(
-            f"端点配置「{name}」的 config.json 顶层应为 JSON 对象；请检查内容。"
-        )
-    data = cast(dict[str, object], parsed)
-    base_url = data.get("base_url")
-    model = data.get("model")
-    if not isinstance(base_url, str) or not base_url.strip():
-        raise ConfigError(
-            f"端点配置「{name}」的 base_url 缺失或不是非空字符串；请补全。"
-        )
-    if not isinstance(model, str) or not model.strip():
-        raise ConfigError(f"端点配置「{name}」的 model 缺失或不是非空字符串；请补全。")
-    return data
-
-
-def _config_info(
-    name: str, data: dict[str, object], active: str | None
-) -> EndpointConfigInfo:
-    """config.json 对象 + active 指针 → 概要（列表与单套读共用这一份取数规则）。
-
-    Args:
-        name: 已校验的配置名。
-        data: `_read_config_file` 校验过的 config.json 对象。
-        active: 当前使用的配置名，未设置时 None。
-
-    Returns:
-        该配置的概要。
-
-    Raises:
-        ConfigError: 请求参数键存在但类型不对。
-    """
-    return EndpointConfigInfo(
-        name=name,
-        base_url=cast(str, data["base_url"]),
-        model=cast(str, data["model"]),
-        api_format=cast("str | None", data.get("api_format")) or SUPPORTED_API_FORMAT,
-        has_api_key=_has_file_key(_config_dir(name) / _CREDENTIALS_FILENAME),
-        is_active=active == name,
-        request_params=validated_request_params(data, name),
-    )
-
-
 def _write_config_files(
     dir_path: Path,
+    *,
+    config_id: str,
+    name: str,
     base_url: str,
     model: str,
     api_format: str,
@@ -705,7 +504,9 @@ def _write_config_files(
     """写一套配置的两个文件（config.json + credentials），各自原子写。
 
     Args:
-        dir_path: 配置目录。
+        dir_path: 配置目录（= ID 目录）。
+        config_id: 配置 ID（写进 config.json）。
+        name: 显示名（写进 config.json）。
         base_url: 已规整的端点地址。
         model: 已规整的模型名。
         api_format: API 调用格式。
@@ -719,6 +520,8 @@ def _write_config_files(
         ConfigError: 旧参数读不了 / 内容无法编码 / 落盘失败。
     """
     payload: dict[str, object] = {
+        "id": config_id,
+        "name": name,
         "base_url": base_url,
         "model": model,
         "api_format": api_format,
@@ -750,6 +553,168 @@ def _write_config_files(
             atomic_write_bytes(dir_path / _CREDENTIALS_FILENAME, key_bytes)
     except OSError as exc:
         raise ConfigError(f"无法写入端点配置文件：{exc.strerror or exc}") from exc
+
+
+def create_config(
+    name: str,
+    base_url: str,
+    model: str,
+    api_key: SecretValue | None,
+    api_format: str = SUPPORTED_API_FORMAT,
+    request_params: Mapping[str, object] | None = None,
+) -> str:
+    """新增一套端点配置；当前没有生效的 active 指针时，顺手把它设为当前使用。
+
+    显示名允许重名（身份是 ID）；自动激活只发生在「指针缺失」时（典型：第一套配置，
+    创建完就能用）。
+
+    Returns:
+        新配置的 ID——目录即此 ID，入口层组装响应用它。
+
+    Raises:
+        ConfigError: 显示名不合法 / 字段为空 / 格式不支持 / 参数类型不合法 / 落盘失败。
+    """
+    display = _validate_display_name(name)
+    clean_base_url = _require_clean(base_url, "base_url")
+    clean_model = _require_clean(model, "model")
+    _require_supported_format(api_format)
+    if api_key is not None and not api_key.reveal().strip():
+        raise ConfigError("API 密钥不能为空白；请填写有效密钥。")
+    params_payload = (
+        validated_request_params(request_params, display)
+        if request_params is not None
+        else None
+    )
+    root = _endpoints_root()
+    cid = _generate_id()
+    while (root / cid).exists():  # 撞名重摇（概率趋近于零，防御性兜底）
+        cid = _generate_id()
+    _write_config_files(
+        root / cid,
+        config_id=cid,
+        name=display,
+        base_url=clean_base_url,
+        model=clean_model,
+        api_format=api_format,
+        api_key=api_key,
+        request_params=params_payload,
+    )
+    if active_config_id() is None:
+        set_active_config(cid)
+    return cid
+
+
+def update_config(
+    cid: str,
+    base_url: str,
+    model: str,
+    api_key: SecretValue | None = None,
+    api_format: str = SUPPORTED_API_FORMAT,
+    request_params: Mapping[str, object] | None = None,
+) -> str:
+    """更新一套已存在配置的端点字段；api_key 传 None 表示沿用该配置已存的密钥。
+
+    「沿用」= 不动 credentials 文件（而不是把环境变量或其他配置的密钥抄过来）。
+    显示名不在这里改（改名走 rename_config，语义分开）。请求参数的更新语义：
+    request_params 缺省（None）= 已有参数原样保留（与密钥的沿用同一套心智）；显式
+    给出 = **整体替换**该配置的请求参数块。
+
+    Returns:
+        配置 ID（解析后的稳定 ID；显示名引用时 = 命中的条目 ID）。
+
+    Raises:
+        ConfigNotFoundError: 引用解析不到。
+        ConfigError: 字段为空 / 格式不支持 / 参数类型不合法 / 落盘失败。
+    """
+    dir_path, existing = _require_entry(cid)
+    cid = cast(str, existing["id"])
+    current_name = existing.get("name")
+    display = current_name if isinstance(current_name, str) and current_name else cid
+    clean_base_url = _require_clean(base_url, "base_url")
+    clean_model = _require_clean(model, "model")
+    _require_supported_format(api_format)
+    if api_key is not None and not api_key.reveal().strip():
+        raise ConfigError("API 密钥不能为空白；请填写有效密钥。")
+    params_payload = (
+        validated_request_params(request_params, display)
+        if request_params is not None
+        else None
+    )
+    _write_config_files(
+        dir_path,
+        config_id=cid,
+        name=display,
+        base_url=clean_base_url,
+        model=clean_model,
+        api_format=api_format,
+        api_key=api_key,
+        request_params=params_payload,
+        preserve_params_from=dir_path if params_payload is None else None,
+    )
+    return cid
+
+
+def rename_config(cid: str, new_name: str) -> str:
+    """改一套配置的显示名：只写 config.json 的 name 字段。
+
+    目录名是 ID、指针存 ID、引用存 ID——改名不再有任何文件系统操作或指针同步，
+    「改名炸引用」在结构上不可能。同名词用 = 无操作返回（写一次同值，无副作用）。
+
+    Returns:
+        配置 ID（不变）。
+
+    Raises:
+        ConfigNotFoundError: ID 不存在。
+        ConfigError: 显示名不合法 / 落盘失败。
+    """
+    dir_path, existing = _require_entry(cid)
+    display = _validate_display_name(new_name)
+    data: dict[str, object] = dict(existing)
+    data["name"] = display
+    try:
+        atomic_write_bytes(
+            dir_path / _CONFIG_FILENAME,
+            (json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+        )
+    except OSError as exc:
+        raise ConfigError(f"无法写入端点配置文件：{exc.strerror or exc}") from exc
+    return cid
+
+
+def delete_config(cid: str) -> None:
+    """删除一套端点配置（连同其 credentials）；当前使用中的配置不允许删。
+
+    Raises:
+        ConfigNotFoundError: ID 不存在。
+        ConfigConflictError: 试图删除当前使用中的配置。
+        ConfigError: 删除失败。
+    """
+    dir_path, data = _require_entry(cid)
+    resolved = cast(str, data["id"])
+    active = active_config_id()
+    if active is not None and active == resolved:
+        raise ConfigConflictError(
+            f"「{data.get('name') or resolved}」是当前使用的配置；请先切换到其他配置再删除。"
+        )
+    try:
+        shutil.rmtree(dir_path)
+    except OSError as exc:
+        raise ConfigError(f"无法删除端点配置「{cid}」：{exc.strerror or exc}") from exc
+
+
+def set_active_config(cid: str) -> None:
+    """把当前使用指针指向一套已存在的配置（指针存 ID）；对新请求立即生效。
+
+    Raises:
+        ConfigError: ID 不存在 / 指针写入失败。
+    """
+    _require_entry(cid)
+    pointer = _endpoints_root() / ACTIVE_FILENAME
+    try:
+        pointer.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_bytes(pointer, f"{cid}\n".encode())
+    except (OSError, UnicodeEncodeError) as exc:
+        raise ConfigError(f"无法写入当前配置指针：{exc}") from exc
 
 
 def _has_file_key(credentials_path: Path) -> bool:

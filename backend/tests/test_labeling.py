@@ -36,7 +36,12 @@ from dataset_factory.llm import (
     TextPart,
     VideoPart,
 )
-from dataset_factory.prompts import Prompt, PromptNotFoundError, save_prompt
+from dataset_factory.prompts import (
+    Prompt,
+    PromptNotFoundError,
+    read_prompt,
+    save_prompt,
+)
 from dataset_factory.sessions import (
     EnvelopeEvent,
     MessageEvent,
@@ -67,8 +72,8 @@ def _save_prompt(name: str, body: str) -> None:
 
 
 def _import_skill() -> str:
-    """导入 fixture 的示例 skill，返回其名称。"""
-    return import_skill(_SKILL_PACK).skill.name
+    """导入 fixture 的示例 skill，返回其稳定 ID（ID 化后设置与断言一律用 ID）。"""
+    return import_skill(_SKILL_PACK).skill.id
 
 
 def _skill_injection_text() -> str:
@@ -116,8 +121,8 @@ def test_first_turn_assembles_system_skill_instruction_image(
     engine = LabelingEngine(fake_completer, _MODEL)
 
     result = engine.label(
-        prompt_name="h3",
-        skill_names=[skill_name],
+        prompt_id="h3",
+        skill_ids=[skill_name],
         instruction="描述这张图",
         image=image,
     )
@@ -143,7 +148,7 @@ def test_first_turn_without_skills_and_image(
     _save_prompt("h3", "你是打标助手。")
     engine = LabelingEngine(fake_completer, _MODEL)
 
-    engine.label(prompt_name="h3", instruction="纯文本打标")
+    engine.label(prompt_id="h3", instruction="纯文本打标")
 
     user = fake_completer.calls[0][1]
     assert user.parts == (TextPart("纯文本打标"),)
@@ -157,7 +162,7 @@ def test_image_only_turn_allows_empty_instruction(
     image = _make_image(tmp_path / "cat.jpg")
     engine = LabelingEngine(fake_completer, _MODEL)
 
-    engine.label(prompt_name="h3", instruction="", image=image)
+    engine.label(prompt_id="h3", instruction="", image=image)
 
     assert fake_completer.calls[0][1].parts == (ImagePart(b"fake-png-bytes"),)
 
@@ -170,7 +175,7 @@ def test_video_turn_sends_video_part(
     engine = LabelingEngine(fake_completer, _MODEL)
 
     engine.label(
-        prompt_name="h3",
+        prompt_id="h3",
         instruction="描述这个动作",
         video_bytes=b"fake-mp4-bytes",
         video_name="clip.mp4",
@@ -194,7 +199,7 @@ def test_video_and_image_together_raises(
 
     with pytest.raises(ValueError, match="二选一"):
         engine.label(
-            prompt_name="h3",
+            prompt_id="h3",
             instruction="x",
             image=image,
             video_bytes=b"mp4",
@@ -208,7 +213,7 @@ def test_label_stream_yields_events_and_persists(
     _save_prompt("h3", "你是打标助手。")
     engine = LabelingEngine(fake_completer, _MODEL)
 
-    events = list(engine.label_stream(prompt_name="h3", instruction="描述它"))
+    events = list(engine.label_stream(prompt_id="h3", instruction="描述它"))
 
     assert isinstance(events[0], StreamStarted)
     deltas = [event for event in events if isinstance(event, StreamDelta)]
@@ -244,7 +249,7 @@ def test_label_stream_persists_reasoning_with_caption(
     _save_prompt("h3", "你是打标助手。")
     engine = LabelingEngine(completer, _MODEL)
 
-    events = list(engine.label_stream(prompt_name="h3", instruction="描述它"))
+    events = list(engine.label_stream(prompt_id="h3", instruction="描述它"))
 
     finished = events[-1]
     assert isinstance(finished, StreamFinished)
@@ -256,7 +261,7 @@ def test_label_stream_persists_reasoning_with_caption(
     list(
         engine.label_stream(
             session_id=finished.result.session_id,
-            prompt_name="h3",
+            prompt_id="h3",
             instruction="再改改",
         )
     )
@@ -279,7 +284,7 @@ def test_events_recorded_in_order(
     image = _make_image(tmp_path / "cat.jpg")
     engine = LabelingEngine(fake_completer, _MODEL)
 
-    result = engine.label(prompt_name="h3", instruction="打标", image=image)
+    result = engine.label(prompt_id="h3", instruction="打标", image=image)
 
     events = read_events(result.session_id)
     assert _event_types(events) == ["settings", "message", "envelope", "message"]
@@ -304,8 +309,8 @@ def test_envelope_records_model_and_text_view(
     engine = LabelingEngine(fake_completer, _MODEL)
 
     result = engine.label(
-        prompt_name="h3",
-        skill_names=[skill_name],
+        prompt_id="h3",
+        skill_ids=[skill_name],
         instruction="打标",
         image=image,
     )
@@ -339,8 +344,8 @@ def test_second_turn_replays_history_with_placeholder_image(
     engine = LabelingEngine(completer, _MODEL)
 
     first = engine.label(
-        prompt_name="h3",
-        skill_names=[skill_name],
+        prompt_id="h3",
+        skill_ids=[skill_name],
         instruction="描述这张图",
         image=image,
     )
@@ -367,11 +372,11 @@ def test_settings_change_mid_session_appends_event(
     _save_prompt("新提示词", "新底座。")
     engine = LabelingEngine(fake_completer, _MODEL)
 
-    first = engine.label(prompt_name="旧提示词", instruction="第一轮")
+    first = engine.label(prompt_id="旧提示词", instruction="第一轮")
     second = engine.label(
         session_id=first.session_id,
-        prompt_name="新提示词",
-        skill_names=[],
+        prompt_id="新提示词",
+        skill_ids=[],
         instruction="第二轮",
     )
 
@@ -381,8 +386,8 @@ def test_settings_change_mid_session_appends_event(
         if isinstance(event, SettingsEvent)
     ]
     assert [event.settings for event in settings_events] == [
-        {"prompt": "旧提示词", "skills": []},
-        {"prompt": "新提示词", "skills": []},
+        {"prompt": read_prompt("旧提示词").id, "skills": []},
+        {"prompt": read_prompt("新提示词").id, "skills": []},
     ]
     assert fake_completer.calls[1][0].parts == (TextPart("新底座。"),)
 
@@ -394,8 +399,8 @@ def test_settings_unchanged_appends_no_event(
     _save_prompt("h3", "你是打标助手。")
     engine = LabelingEngine(fake_completer, _MODEL)
 
-    first = engine.label(prompt_name="h3", instruction="第一轮")
-    engine.label(session_id=first.session_id, prompt_name="h3", instruction="第二轮")
+    first = engine.label(prompt_id="h3", instruction="第一轮")
+    engine.label(session_id=first.session_id, prompt_id="h3", instruction="第二轮")
 
     settings_events = [
         event
@@ -414,9 +419,7 @@ def test_disabled_skill_skipped_but_kept_in_settings(
     set_enabled(skill_name, enabled=False)
     engine = LabelingEngine(fake_completer, _MODEL)
 
-    result = engine.label(
-        prompt_name="h3", skill_names=[skill_name], instruction="打标"
-    )
+    result = engine.label(prompt_id="h3", skill_ids=[skill_name], instruction="打标")
 
     assert fake_completer.calls[0][1].parts == (TextPart("打标"),)
     settings_event = next(
@@ -424,7 +427,10 @@ def test_disabled_skill_skipped_but_kept_in_settings(
         for event in read_events(result.session_id)
         if isinstance(event, SettingsEvent)
     )
-    assert settings_event.settings == {"prompt": "h3", "skills": [skill_name]}
+    assert settings_event.settings == {
+        "prompt": read_prompt("h3").id,
+        "skills": [skill_name],
+    }
 
 
 def test_missing_prompt_fails_loud(
@@ -434,7 +440,7 @@ def test_missing_prompt_fails_loud(
     engine = LabelingEngine(fake_completer, _MODEL)
 
     with pytest.raises(PromptNotFoundError):
-        engine.label(prompt_name="不存在的提示词", instruction="打标")
+        engine.label(prompt_id="不存在的提示词", instruction="打标")
 
 
 def test_new_session_without_prompt_rejected_before_create(
@@ -468,7 +474,7 @@ def test_empty_turn_rejected(
     engine = LabelingEngine(fake_completer, _MODEL)
 
     with pytest.raises(EmptyTurnError):
-        engine.label(prompt_name="h3", instruction="   ")
+        engine.label(prompt_id="h3", instruction="   ")
 
 
 def test_unknown_session_fails_loud(
@@ -497,7 +503,7 @@ def test_llm_failure_keeps_envelope_for_review(
     engine = LabelingEngine(_FailingCompleter(), _MODEL)
 
     with pytest.raises(LLMError):
-        engine.label(prompt_name="h3", instruction="打标")
+        engine.label(prompt_id="h3", instruction="打标")
 
     (session_id,) = list_sessions()
     events = read_events(session_id)
@@ -548,7 +554,7 @@ def test_attachment_read_failure_translated(
     engine = LabelingEngine(fake_completer, _MODEL)
 
     with pytest.raises(AttachmentReadError):
-        engine.label(prompt_name="h3", instruction="打标", image=image)
+        engine.label(prompt_id="h3", instruction="打标", image=image)
 
 
 def test_restore_returns_settings_and_history(
@@ -561,8 +567,8 @@ def test_restore_returns_settings_and_history(
     engine = LabelingEngine(fake_completer, _MODEL)
 
     first = engine.label(
-        prompt_name="h3",
-        skill_names=[skill_name],
+        prompt_id="h3",
+        skill_ids=[skill_name],
         instruction="描述这张图",
         image=image,
     )
@@ -572,7 +578,7 @@ def test_restore_returns_settings_and_history(
 
     assert snapshot.session_id == first.session_id
     assert snapshot.settings == SessionSettings(
-        prompt_name="h3", skill_names=(skill_name,)
+        prompt_id=read_prompt("h3").id, skill_ids=(skill_name,)
     )
     assert [(m.role, m.text, m.attachment) for m in snapshot.messages] == [
         ("user", "描述这张图", "cat.jpg"),
@@ -602,8 +608,8 @@ def test_end_to_end_labeling_flow(
     engine = LabelingEngine(fake_completer, _MODEL)
 
     first = engine.label(
-        prompt_name="h3-video",
-        skill_names=[skill_name],
+        prompt_id="h3-video",
+        skill_ids=[skill_name],
         instruction="给这张图打个标",
         image=image,
     )
@@ -613,7 +619,7 @@ def test_end_to_end_labeling_flow(
     assert first.caption == "打标结果"
     assert second.caption == "打标结果"
     assert snapshot.settings == SessionSettings(
-        prompt_name="h3-video", skill_names=(skill_name,)
+        prompt_id=read_prompt("h3-video").id, skill_ids=(skill_name,)
     )
     assert [m.role for m in snapshot.messages] == [
         "user",
@@ -640,12 +646,10 @@ def test_resume_with_missing_prompt_leaves_no_trace(
     """续接时传不存在的提示词名：报错且会话零痕迹（不落坏设置、不留孤儿消息），下轮照常。"""
     _save_prompt("h3", "你是打标助手。")
     engine = LabelingEngine(fake_completer, _MODEL)
-    first = engine.label(prompt_name="h3", instruction="第一轮")
+    first = engine.label(prompt_id="h3", instruction="第一轮")
 
     with pytest.raises(PromptNotFoundError):
-        engine.label(
-            session_id=first.session_id, prompt_name="不存在", instruction="改"
-        )
+        engine.label(session_id=first.session_id, prompt_id="不存在", instruction="改")
 
     events = read_events(first.session_id)
     assert _event_types(events) == ["settings", "message", "envelope", "message"]
@@ -662,7 +666,7 @@ def test_unknown_skill_name_fails_loud(
     engine = LabelingEngine(fake_completer, _MODEL)
 
     with pytest.raises(SkillNotFoundError):
-        engine.label(prompt_name="h3", skill_names=["拼错了"], instruction="打标")
+        engine.label(prompt_id="h3", skill_ids=["拼错了"], instruction="打标")
 
     assert list_sessions() == []
 
@@ -677,7 +681,7 @@ def test_corrupt_skill_package_not_selected_does_not_break_round(
     (bad_dir / "SKILL.md").write_text("---\ndescription: x\n没有闭合", encoding="utf-8")
     engine = LabelingEngine(fake_completer, _MODEL)
 
-    engine.label(prompt_name="h3", instruction="纯文本打标")
+    engine.label(prompt_id="h3", instruction="纯文本打标")
 
     assert fake_completer.calls[0][1].parts == (TextPart("纯文本打标"),)
 
@@ -693,7 +697,7 @@ def test_corrupt_skill_package_selected_fails_loud(
     engine = LabelingEngine(fake_completer, _MODEL)
 
     with pytest.raises(SkillFormatError, match="未闭合"):
-        engine.label(prompt_name="h3", skill_names=["bad"], instruction="打标")
+        engine.label(prompt_id="h3", skill_ids=["bad"], instruction="打标")
 
     assert list_sessions() == []
 
