@@ -15,6 +15,11 @@ import {
   type SkillInfo,
 } from "../../api";
 import type { components } from "../../api-types.gen";
+import {
+  isStrategySelection,
+  readStoredJson,
+  WORKBENCH_STRATEGY_KEY,
+} from "../../lib/ui-storage";
 import { ChatSessionProvider } from "./chat-session";
 import { PromptWorkbench } from "./PromptWorkbench";
 
@@ -894,6 +899,64 @@ describe("策略与会话的一致性（三期 v2）", () => {
     await userEvent.click(await screen.findByRole("button", { name: /^测试策略/ }));
 
     await expect(screen.getByText("策略会话的历史")).toBeInTheDocument();
+  });
+
+  it("镜像指向已删除的策略且桶为空：镜像结算回新建策略态（防查桶 / 落桶错位丢历史）", async () => {
+    // 界面外丢数据（删数据根 / 恢复备份）会让镜像指向不存在的策略：boot 查死桶
+    // 404、新会话落 __new__，两桶永久错位 + 滚动保留 = 历史丢失（2026-09-23 实锤）。
+    localStorage.setItem(
+      "dsf-workbench-strategy",
+      JSON.stringify({
+        id: "s-dead",
+        name: "已删除的策略",
+        description: "",
+        endpoint_id: "e-default-x1",
+        prompt_id: "p-h3-video-01",
+        skill_ids: [],
+      }),
+    );
+    apiMock.listStrategies.mockResolvedValue([]); // 策略库里没有它
+    renderWorkbench();
+
+    await waitFor(() => expect(apiMock.latestSession).toHaveBeenCalledWith("s-dead"));
+    await waitFor(() =>
+      expect(localStorage.getItem("dsf-workbench-strategy")).toBe("null"),
+    );
+  });
+
+  it("镜像指向的策略还在但桶为空：镜像保持原样（新策略没聊过天，不误结算）", async () => {
+    apiMock.listStrategies.mockResolvedValue([WORKBENCH_STRATEGY]);
+    const mirror = {
+      id: "s1",
+      name: "测试策略",
+      description: "回归用",
+      endpoint_id: "e-default-x1",
+      prompt_id: "p-h3-video-01",
+      skill_ids: [],
+    };
+    localStorage.setItem("dsf-workbench-strategy", JSON.stringify(mirror));
+    renderWorkbench();
+
+    await waitFor(() => expect(apiMock.latestSession).toHaveBeenCalledWith("s1"));
+    expect(localStorage.getItem("dsf-workbench-strategy")).toBe(JSON.stringify(mirror));
+  });
+
+  it("认领写回的骨架镜像符合 StrategySelection 契约（ID 化字段名）", async () => {
+    // 回归锚：ID 化改字段名时漏了认领骨架（endpoint → endpoint_id），写出的镜像
+    // 过不了校验、工具栏永远读不回（2026-09-23 顺带修复）。
+    apiMock.latestSession.mockResolvedValue({
+      session_id: "s-claimed",
+      strategy_id: "s-real",
+      settings: { prompt_id: "p-h3-video-01", skill_ids: [] },
+      messages: [],
+    });
+    renderWorkbench();
+
+    await waitFor(() =>
+      expect(localStorage.getItem(WORKBENCH_STRATEGY_KEY)).not.toBeNull(),
+    );
+    const mirror = readStoredJson(WORKBENCH_STRATEGY_KEY, isStrategySelection);
+    expect(mirror?.id).toBe("s-real");
   });
 });
 

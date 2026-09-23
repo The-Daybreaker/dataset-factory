@@ -241,9 +241,12 @@ export function ChatSessionProvider({
                   id: owner,
                   name: "",
                   description: "",
-                  endpoint: "",
-                  prompt: "",
-                  skills: [],
+                  // 字段名必须与 StrategySelection 契约一致（endpoint_id / prompt_id /
+                  // skill_ids）：ID 化改字段名时漏了这里，写出的骨架过不了镜像校验、
+                  // 工具栏永远读不回（2026-09-23 顺带修复）。
+                  endpoint_id: "",
+                  prompt_id: "",
+                  skill_ids: [],
                 },
           );
           applySnapshot(latest);
@@ -260,7 +263,22 @@ export function ChatSessionProvider({
         const noSessionYet = err instanceof ApiError && err.status === 404;
         if (noSessionYet) {
           // 桶里还没有会话（或还没有任何会话）：空白起步，落镜像免得工具栏再等。
-          if (mirror === undefined) settleMirror(null);
+          if (mirror === undefined) {
+            settleMirror(null);
+          } else if (mirror !== null) {
+            // 死镜像对账（2026-09-23）：镜像指向的策略已不在库里（界面外丢数据——
+            // 删数据根 / 恢复备份）时，若不结算，boot 永远查死桶、新会话永远落
+            // __new__ 默认桶，两桶永久错位，滚动保留随后把真历史当垃圾删掉（实锤：
+            // 删 .dataset_factory 后重启，__new__ 桶历史被新会话首轮覆盖删除）。
+            // 策略已不在 → 镜像结算回新建策略态；策略还在 → 只是这个桶还没聊过
+            // 天，空白起步语义不变。
+            const strategies = await api.listStrategies();
+            if (cancelled || userActedRef.current > 0) return;
+            if (!strategies.some((entry) => entry.id === mirror.id)) {
+              settleMirror(null);
+              bucketRef.current = NEW_STRATEGY_ID;
+            }
+          }
           setRestoreState("empty");
         } else {
           setChatErrorState(reportError(err) ?? "");
