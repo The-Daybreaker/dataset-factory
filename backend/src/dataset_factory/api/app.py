@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable
 from contextlib import asynccontextmanager
@@ -86,6 +87,7 @@ from ..workdir import (
     WorkdirNotFoundError,
     WorkdirPathError,
 )
+from ..workdir.locks import sweep_cleaned_maintenance_records
 from . import (
     routes_config,
     routes_endpoints,
@@ -103,6 +105,8 @@ from . import (
 )
 from .middleware import RequestLogMiddleware
 from .problems import problem_response
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(frontend_dir: Path | None = None) -> FastAPI:
@@ -148,8 +152,11 @@ def create_app(frontend_dir: Path | None = None) -> FastAPI:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    """应用启动钩子：播种产品内置预置提示词（标记文件在即 no-op，常态零开销）。"""
+    """应用启动钩子：播种产品内置预置提示词 + 清扫已完成（cleaned）的维护记录。"""
     seed_builtin_presets()
+    swept = sweep_cleaned_maintenance_records()
+    if swept:
+        logger.info("已清扫 %d 条已完成的维护记录（workdir-maintenance）。", swept)
     yield
 
 

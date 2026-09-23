@@ -62,6 +62,7 @@ __all__ = [
     "StateLock",
     "import_guard",
     "read_occupier",
+    "sweep_cleaned_maintenance_records",
 ]
 
 #: 开始一次维护类动作（搬迁 / 删除 / 导入 / 只读统计）时，等维护锁释放的窗口（秒）。
@@ -132,6 +133,44 @@ def maintenance_record(workdir: Path) -> Path:
         / "workdir-maintenance"
         / (hashlib.sha256(identity).hexdigest() + ".json")
     )
+
+
+def sweep_cleaned_maintenance_records() -> int:
+    """清扫已完成（cleaned）的维护记录，返回清扫条数；应用启动时调用一次。
+
+    为什么只清 cleaned：维护记录的全部消费方（``require_workdir_writable`` /
+    ``relocation_status`` / 搬迁 resume / 删除重试 / 删除预览）对 cleaned 的读法
+    要么「cleaned → 放行」（与无记录等价）、要么「跳过」——删除不改变任何行为；
+    而 prepared / copying / deleting 等中断态记录承载重试与防呆语义
+    （``require_workdir_writable`` 靠它拒绝向中断现场写入），必须保留。
+
+    损坏的记录同样不动：读不出来该由 ``require_workdir_writable`` fail loud
+    提示用户处置，清扫器不越权替用户删证据。``.lock`` 文件本体一律不清——
+    删除锁文件有经典竞态（等待者持着旧句柄、新进程锁上新文件，互斥破防），
+    它是 ``preserve_lock_file`` 设计下的无害残留。
+
+    与并发写者的竞态是良性的：记录走原子写（外界看到完整旧版或完整新版），
+    清扫器按内容判定，读到非 cleaned 就不碰；读到 cleaned 后哪怕写者刚把它
+    换版，删掉的也是「删了与不删等价」的文件。
+    """
+    directory = data_root() / "workdir-maintenance"
+    swept = 0
+    for path in directory.glob("*.json"):
+        try:
+            record: object = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        payload = cast(dict[str, object], record)
+        if payload.get("status") != "cleaned":
+            continue
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            continue
+        swept += 1
+    return swept
 
 
 @contextmanager
