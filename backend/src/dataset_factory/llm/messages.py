@@ -51,9 +51,14 @@ class TextPart:
 
 @dataclass(frozen=True)
 class ImagePart:
-    """一张图片内容块：持原始字节，编码与格式 / 大小校验在发送前统一做。"""
+    """一张图片内容块：持原始字节，编码与格式 / 大小校验在发送前统一做。
+
+    label 是信封视图的占位标签（历史附件回放时带文件名，便于人类复盘「模型看到了
+    哪张图」）；当轮装配不填（信封占位由装配层自拼）。provider 转换忽略它。
+    """
 
     data: bytes
+    label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -64,12 +69,14 @@ class VideoPart:
     帧上限只是请求值，端点能力上限由服务端把关、超限以端点报错呈现。
     fps 为整型——端点（SiliconFlow）对浮点 fps 判参数非法（实测错误码 20015），
     用整型把「抽帧步进只能是整数帧/秒」钉进类型契约。
+    label 的用途同 ImagePart（信封占位标签，provider 转换忽略）。
     """
 
     data: bytes
     mime: str = "video/mp4"
     fps: int = 2
     max_frames: int = 16
+    label: str | None = None
 
 
 # 消息内容块类型：文本块或图片块或视频块。

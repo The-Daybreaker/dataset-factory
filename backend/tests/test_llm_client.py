@@ -286,6 +286,51 @@ def test_complete_raises_on_none_content() -> None:
         client.complete([Message(role="user", parts=(TextPart("hi"),))])
 
 
+def test_complete_log_includes_finish_reason(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """完成日志带 finish_reason（2026-09-23）：「空白描述」类故障凭它定罪预算还是端点。"""
+    choice = MagicMock()
+    choice.message.content = "结果"
+    choice.finish_reason = "length"
+    response = MagicMock()
+    response.choices = [choice]
+    client = _client_returning(response)
+
+    with caplog.at_level(logging.INFO):
+        client.complete([Message(role="user", parts=(TextPart("hi"),))])
+
+    assert "finish_reason=length" in caplog.text
+
+
+def test_stream_log_includes_finish_reason(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """流式完成日志带收束原因；增量中途的 None finish_reason 不产生噪音。"""
+    chunk_open = MagicMock()
+    chunk_open.choices = [
+        MagicMock(
+            finish_reason=None,
+            delta=MagicMock(content="你好", reasoning_content=None),
+        )
+    ]
+    chunk_close = MagicMock()
+    chunk_close.choices = [
+        MagicMock(
+            finish_reason="stop",
+            delta=MagicMock(content=None, reasoning_content=None),
+        )
+    ]
+    sdk = MagicMock()
+    sdk.chat.completions.create.return_value = iter([chunk_open, chunk_close])
+    client = OpenAIChatClient(cast(openai.OpenAI, sdk), "test-model")
+
+    with caplog.at_level(logging.INFO):
+        list(client.stream([Message(role="user", parts=(TextPart("hi"),))]))
+
+    assert "finish_reason=stop" in caplog.text
+
+
 def test_build_completer_wires_endpoint_and_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

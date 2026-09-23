@@ -155,7 +155,17 @@ class OpenAIChatClient:
                 _endpoint_error_summary(exc, secret) or "（端点未返回细节）",
             )
             raise _translate_sdk_error(exc, secret=secret) from exc
-        logger.info("模型调用完成（%.0fms，模型 %s）", ms_since(start), self._model)
+        finish_reasons = [
+            str(choice.finish_reason)
+            for choice in response.choices
+            if choice.finish_reason
+        ]
+        logger.info(
+            "模型调用完成（%.0fms，模型 %s，finish_reason=%s）",
+            ms_since(start),
+            self._model,
+            "、".join(finish_reasons) or "（端点未给）",
+        )
         return _extract_text(response)
 
     def stream(self, messages: Sequence[Message]) -> Iterator[StreamDelta]:
@@ -176,6 +186,9 @@ class OpenAIChatClient:
         """
         payload = [_to_openai_message(message) for message in messages]
         start = perf_counter()
+        # finish_reason 随完成日志落盘（2026-09-23）：「空白描述」类故障要靠它一锤定音
+        # 是输出预算打满（length）还是端点异常收束（stop / 空）——此前无记录只能猜。
+        finish_reasons: list[str] = []
         try:
             stream = self._client.chat.completions.create(
                 model=self._model,
@@ -189,6 +202,8 @@ class OpenAIChatClient:
             )
             for chunk in stream:
                 choice = chunk.choices[0] if chunk.choices else None
+                if choice is not None and choice.finish_reason:
+                    finish_reasons.append(str(choice.finish_reason))
                 delta = choice.delta if choice is not None else None
                 # reasoning_content 是思考型模型的端点扩展，SDK 类型未收录 → getattr 读取。
                 reasoning = getattr(delta, "reasoning_content", None)
@@ -206,7 +221,12 @@ class OpenAIChatClient:
                 _endpoint_error_summary(exc, secret) or "（端点未返回细节）",
             )
             raise _translate_sdk_error(exc, secret=secret) from exc
-        logger.info("模型流式调用完成（%.0fms，模型 %s）", ms_since(start), self._model)
+        logger.info(
+            "模型流式调用完成（%.0fms，模型 %s，finish_reason=%s）",
+            ms_since(start),
+            self._model,
+            "、".join(finish_reasons) or "（端点未给）",
+        )
 
 
 def build_completer(config: EndpointConfig) -> Completer:

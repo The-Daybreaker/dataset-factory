@@ -1,7 +1,7 @@
 """打标编排引擎——全项目唯一知道「一轮打标怎么拼」的地方。
 
 一轮打标 = 基础提示词（system 消息）+ 启用的 skill 全文（<skill> 标记包裹进当轮 user 消息）
-+ 图片与指令（当轮 user 消息）+ 历史回放（按原角色重建、历史图片降为占位文本）。每轮经
++ 图片与指令（当轮 user 消息）+ 历史回放（按原角色重建、历史附件以真字节跟随重发）。每轮经
 sessions 落盘（设置变更 → 用户消息 → 请求信封 → 模型回复；先校验本轮全部输入再落任何事件，
 失败轮零痕迹，信封先落盘再调模型、失败也有「当时喂了什么」可查）；llm 消息模型与会话事件
 JSON 的来回转换收敛在本模块（sessions 只把
@@ -33,6 +33,7 @@ from ..llm import (
     VIDEO_EXTENSIONS,
     VIDEO_MIME_BY_SUFFIX,
     Completer,
+    ContentPart,
     ImagePart,
     LLMError,
     Message,
@@ -92,6 +93,16 @@ _ACTIVE_TURNS: set[str] = set()
 def active_session_ids() -> frozenset[str]:
     """当前有轮次在写（非流式执行中 / 流式未收尾）的会话 id 集合（删除路径的检查面）。"""
     return frozenset(_ACTIVE_TURNS)
+
+
+def _require_caption(caption: str) -> None:
+    """空稿护栏：正文空白即抛 LLMError（流式调用方在 try 内触发它，让半截思考进 partial 落盘）。
+
+    Raises:
+        LLMError: caption 空白（与跑批路径 runner 同口径的失败分类）。
+    """
+    if not caption.strip():
+        raise LLMError("模型返回了空白描述；请重试或调整输入。")
 
 
 @dataclass(frozen=True)
@@ -466,10 +477,19 @@ class LabelingEngine:
                 else:
                     reasoning_parts.append(delta.text)
                     yield delta
+            caption = "".join(content_parts)
+            # 空稿护栏，与跑批路径同口径（B5；runner 对空白 caption 同样判失败）。
+            # 必须在 try 内触发（经 _require_caption 抛出）：让下面 except 的 partial
+            # 落盘覆盖这条路径——思考型模型「token 全花在思考、正文零字」的半截同样是
+            # 已收到的内容，此前只活在浏览器内存里（前端 keepPartial 即时结算），
+            # 刷新 / 重启即丢（2026-09-23 用户实测曝光）。
+            _require_caption(caption)
         except LLMError:
             # B5（2026-09-21 审计）：断流 / 超时的半截回复也落盘并标 partial——
             # 会话历史不因失败整条消失（PRD-0001 验收 10 / 11：失败不丢历史、
             # append-only）；重发那句话也不会变成两条重复 user 气泡。
+            # 上方空稿护栏的 raise 也走这里（2026-09-23 起）：纯思考零正文的半截
+            # 同样落 partial，不再只活在浏览器内存里。
             partial_text = "".join(content_parts)
             partial_reasoning = "".join(reasoning_parts)
             if partial_text or partial_reasoning:
@@ -483,12 +503,8 @@ class LabelingEngine:
                     reasoning_ms=int(ms_since(llm_start)),
                 )
             raise
-        caption = "".join(content_parts)
-        if not caption.strip():
-            # 空稿护栏，与跑批路径同口径（B5；runner 对空白 caption 同样判失败）。
-            raise LLMError("模型返回了空白描述；请重试或调整输入。")
         # 思考过程随终稿一起落盘（2026-09-20 用户定夺，2026-09-21 用户再次确认）：
-        # 恢复会话可回看；回放下一轮请求装配仍只取正文，思考不进请求（见 _replay_history）。
+        # 恢复会话可回看；回放下一轮请求装配仍只取正文，思考不进请求。
         reasoning = "".join(reasoning_parts)
         append_message(
             session_id,
@@ -744,7 +760,7 @@ def _begin_turn(
     else:
         events = read_events(session_id)
     settings = _fold_settings(events)
-    history = _replay_history(events)
+    history = _replay_history(events, session_id)
 
     # 传入引用（ID 或唯一显示名）先规范化为稳定 ID：与折叠出的会话设置同一形状，
     # 比较去重才不会因「同物异形」误判变化而重复追加设置事件。
@@ -981,13 +997,20 @@ def _to_skill_id(value: str) -> str:
     return skill_id_by_display_name(value) or value
 
 
-def _replay_history(events: Sequence[SessionEvent]) -> tuple[Message, ...]:
+def _replay_history(
+    events: Sequence[SessionEvent], session_id: str | None
+) -> tuple[Message, ...]:
     """把事件流里的历史消息重建为 llm 消息（本轮 user 消息落盘前调用，天然不含本轮）。
 
-    历史 user 消息的图片降为占位文本（多轮重发图片字节会随轮数线性吃 token）；skill 全文
-    只在当轮注入、不进历史（当轮注入的内容已体现在当时的回复里，且每轮都会重新注入当前
-    启用的 skill）。system 角色的消息事件不参与历史（system 每轮从当前基础提示词重新渲染），
-    其余意外角色跳过（历史 = 对话，不是任意事件回声）。
+    历史 user 消息的附件跟随重发（2026-09-23 用户定，方案 A 全量无护栏）：图片 / 视频
+    以真字节进入历史——迭代改写（「帽子改成蓝色」）时模型才看得见原图，此前历史附件
+    降级为占位文本、模型第二轮起只能对着 `[图片: x]` 瞎编。字节从会话 attachments/ 读
+    （与本轮同一来源；当轮参数 fps / 帧上限未随事件落盘，视频按默认值重发）；附件文件
+    丢失时降级回占位文本（旧会话不因缺文件打不了字）。代价：每轮 payload 随历史附件数
+    线性涨，用户知情选定；上下文压缩是真正的护栏，登记 vision 未排期池另做。
+    skill 全文只在当轮注入、不进历史（当轮注入的内容已体现在当时的回复里，且每轮都会
+    重新注入当前启用的 skill）。system 角色的消息事件不参与历史（system 每轮从当前
+    基础提示词重新渲染），其余意外角色跳过（历史 = 对话，不是任意事件回声）。
     """
     history: list[Message] = []
     for event in events:
@@ -996,13 +1019,35 @@ def _replay_history(events: Sequence[SessionEvent]) -> tuple[Message, ...]:
             "assistant",
         ):
             continue
-        parts: list[TextPart] = []
+        parts: list[ContentPart] = []
         if event.text:
             parts.append(TextPart(event.text))
-        if event.attachment is not None:
-            parts.append(TextPart(f"[{_attachment_label(event.attachment)}]"))
+        if event.attachment is not None and session_id is not None:
+            parts.append(_history_media_part(session_id, event.attachment))
         history.append(Message(role=cast(Role, event.role), parts=tuple(parts)))
     return tuple(history)
+
+
+def _history_media_part(session_id: str, attachment: str) -> ContentPart:
+    """把一条历史附件还原成媒体内容块（真字节）；副本读不到时降级为占位文本。"""
+    label = f"[{_attachment_label(attachment)}]"
+    suffix = Path(attachment).suffix.lower()
+    try:
+        data = _read_attachment(session_id, attachment)
+    except AttachmentReadError:
+        logger.warning(
+            "历史附件 %r 读取失败，本轮以占位文本降级（会话 %s）。",
+            attachment,
+            session_id,
+        )
+        return TextPart(label)
+    if suffix in _VIDEO_EXTENSIONS:
+        return VideoPart(
+            data,
+            mime=VIDEO_MIME_BY_SUFFIX.get(suffix, "video/mp4"),
+            label=label,
+        )
+    return ImagePart(data, label=label)
 
 
 _VIDEO_EXTENSIONS = VIDEO_EXTENSIONS
@@ -1099,10 +1144,16 @@ def _assemble(
 
 
 def _envelope_view(message: Message) -> dict[str, JsonValue]:
-    """把一条历史消息渲染成信封视图（文本块拼接；历史图片已是占位文本块）。"""
+    """把一条历史消息渲染成信封视图（人类复盘快照；媒体块渲染为占位文本——base64 无人能读）。"""
+    chunks: list[str] = []
+    for part in message.parts:
+        if isinstance(part, TextPart):
+            chunks.append(part.text)
+        else:
+            # ImagePart / VideoPart：信封只留占位标签（label 由历史回放装配带上；
+            # 当轮消息不经此视图，装配层自己拼占位）。label 缺失时退回通用占位。
+            chunks.append(part.label or "[媒体]")
     return {
         "role": message.role,
-        "content": "\n".join(
-            part.text for part in message.parts if isinstance(part, TextPart)
-        ),
+        "content": "\n".join(chunks),
     }

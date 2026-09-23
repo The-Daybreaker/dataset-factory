@@ -12,6 +12,7 @@ import hashlib
 import re
 from collections.abc import Iterator, Sequence
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -44,6 +45,7 @@ from dataset_factory.prompts import (
 )
 from dataset_factory.sessions import (
     EnvelopeEvent,
+    JsonValue,
     MessageEvent,
     SessionEvent,
     SessionNotFoundError,
@@ -258,6 +260,93 @@ def test_label_stream_persists_reasoning_with_caption(
     assert (assistant.role, assistant.text) == ("assistant", "一只白瓷茶杯。")
     assert assistant.reasoning == "用户要一段描述。按基础提示词组织。"
 
+
+def test_label_stream_blank_caption_persists_reasoning_partial(
+    temp_data_root: Path,
+) -> None:
+    """流式正常走完但正文零字（思考型端点把产出花在思考上）→ 空白描述报错。
+
+    已收到的思考落盘标 partial——刷新 / 重启可回看，不再只活在浏览器内存里
+    （2026-09-23 用户实测曝光的落盘缺口）。
+    """
+
+    class _ReasoningOnlyCompleter(FakeCompleter):
+        def stream(self, messages: Sequence[Message]) -> Iterator[StreamDelta]:
+            self.calls.append(list(messages))
+            yield StreamDelta(kind="reasoning", text="这张图是一只猫。")
+            yield StreamDelta(kind="reasoning", text="帽子是红色的，")
+
+    completer = _ReasoningOnlyCompleter()
+    _save_prompt("h3", "你是打标助手。")
+    engine = LabelingEngine(completer, _MODEL)
+
+    started: list[StreamStarted] = []
+
+    def _drain() -> None:
+        for event in engine.label_stream(prompt_id="h3", instruction="描述它"):
+            if isinstance(event, StreamStarted):
+                started.append(event)
+
+    with pytest.raises(LLMError, match="空白描述"):
+        _drain()
+    assert len(started) == 1
+
+    snapshot = engine.restore(started[0].session_id)
+    partial = snapshot.messages[-1]
+    assert (partial.role, partial.text, partial.partial) == ("assistant", "", True)
+    assert partial.reasoning == "这张图是一只猫。帽子是红色的，"
+
+
+def test_label_stream_fully_empty_raises_without_partial(
+    temp_data_root: Path,
+) -> None:
+    """连思考都没有的完全空白：只报错，不落空壳 partial。"""
+
+    class _SilentCompleter(FakeCompleter):
+        def stream(self, messages: Sequence[Message]) -> Iterator[StreamDelta]:
+            self.calls.append(list(messages))
+            return iter(())
+
+    completer = _SilentCompleter()
+    _save_prompt("h3", "你是打标助手。")
+    engine = LabelingEngine(completer, _MODEL)
+
+    started: list[StreamStarted] = []
+
+    def _drain() -> None:
+        for event in engine.label_stream(prompt_id="h3", instruction="描述它"):
+            if isinstance(event, StreamStarted):
+                started.append(event)
+
+    with pytest.raises(LLMError, match="空白描述"):
+        _drain()
+    assert len(started) == 1
+
+    snapshot = engine.restore(started[0].session_id)
+    assert snapshot.messages[-1].role == "user"
+
+
+def test_next_round_assembly_excludes_reasoning_text(
+    temp_data_root: Path,
+) -> None:
+    """下一轮装配只取正文：思考不进请求（2026-09-20 用户定夺的回放口径不变）。"""
+
+    class _ThinkingCompleter(FakeCompleter):
+        def stream(self, messages: Sequence[Message]) -> Iterator[StreamDelta]:
+            self.calls.append(list(messages))
+            yield StreamDelta(kind="reasoning", text="按基础提示词组织。")
+            yield StreamDelta(kind="content", text="一只白瓷茶杯。")
+
+    completer = _ThinkingCompleter()
+    _save_prompt("h3", "你是打标助手。")
+    engine = LabelingEngine(completer, _MODEL)
+
+    finished: StreamFinished | None = None
+    for event in engine.label_stream(prompt_id="h3", instruction="描述它"):
+        if isinstance(event, StreamFinished):
+            finished = event
+    assert finished is not None
+
     list(
         engine.label_stream(
             session_id=finished.result.session_id,
@@ -332,10 +421,10 @@ def test_envelope_records_model_and_text_view(
     }
 
 
-def test_second_turn_replays_history_with_placeholder_image(
+def test_second_turn_replays_history_with_attachment_bytes(
     temp_data_root: Path, tmp_path: Path
 ) -> None:
-    """第二轮迭代改写：历史按原角色回放、历史图片降为占位文本、当轮重新注入 skill。"""
+    """第二轮迭代改写：历史附件以真字节跟随重发、按原角色回放、当轮重新注入 skill。"""
     _save_prompt("h3", "你是打标助手。")
     skill_name = _import_skill()
     skill_full = _skill_injection_text()
@@ -356,12 +445,54 @@ def test_second_turn_replays_history_with_placeholder_image(
     assert len(completer.calls) == 2
     system, history_user, history_assistant, current_user = completer.calls[1]
     assert system.parts == (TextPart("你是打标助手。"),)
-    assert history_user.parts == (TextPart("描述这张图"), TextPart("[图片: cat.jpg]"))
+    # 历史附件真字节跟随（2026-09-23 用户定，方案 A）：迭代改写时模型仍看得见原图。
+    assert history_user.parts == (
+        TextPart("描述这张图"),
+        ImagePart(image.read_bytes(), label="[图片: cat.jpg]"),
+    )
     assert history_assistant.parts == (TextPart("第一轮回复"),)
     assert current_user.parts == (
         TextPart(f"<skill>\n{skill_full}\n</skill>"),
         TextPart("改成一句话"),
     )
+    # 信封视图仍脱敏：历史媒体渲染为占位文本（复盘可读、不灌 base64）。
+    envelopes = [
+        event.request
+        for event in read_events(second.session_id)
+        if isinstance(event, EnvelopeEvent)
+    ]
+    history_view = cast("list[JsonValue]", envelopes[1]["messages"])
+    assert history_view[1] == {
+        "role": "user",
+        "content": "描述这张图\n[图片: cat.jpg]",
+    }
+
+
+def test_second_turn_replays_history_video_with_suffix_mime(
+    temp_data_root: Path, tmp_path: Path
+) -> None:
+    """历史视频附件按扩展名定 MIME、默认抽帧参数重发（当轮参数未随事件落盘）。"""
+    _save_prompt("h3", "你是打标助手。")
+    video = tmp_path / "clip.webm"
+    video.write_bytes(b"fake webm bytes")
+    completer = FakeCompleter(replies=["第一轮回复", "第二轮回复"])
+    engine = LabelingEngine(completer, _MODEL)
+
+    first = engine.label(
+        prompt_id="h3",
+        instruction="描述这段视频",
+        video_bytes=video.read_bytes(),
+        video_name="clip.webm",
+    )
+    engine.label(session_id=first.session_id, instruction="再简短些")
+
+    _, history_user, _, _ = completer.calls[1]
+    assert len(history_user.parts) == 2
+    history_video = history_user.parts[1]
+    assert isinstance(history_video, VideoPart)
+    assert history_video.data == b"fake webm bytes"
+    assert history_video.mime == "video/webm"
+    assert history_video.label == "[视频: clip.webm]"
 
 
 def test_settings_change_mid_session_appends_event(
