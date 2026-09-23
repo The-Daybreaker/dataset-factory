@@ -587,6 +587,22 @@ describe("切页记忆与状态章", () => {
 
     await screen.findByRole("button", { name: "first.jpg" });
     expect(api.listItems).toHaveBeenLastCalledWith("one", "s1");
+    // 对账前置（2026-09-23）：失效候选在提交前就被拦下，绝不按它发取数请求。
+    expect(api.listItems).not.toHaveBeenCalledWith("ghost", "g1");
+  });
+
+  it("记忆 wid 已不在注册表（如删过数据根）：不发失效请求，静默回退空态", async () => {
+    vi.mocked(api.listWorkdirs).mockResolvedValue([]);
+    localStorage.setItem(
+      "dsf-labeling-selection",
+      JSON.stringify({ workdirId: "AE-zVzxTrdI", batchId: "s1" }),
+    );
+    render(<LabelingPage />);
+
+    await screen.findByText("还没有可用批次");
+    expect(api.listItems).not.toHaveBeenCalled();
+    expect(api.currentRun).not.toHaveBeenCalled();
+    expect(screen.queryByText(/不在注册表中/)).not.toBeInTheDocument();
   });
 
   it("空闲上报回读磁盘终态而不是抹掉状态章", async () => {

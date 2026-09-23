@@ -23,6 +23,7 @@ import { formatBytesAuto } from "../../lib/format";
 import {
   LABELING_QUERY_KEY,
   LABELING_SELECTED_ITEM_KEY,
+  readStoredJson,
   readStoredString,
   writeStoredJson,
 } from "../../lib/ui-storage";
@@ -234,14 +235,15 @@ export function LabelingPage({
   onOpenWorkbench?: () => void;
 } = {}) {
   const [workdirs, setWorkdirs] = useState<WorkdirBatches[]>([]);
-  // selection 与左列的折叠 / 组内展开状态落 localStorage：三期起页面用 Activity
-  // 保活（切页不再卸载），这里的职责是活过「整页刷新 / 应用重启」。恢复的旧批次
-  // 若已被删 / 停用，由 loadWorkdirBatches 完成后的既有校验回退默认选择，无需新增分支。
-  const [selection, setSelection] = usePersistedState<BatchSelection | null>(
-    "dsf-labeling-selection",
-    null,
-    isBatchSelection,
+  // selection 两阶段（2026-09-23 排查：删数据根后记忆 wid 必然先撞一轮 404 并闪
+  // 「不在注册表中」横幅）：记忆值只作候选——启动先拉目录列表，对上才提交为正式
+  // selection，对不上（删数据根 / 外部删目录 / 批次被删）静默回退默认。items /
+  // latestRun / RunControl / 快照等取数方全部以 selection 存在为渲染前提，提交前
+  // 天然零请求。左列筛选词 / 折叠 / 组内展开仍走 usePersistedState（无关取数链路）。
+  const rememberedSelectionRef = useRef<BatchSelection | null>(
+    readStoredJson("dsf-labeling-selection", isBatchSelection),
   );
+  const [selection, setSelection] = useState<BatchSelection | null>(null);
   const [items, setItems] = useState<ItemMap>(new Map());
   const [exportRevision, setExportRevision] = useState(0);
   const [externalRun, setExternalRun] = useState<{
@@ -328,22 +330,28 @@ export function LabelingPage({
       .then((loaded) => {
         if (!current) return;
         setWorkdirs(loaded);
+        // 记忆候选只在启动首轮生效一次（此后 directoriesRevision 刷新沿用既有校验
+        // 回退，previous 即在选批次）。在 updater 外消费：updater 必须保持纯函数
+        // （StrictMode / 并发渲染会重复调用 updater，ref 突变在内会被吃掉一次）。
+        const remembered = rememberedSelectionRef.current;
+        rememberedSelectionRef.current = null;
         const directory = loaded.find((entry) =>
           entry.batches.some((batch) => batch.active),
         );
         const batch = directory?.batches.find((entry) => entry.active);
         setSelection((previous) => {
+          const candidate = previous ?? remembered;
           if (
-            previous &&
+            candidate &&
             loaded.some(
               (entry) =>
-                entry.id === previous.workdirId &&
+                entry.id === candidate.workdirId &&
                 entry.batches.some(
-                  (candidate) => candidate.id === previous.batchId && candidate.active,
+                  (item) => item.id === candidate.batchId && item.active,
                 ),
             )
           )
-            return previous;
+            return candidate;
           return directory && batch
             ? { workdirId: directory.id, batchId: batch.id }
             : null;
@@ -438,6 +446,10 @@ export function LabelingPage({
   useEffect(() => {
     writeStoredJson(LABELING_SELECTED_ITEM_KEY, selectedItem);
   }, [selectedItem]);
+  // selection 落盘（记忆候选的写入侧）：提交 / 回退 / 换批次都如实记，下次启动按它对账。
+  useEffect(() => {
+    writeStoredJson("dsf-labeling-selection", selection);
+  }, [selection]);
   const recover = useCallback((row: ItemRow) => {
     setRecovery({
       names: [row.name],
