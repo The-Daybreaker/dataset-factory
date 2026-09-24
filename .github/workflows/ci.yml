@@ -212,7 +212,7 @@ jobs:
             e2e/package-lock.json
 
       - name: Download dist artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: frontend-dist
           path: frontend/dist                     # 被测服务托管的就是构建产物，来自 frontend job
